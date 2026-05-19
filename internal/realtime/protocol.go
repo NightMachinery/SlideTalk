@@ -10,9 +10,27 @@ const (
 	EventSnapshot = "room.snapshot"
 	EventError    = "error"
 
-	CommandPeopleReorder = "people.reorder"
-	CommandPeopleSetRole = "people.setRole"
-	CommandPeopleKick    = "people.kick"
+	CommandPeopleReorder  = "people.reorder"
+	CommandPeopleSetRole  = "people.setRole"
+	CommandPeopleKick     = "people.kick"
+	CommandTurnNext       = "turn.next"
+	CommandTurnPrevious   = "turn.previous"
+	CommandTurnSetCurrent = "turn.setCurrent"
+	CommandTimerStart     = "timer.start"
+	CommandTimerStop      = "timer.stop"
+	CommandTimerReset     = "timer.reset"
+	CommandHandRaise      = "hand.raise"
+	CommandHandLower      = "hand.lower"
+	CommandSettingsUpdate = "settings.update"
+)
+
+const (
+	TimerStateStopped = "stopped"
+	TimerStateRunning = "running"
+
+	RaiseHandModeOff    = "off"
+	RaiseHandModeManual = "manual"
+	RaiseHandModeQueue  = "queue"
 )
 
 // Command is the client-to-server realtime envelope.
@@ -39,9 +57,9 @@ type Snapshot struct {
 	Caller       SnapshotCaller   `json:"caller"`
 	Participants []SnapshotMember `json:"participants"`
 	Observers    []SnapshotMember `json:"observers"`
-	CurrentTurn  any              `json:"currentTurn"`
-	Timer        any              `json:"timer"`
-	Hands        []any            `json:"hands"`
+	CurrentTurn  SnapshotTurn     `json:"currentTurn"`
+	Timer        SnapshotTimer    `json:"timer"`
+	Hands        []SnapshotHand   `json:"hands"`
 	Slide        any              `json:"slide"`
 	Markdown     string           `json:"markdown"`
 }
@@ -52,6 +70,7 @@ type SnapshotRoom struct {
 	Title                    string `json:"title"`
 	NoSlideMode              bool   `json:"noSlideMode"`
 	AllowParticipantMarkdown bool   `json:"allowParticipantMarkdown"`
+	RaiseHandMode            string `json:"raiseHandMode"`
 }
 
 // SnapshotCaller identifies the receiving user.
@@ -67,6 +86,27 @@ type SnapshotMember struct {
 	DisplayName  string `json:"displayName"`
 	Role         string `json:"role"`
 	DisplayOrder int    `json:"displayOrder"`
+}
+
+// SnapshotTurn describes current and next speakers.
+type SnapshotTurn struct {
+	CurrentSpeakerUserID string `json:"currentSpeakerUserId"`
+	NextSpeakerUserID    string `json:"nextSpeakerUserId"`
+}
+
+// SnapshotTimer contains enough server timing for clients to render a countdown.
+type SnapshotTimer struct {
+	State           string  `json:"state"`
+	DurationSeconds int     `json:"durationSeconds"`
+	StartedAt       *string `json:"startedAt"`
+	ServerNow       string  `json:"serverNow"`
+}
+
+// SnapshotHand is one raised hand in queue order.
+type SnapshotHand struct {
+	UserID      string `json:"userId"`
+	DisplayName string `json:"displayName"`
+	RaisedAt    string `json:"raisedAt"`
 }
 
 // WSTicket is a short-lived room-scoped connection token.

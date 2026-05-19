@@ -2,7 +2,7 @@
 
 SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking order, observer queue, shared timer, slides, and optional discussion notes synchronized for groups that already have a separate audio call.
 
-This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, and room create/join flows.
+This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, and hand-raise queues.
 
 ## Requirements
 
@@ -69,7 +69,7 @@ The Go server reads these environment variables:
 
 On startup, the server creates `~/.slidetalk/admin_token` if it does not already exist. Submit that token in the profile panel to promote the current browser identity to site admin.
 
-Room participants connect to `/api/ws` with a one-time room-scoped ticket. Moderator commands currently support participant ordering, observer queue moves, role changes, and kicks.
+Room participants connect to `/api/ws` with a one-time room-scoped ticket. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, and manual or queue-based raised hands.
 
 ## Planning
 

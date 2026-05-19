@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
@@ -113,6 +114,178 @@ func TestNonModCommandForbiddenAndLastModProtected(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("last mod kick succeeded")
+	}
+}
+
+func TestTurnNextPreviousSkipsObservers(t *testing.T) {
+	hub, authService, roomService, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	third := namedUser(t, ctx, authService, "third", "Linus")
+	observer := namedUser(t, ctx, authService, "observer", "Marie")
+	if _, err := roomService.Join(ctx, roomID, third.ID, rooms.JoinInput{}); err != nil {
+		t.Fatalf("join third: %v", err)
+	}
+	if _, err := roomService.Join(ctx, roomID, observer.ID, rooms.JoinInput{}); err != nil {
+		t.Fatalf("join observer: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandPeopleSetRole,
+		Payload: mustJSON(t, map[string]string{"userId": observer.ID, "role": rooms.RoleObserver}),
+	}); err != nil {
+		t.Fatalf("set observer: %v", err)
+	}
+
+	for _, want := range []string{modID, participantID, third.ID, modID} {
+		if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandTurnNext}); err != nil {
+			t.Fatalf("next turn: %v", err)
+		}
+		snapshot, err := hub.Snapshot(ctx, roomID, modID)
+		if err != nil {
+			t.Fatalf("snapshot: %v", err)
+		}
+		if snapshot.CurrentTurn.CurrentSpeakerUserID != want {
+			t.Fatalf("current speaker = %q, want %q", snapshot.CurrentTurn.CurrentSpeakerUserID, want)
+		}
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandTurnPrevious}); err != nil {
+		t.Fatalf("previous turn: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.CurrentTurn.CurrentSpeakerUserID != third.ID {
+		t.Fatalf("previous current speaker = %q, want %q", snapshot.CurrentTurn.CurrentSpeakerUserID, third.ID)
+	}
+}
+
+func TestQueueModePicksEarliestRaisedHandAndClearsIt(t *testing.T) {
+	hub, authService, roomService, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	third := namedUser(t, ctx, authService, "third", "Linus")
+	if _, err := roomService.Join(ctx, roomID, third.ID, rooms.JoinInput{}); err != nil {
+		t.Fatalf("join third: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSettingsUpdate,
+		Payload: mustJSON(t, map[string]string{"raiseHandMode": RaiseHandModeQueue}),
+	}); err != nil {
+		t.Fatalf("set queue mode: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, third.ID, Command{Type: CommandHandRaise}); err != nil {
+		t.Fatalf("third raise: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandHandRaise}); err != nil {
+		t.Fatalf("participant raise: %v", err)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandTurnNext}); err != nil {
+		t.Fatalf("next turn: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.CurrentTurn.CurrentSpeakerUserID != third.ID {
+		t.Fatalf("current speaker = %q, want earliest raised hand %q", snapshot.CurrentTurn.CurrentSpeakerUserID, third.ID)
+	}
+	if len(snapshot.Hands) != 1 || snapshot.Hands[0].UserID != participantID {
+		t.Fatalf("hands after queue pick = %+v, want only %q", snapshot.Hands, participantID)
+	}
+}
+
+func TestManualModeDoesNotAutoPickRaisedHands(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSettingsUpdate,
+		Payload: mustJSON(t, map[string]string{"raiseHandMode": RaiseHandModeManual}),
+	}); err != nil {
+		t.Fatalf("set manual mode: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandHandRaise}); err != nil {
+		t.Fatalf("raise hand: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandTurnNext}); err != nil {
+		t.Fatalf("next turn: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.CurrentTurn.CurrentSpeakerUserID != modID {
+		t.Fatalf("current speaker = %q, want normal first speaker %q", snapshot.CurrentTurn.CurrentSpeakerUserID, modID)
+	}
+	if len(snapshot.Hands) != 1 || snapshot.Hands[0].UserID != participantID {
+		t.Fatalf("manual hands = %+v, want raised hand retained", snapshot.Hands)
+	}
+}
+
+func TestNonModTimerCommandsForbidden(t *testing.T) {
+	hub, _, _, roomID, _, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+
+	err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandTimerStart,
+		Payload: mustJSON(t, map[string]int{"durationSeconds": 300}),
+	})
+	if err == nil {
+		t.Fatal("non-mod timer command succeeded")
+	}
+}
+
+func TestTimerSnapshotIncludesServerTiming(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandTimerStart,
+		Payload: mustJSON(t, map[string]int{"durationSeconds": 300}),
+	}); err != nil {
+		t.Fatalf("start timer: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Timer.State != TimerStateRunning {
+		t.Fatalf("timer state = %q, want %q", snapshot.Timer.State, TimerStateRunning)
+	}
+	if snapshot.Timer.DurationSeconds != 300 {
+		t.Fatalf("timer duration = %d, want 300", snapshot.Timer.DurationSeconds)
+	}
+	if snapshot.Timer.StartedAt == nil || snapshot.Timer.ServerNow == "" {
+		t.Fatalf("timer lacks server timing: %+v", snapshot.Timer)
+	}
+}
+
+func TestTimerStopPreservesRemainingDuration(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandTimerStart,
+		Payload: mustJSON(t, map[string]int{"durationSeconds": 300}),
+	}); err != nil {
+		t.Fatalf("start timer: %v", err)
+	}
+	if _, err := hub.db.ExecContext(ctx, `update rooms set timer_started_at = ? where id = ?`, time.Now().UTC().Add(-80*time.Second).Format(time.RFC3339Nano), roomID); err != nil {
+		t.Fatalf("age timer: %v", err)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandTimerStop}); err != nil {
+		t.Fatalf("stop timer: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Timer.State != TimerStateStopped {
+		t.Fatalf("timer state = %q, want stopped", snapshot.Timer.State)
+	}
+	if snapshot.Timer.StartedAt != nil {
+		t.Fatalf("stopped timer kept started_at: %+v", snapshot.Timer)
+	}
+	if snapshot.Timer.DurationSeconds > 221 || snapshot.Timer.DurationSeconds < 219 {
+		t.Fatalf("remaining duration = %d, want about 220", snapshot.Timer.DurationSeconds)
 	}
 }
 

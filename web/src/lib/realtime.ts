@@ -13,6 +13,7 @@ export type RoomSnapshot = {
     title: string;
     noSlideMode: boolean;
     allowParticipantMarkdown: boolean;
+    raiseHandMode: 'off' | 'manual' | 'queue';
   };
   caller: {
     userId: string;
@@ -21,9 +22,21 @@ export type RoomSnapshot = {
   };
   participants: SnapshotMember[];
   observers: SnapshotMember[];
-  currentTurn: unknown;
-  timer: unknown;
-  hands: unknown[];
+  currentTurn: {
+    currentSpeakerUserId: string;
+    nextSpeakerUserId: string;
+  };
+  timer: {
+    state: 'stopped' | 'running';
+    durationSeconds: number;
+    startedAt: string | null;
+    serverNow: string;
+  };
+  hands: {
+    userId: string;
+    displayName: string;
+    raisedAt: string;
+  }[];
   slide: unknown;
   markdown: string;
 };
@@ -50,6 +63,28 @@ export type RealtimeCommand =
   | {
       type: 'people.kick';
       payload: { userId: string };
+    }
+  | {
+      type: 'turn.next' | 'turn.previous';
+    }
+  | {
+      type: 'turn.setCurrent';
+      payload: { userId: string };
+    }
+  | {
+      type: 'timer.start';
+      payload: { durationSeconds: number };
+    }
+  | {
+      type: 'timer.stop' | 'timer.reset' | 'hand.raise';
+    }
+  | {
+      type: 'hand.lower';
+      payload?: { userId: string };
+    }
+  | {
+      type: 'settings.update';
+      payload: { raiseHandMode: 'off' | 'manual' | 'queue' };
     };
 
 export type RealtimeConnection = {
