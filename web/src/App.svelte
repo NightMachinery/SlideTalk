@@ -1,18 +1,97 @@
 <script lang="ts">
-  import { CirclePlus, PanelsTopLeft, UsersRound } from '@lucide/svelte';
+  import { onMount } from 'svelte';
+  import { CirclePlus, DoorOpen, KeyRound, PanelsTopLeft, ShieldCheck, UserRound } from '@lucide/svelte';
+  import {
+    createRoom,
+    getMe,
+    joinRoom,
+    submitAdminToken,
+    updateProfile,
+    type RoomDetails,
+    type User
+  } from './lib/api';
 
-  const roomActions = [
-    {
-      title: 'Create a room',
-      description: 'Start a moderated discussion with a stable speaking order.',
-      icon: CirclePlus
-    },
-    {
-      title: 'Join by link',
-      description: 'Open a shared room URL and keep your browser identity.',
-      icon: UsersRound
+  let user = $state<User | null>(null);
+  let room = $state<RoomDetails | null>(null);
+  let displayName = $state('');
+  let adminToken = $state('');
+  let createTitle = $state('');
+  let createPassword = $state('');
+  let joinRoomId = $state('');
+  let joinPassword = $state('');
+  let loading = $state(true);
+  let busy = $state(false);
+  let errorMessage = $state('');
+  let notice = $state('');
+
+  const needsProfile = $derived(Boolean(user && user.displayName.trim() === ''));
+
+  onMount(async () => {
+    await loadProfile();
+  });
+
+  async function loadProfile() {
+    loading = true;
+    errorMessage = '';
+    try {
+      user = await getMe();
+      displayName = user.displayName;
+    } catch (error) {
+      errorMessage = messageFrom(error);
+    } finally {
+      loading = false;
     }
-  ];
+  }
+
+  async function saveProfile() {
+    await run(async () => {
+      user = await updateProfile(displayName);
+      displayName = user.displayName;
+      notice = 'Profile saved.';
+    });
+  }
+
+  async function promoteAdmin() {
+    await run(async () => {
+      user = await submitAdminToken(adminToken);
+      adminToken = '';
+      notice = 'Admin access enabled.';
+    });
+  }
+
+  async function submitCreateRoom() {
+    await run(async () => {
+      room = await createRoom(createTitle, createPassword);
+      createTitle = '';
+      createPassword = '';
+      notice = `Created ${room.room.title}.`;
+    });
+  }
+
+  async function submitJoinRoom() {
+    await run(async () => {
+      room = await joinRoom(joinRoomId, joinPassword);
+      joinPassword = '';
+      notice = `Joined ${room.room.title}.`;
+    });
+  }
+
+  async function run(task: () => Promise<void>) {
+    busy = true;
+    errorMessage = '';
+    notice = '';
+    try {
+      await task();
+    } catch (error) {
+      errorMessage = messageFrom(error);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function messageFrom(error: unknown) {
+    return error instanceof Error ? error.message : 'Something went wrong.';
+  }
 </script>
 
 <svelte:head>
@@ -28,43 +107,113 @@
       <PanelsTopLeft size={22} strokeWidth={2.2} />
       <span>SlideTalk</span>
     </a>
-    <div class="topbar-actions" aria-label="Application status">
-      <span class="status-dot" aria-hidden="true"></span>
-      <span>Local first seed</span>
+    <div class="topbar-actions" aria-label="Profile status">
+      <span class:admin={user?.isAdmin} class="status-dot" aria-hidden="true"></span>
+      <span>{user?.isAdmin ? 'Site admin' : user?.displayName || 'Local identity'}</span>
     </div>
   </nav>
 
-  <section class="workspace" aria-labelledby="workspace-title">
-    <div class="intro">
-      <p class="kicker">Roundtable coordination</p>
-      <h1 id="workspace-title">Keep turns, slides, and shared timing in one quiet room.</h1>
-      <p class="summary">
-        Audio stays wherever your group already meets. SlideTalk keeps the discussion order,
-        observer queue, moderator actions, and presentation state visible to everyone.
-      </p>
-    </div>
+  {#if loading}
+    <section class="loading-panel" aria-live="polite">Loading local identity...</section>
+  {:else}
+    <section class="workspace" aria-labelledby="workspace-title">
+      <div class="intro">
+        <p class="kicker">Room control</p>
+        <h1 id="workspace-title">Set your name, then open a roundtable room.</h1>
+        <p class="summary">
+          Your browser keeps a private local token. The server remembers the display name for
+          that token, so refreshes and room rejoins do not ask again.
+        </p>
+      </div>
 
-    <div class="action-panel" aria-label="Room actions">
-      {#each roomActions as action (action.title)}
-        {@const Icon = action.icon}
-        <article class="action-card">
-          <div class="icon-box" aria-hidden="true">
-            <Icon size={24} strokeWidth={2.1} />
-          </div>
-          <div>
-            <h2>{action.title}</h2>
-            <p>{action.description}</p>
-          </div>
-        </article>
-      {/each}
-    </div>
-  </section>
+      <aside class="profile-panel" aria-label="Profile settings">
+        <div class="panel-title">
+          <UserRound size={20} />
+          <h2>Profile</h2>
+        </div>
+        <label>
+          Display name
+          <input bind:value={displayName} maxlength="80" autocomplete="name" placeholder="Ada" />
+        </label>
+        <button type="button" disabled={busy || displayName.trim() === ''} onclick={saveProfile}>
+          Save profile
+        </button>
 
-  <section class="empty-state" aria-label="Room list">
-    <div>
-      <h2>No rooms yet</h2>
-      <p>Room creation lands in the next milestone. This shell verifies the Go, Vite, Svelte, and icon stack.</p>
-    </div>
-    <button type="button">Create room</button>
-  </section>
+        <div class="admin-box">
+          <div class="panel-title">
+            <ShieldCheck size={20} />
+            <h2>Admin token</h2>
+          </div>
+          <label>
+            Bootstrap token
+            <input bind:value={adminToken} autocomplete="off" placeholder="Paste token" />
+          </label>
+          <button type="button" disabled={busy || adminToken.trim() === ''} onclick={promoteAdmin}>
+            Enable admin
+          </button>
+        </div>
+      </aside>
+    </section>
+
+    <section class="control-grid" aria-label="Room actions">
+      <form class="command-panel primary-panel" onsubmit={(event) => { event.preventDefault(); submitCreateRoom(); }}>
+        <div class="panel-title">
+          <CirclePlus size={22} />
+          <h2>Create room</h2>
+        </div>
+        <label>
+          Room title
+          <input bind:value={createTitle} placeholder="Tuesday facilitation circle" disabled={needsProfile} />
+        </label>
+        <label>
+          Optional password
+          <input bind:value={createPassword} type="password" placeholder="Leave empty for open rooms" disabled={needsProfile} />
+        </label>
+        <button type="submit" disabled={busy || needsProfile || createTitle.trim() === ''}>
+          Create room
+        </button>
+      </form>
+
+      <form class="command-panel" onsubmit={(event) => { event.preventDefault(); submitJoinRoom(); }}>
+        <div class="panel-title">
+          <DoorOpen size={22} />
+          <h2>Join room</h2>
+        </div>
+        <label>
+          Room ID
+          <input bind:value={joinRoomId} placeholder="Room link or ID" disabled={needsProfile} />
+        </label>
+        <label>
+          Password
+          <input bind:value={joinPassword} type="password" placeholder="Only if required" disabled={needsProfile} />
+        </label>
+        <button type="submit" disabled={busy || needsProfile || joinRoomId.trim() === ''}>
+          Join room
+        </button>
+      </form>
+    </section>
+
+    {#if errorMessage}
+      <p class="feedback error" role="alert">{errorMessage}</p>
+    {/if}
+    {#if notice}
+      <p class="feedback notice" role="status">{notice}</p>
+    {/if}
+    {#if needsProfile}
+      <p class="feedback notice" role="status">Save a display name before creating or joining rooms.</p>
+    {/if}
+
+    {#if room}
+      <section class="room-summary" aria-label="Joined room">
+        <div>
+          <div class="panel-title">
+            <KeyRound size={20} />
+            <h2>{room.room.title}</h2>
+          </div>
+          <p>Role: {room.membership.role}. Room ID: <code>{room.room.id}</code></p>
+        </div>
+        <span>{room.room.hasPassword ? 'Password protected' : 'Open room'}</span>
+      </section>
+    {/if}
+  {/if}
 </main>

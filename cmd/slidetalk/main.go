@@ -11,8 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/config"
 	"github.com/NightMachinery/SlideTalk/internal/httpserver"
+	"github.com/NightMachinery/SlideTalk/internal/rooms"
+	"github.com/NightMachinery/SlideTalk/internal/store"
 )
 
 func main() {
@@ -30,10 +33,22 @@ func run() error {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return err
 	}
+	db, err := store.Open(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := store.Migrate(context.Background(), db.DB); err != nil {
+		return err
+	}
+	authService := auth.NewService(db, cfg.DataDir)
+	if err := authService.EnsureAdminToken(context.Background()); err != nil {
+		return err
+	}
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist")}),
+		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: rooms.NewService(db)}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
