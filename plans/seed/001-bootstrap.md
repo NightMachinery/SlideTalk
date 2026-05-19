@@ -1,6 +1,6 @@
 # 001 Bootstrap Implementation Plan
 
-> Required sub-skill for implementation: use the Go, Svelte, TDD, and verification workflows relevant to this repo. Follow `plans/seed/000-index.md`.
+> Required sub-skill for implementation: use the Go, Svelte, TDD, gpt-taste, and verification workflows relevant to this repo. Follow `plans/seed/000-index.md`.
 
 **Goal:** Create the runnable Go plus Svelte 5 foundation for SlideTalk.
 
@@ -46,6 +46,7 @@
    - Add dependencies: `@sveltejs/vite-plugin-svelte`, `svelte`, `vite`, `typescript`, `vitest`, `@testing-library/svelte`, `jsdom`, `lucide-svelte`.
    - Add scripts: `dev`, `build`, `preview`, `test`.
 6. Build a minimal app shell:
+   - Use `gpt-taste` before shaping the first app shell so the foundation avoids generic SaaS layout defaults.
    - Header with "SlideTalk".
    - Empty room list state.
    - Basic responsive layout.

@@ -1,6 +1,6 @@
 # 009 Hardening Implementation Plan
 
-> Implement after `008-self-hosting` is checked in `plans/seed/000-index.md`.
+> Implement after `008-self-hosting` is checked in `plans/seed/000-index.md`. Use `gpt-taste` during the UX hardening pass before changing visual layout, spacing, or motion.
 
 **Goal:** Harden SlideTalk for real self-hosted use: security, responsive UX, intranet constraints, and full regression coverage.
 

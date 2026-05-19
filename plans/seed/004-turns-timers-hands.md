@@ -1,6 +1,6 @@
 # 004 Turns, Timers, Hands Implementation Plan
 
-> Implement after `003-realtime-roundtable` is checked in `plans/seed/000-index.md`.
+> Implement after `003-realtime-roundtable` is checked in `plans/seed/000-index.md`. Use `gpt-taste` before shaping current-speaker, timer, and hand-queue UI.
 
 **Goal:** Add turn-taking UX: current speaker, next speaker, timers, raise-hand modes, and keyboard shortcuts.
 

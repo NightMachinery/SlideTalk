@@ -1,6 +1,6 @@
 # 003 Realtime Roundtable Implementation Plan
 
-> Implement after `002-identity-admin-rooms` is checked in `plans/seed/000-index.md`.
+> Implement after `002-identity-admin-rooms` is checked in `plans/seed/000-index.md`. Use `gpt-taste` before shaping room participant and observer list UI.
 
 **Goal:** Add deterministic live room state for participants, observers, mod ordering, role changes, and kicks.
 

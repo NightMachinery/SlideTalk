@@ -1,6 +1,6 @@
 # 007 Admin And Room Settings Implementation Plan
 
-> Implement after `006-slide-viewer-markdown` is checked in `plans/seed/000-index.md`.
+> Implement after `006-slide-viewer-markdown` is checked in `plans/seed/000-index.md`. Use `gpt-taste` before shaping admin and moderator settings panels.
 
 **Goal:** Finish admin and moderator settings flows for operational control.
 

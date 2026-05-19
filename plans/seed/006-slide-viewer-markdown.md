@@ -1,6 +1,6 @@
 # 006 Slide Viewer And Markdown Mode Implementation Plan
 
-> Implement after `005-slide-storage` is checked in `plans/seed/000-index.md`.
+> Implement after `005-slide-storage` is checked in `plans/seed/000-index.md`. Use `gpt-taste` before shaping the combined slide, people, timer, and markdown workspace.
 
 **Goal:** Add the main shared workspace: PDF viewing, mod-driven shared navigation, local follow toggle, and no-slide markdown mode.
 
