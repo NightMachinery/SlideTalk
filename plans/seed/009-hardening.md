@@ -103,4 +103,3 @@ If browser test tooling has been added, run the full browser test command docume
 - WebSocket scheme is dynamic based on the current page URL.
 - The UI remains usable on desktop and mobile.
 - Security-sensitive values are not leaked in logs or API responses.
-

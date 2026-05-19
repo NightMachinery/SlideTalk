@@ -77,4 +77,3 @@ pnpm --dir web build
 - Mods can advance turns from buttons and keyboard.
 - Shared timer starts and stops for all clients.
 - Participants can raise and lower hands according to the active mode.
-

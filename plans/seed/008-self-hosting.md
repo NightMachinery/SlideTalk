@@ -126,4 +126,3 @@ shellcheck self_host.zsh
 - Dev mode hot reloads frontend changes.
 - Script does not include hardcoded proxy values.
 - Docs are sufficient for a sysadmin to run the app on HTTP or HTTPS.
-

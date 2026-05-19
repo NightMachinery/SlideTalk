@@ -84,4 +84,3 @@ Expected:
 - `curl http://127.0.0.1:8097/healthz` returns `{"ok":true}`.
 - `pnpm --dir web dev` starts the Svelte app.
 - `README.md` explains local Go and Svelte commands.
-

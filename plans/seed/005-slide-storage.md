@@ -72,4 +72,3 @@ pnpm --dir web build
 - Re-uploading the same PDF does not duplicate the stored file.
 - Default expiration is two weeks.
 - Manual file deletion is visible in the room instead of crashing.
-

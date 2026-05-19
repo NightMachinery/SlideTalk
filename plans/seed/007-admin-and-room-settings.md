@@ -72,4 +72,3 @@ pnpm --dir web build
 - Mods can change all room settings after creation.
 - Mods can replace or remove room slides.
 - Backend authorization blocks every UI action when called by the wrong role.
-

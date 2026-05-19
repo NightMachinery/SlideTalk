@@ -81,4 +81,3 @@ pnpm --dir web build
 - Mod navigation pulls followers back to the same page only when both toggles are enabled.
 - No-slide mode displays shared markdown in the central area.
 - Markdown rendering does not execute raw scripts.
-

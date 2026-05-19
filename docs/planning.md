@@ -15,4 +15,3 @@ The current seed plan intentionally builds the product in layers:
 7. Add admin and room settings.
 8. Add self-hosting.
 9. Harden UX, security, and regression coverage.
-

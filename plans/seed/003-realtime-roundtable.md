@@ -98,4 +98,3 @@ pnpm --dir web build
 - Mod changes are visible to all connected clients without refresh.
 - Kicked users cannot remain connected or rejoin the room.
 - Observer list and participant list can be collapsed independently in the UI.
-
