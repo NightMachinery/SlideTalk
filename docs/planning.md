@@ -1,6 +1,6 @@
 # SlideTalk Planning
 
-Seed milestone plans live in `../plans/seed/`.
+Seed milestone plans live in `../plans/seed/`. Milestone 001 has created the runnable Go and Svelte foundation.
 
 Start with `../plans/seed/000-index.md`. A fresh implementation context should read that index, implement the first unchecked milestone, update the checkbox only after verification passes, commit the milestone, and stop.
 

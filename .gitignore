@@ -1,0 +1,10 @@
+# Go
+/bin/
+
+# Svelte/Vite
+/web/node_modules/
+/web/dist/
+
+# Local runtime data
+/.slidetalk/
+
