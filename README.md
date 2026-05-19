@@ -46,6 +46,8 @@ POST /api/me/admin-token
 POST /api/rooms
 GET /api/rooms/{roomId}
 POST /api/rooms/{roomId}/join
+POST /api/rooms/{roomId}/ws-ticket
+GET /api/ws?ticket={ticket}
 ```
 
 Start the frontend dev server:
@@ -66,6 +68,8 @@ The Go server reads these environment variables:
 - `SLIDETALK_DEV`: set to `1` for development mode
 
 On startup, the server creates `~/.slidetalk/admin_token` if it does not already exist. Submit that token in the profile panel to promote the current browser identity to site admin.
+
+Room participants connect to `/api/ws` with a one-time room-scoped ticket. Moderator commands currently support participant ordering, observer queue moves, role changes, and kicks.
 
 ## Planning
 

@@ -3,15 +3,20 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/NightMachinery/SlideTalk/internal/auth"
+	"github.com/NightMachinery/SlideTalk/internal/realtime"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
 	"github.com/NightMachinery/SlideTalk/internal/store"
+	"nhooyr.io/websocket"
+	"nhooyr.io/websocket/wsjson"
 )
 
 func TestHealthzReturnsOK(t *testing.T) {
@@ -101,6 +106,41 @@ func TestRoomCreateAndPasswordJoin(t *testing.T) {
 	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"password":"secret"}`, "guest"), http.StatusOK)
 }
 
+func TestWSTicketEndpointAndSocketSnapshot(t *testing.T) {
+	server := httptest.NewServer(newAPITestServer(t))
+	defer server.Close()
+
+	mustHTTP(t, http.MethodPatch, server.URL+"/api/me", `{"displayName":"Ada"}`, "creator", http.StatusOK)
+	createBody := mustHTTP(t, http.MethodPost, server.URL+"/api/rooms", `{"title":"Live","password":""}`, "creator", http.StatusCreated)
+	roomID := extractRoomID(t, createBody)
+	ticketBody := mustHTTP(t, http.MethodPost, server.URL+"/api/rooms/"+roomID+"/ws-ticket", `{}`, "creator", http.StatusOK)
+	var ticket realtime.WSTicket
+	if err := json.Unmarshal([]byte(ticketBody), &ticket); err != nil {
+		t.Fatalf("decode ticket: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+server.URL[len("http"):]+"/api/ws?ticket="+ticket.Ticket, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	var event realtime.Event
+	if err := wsjson.Read(ctx, conn, &event); err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	if event.Type != realtime.EventSnapshot || event.RoomID != roomID {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+
+	_, _, err = websocket.Dial(ctx, "ws"+server.URL[len("http"):]+"/api/ws?ticket="+ticket.Ticket, nil)
+	if err == nil {
+		t.Fatal("reused websocket ticket connected")
+	}
+}
+
 func newAPITestServer(t *testing.T) http.Handler {
 	t.Helper()
 	return newAPITestServerWithDataDir(t, t.TempDir())
@@ -127,6 +167,7 @@ func newAPITestServerWithDataDir(t *testing.T, dataDir string) http.Handler {
 	return New(ServerOptions{
 		AuthService: authService,
 		RoomService: rooms.NewService(db),
+		Hub:         realtime.NewHub(db, authService, rooms.NewService(db)),
 	})
 }
 
@@ -151,6 +192,29 @@ func serveJSON(t *testing.T, handler http.Handler, request *http.Request, wantSt
 		t.Fatalf("%s %s status = %d, want %d, body = %s", request.Method, request.URL.Path, response.Code, wantStatus, response.Body.String())
 	}
 	return response
+}
+
+func mustHTTP(t *testing.T, method string, url string, body string, token string, wantStatus int) string {
+	t.Helper()
+	request, err := http.NewRequest(method, url, bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("http request: %v", err)
+	}
+	defer response.Body.Close()
+	buffer := new(bytes.Buffer)
+	if _, err := buffer.ReadFrom(response.Body); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if response.StatusCode != wantStatus {
+		t.Fatalf("%s %s status = %d, want %d, body = %s", method, url, response.StatusCode, wantStatus, buffer.String())
+	}
+	return buffer.String()
 }
 
 func extractRoomID(t *testing.T, body string) string {

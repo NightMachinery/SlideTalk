@@ -46,6 +46,14 @@ type Membership struct {
 	DisplayOrder int    `json:"displayOrder"`
 }
 
+// Member is a room member with profile data.
+type Member struct {
+	UserID       string
+	DisplayName  string
+	Role         string
+	DisplayOrder int
+}
+
 // Details contains room metadata and caller membership.
 type Details struct {
 	Room       Room       `json:"room"`
@@ -182,6 +190,132 @@ func (s *Service) GetForUser(ctx context.Context, roomID string, userID string) 
 	return details, nil
 }
 
+// ListMembers returns non-kicked room members in display order.
+func (s *Service) ListMembers(ctx context.Context, roomID string) ([]Member, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`select u.id, u.display_name, rm.role, rm.display_order
+		 from room_members rm
+		 join users u on u.id = rm.user_id
+		 where rm.room_id = ? and rm.kicked_at is null
+		 order by rm.display_order asc, rm.joined_at asc`,
+		roomID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list members: %w", err)
+	}
+	defer rows.Close()
+	var members []Member
+	for rows.Next() {
+		var member Member
+		if err := rows.Scan(&member.UserID, &member.DisplayName, &member.Role, &member.DisplayOrder); err != nil {
+			return nil, fmt.Errorf("scan member: %w", err)
+		}
+		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate members: %w", err)
+	}
+	return members, nil
+}
+
+// SetRole changes a member role while preserving at least one moderator.
+func (s *Service) SetRole(ctx context.Context, roomID string, userID string, role string) error {
+	if role != RoleMod && role != RoleParticipant && role != RoleObserver {
+		return ErrInvalidRole
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin set role: %w", err)
+	}
+	defer rollback(tx)
+	currentRole, err := memberRole(ctx, tx, roomID, userID)
+	if err != nil {
+		return err
+	}
+	if currentRole == RoleMod && role != RoleMod {
+		count, err := modCount(ctx, tx, roomID)
+		if err != nil {
+			return err
+		}
+		if count <= 1 {
+			return ErrLastMod
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `update room_members set role = ? where room_id = ? and user_id = ? and kicked_at is null`, role, roomID, userID); err != nil {
+		return fmt.Errorf("update role: %w", err)
+	}
+	return tx.Commit()
+}
+
+// Reorder writes contiguous display order for active participants and observers.
+func (s *Service) Reorder(ctx context.Context, roomID string, participantIDs []string, observerIDs []string) error {
+	members, err := s.ListMembers(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	active := make(map[string]string, len(members))
+	for _, member := range members {
+		active[member.UserID] = member.Role
+	}
+	seen := make(map[string]bool, len(members))
+	allIDs := append(append([]string{}, participantIDs...), observerIDs...)
+	if len(allIDs) != len(members) {
+		return ErrInvalidReorder
+	}
+	for _, userID := range allIDs {
+		if active[userID] == "" || seen[userID] {
+			return ErrInvalidReorder
+		}
+		seen[userID] = true
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reorder: %w", err)
+	}
+	defer rollback(tx)
+	order := 0
+	for _, userID := range participantIDs {
+		if _, err := tx.ExecContext(ctx, `update room_members set role = ?, display_order = ? where room_id = ? and user_id = ?`, participantRoleFor(active[userID]), order, roomID, userID); err != nil {
+			return fmt.Errorf("update participant order: %w", err)
+		}
+		order++
+	}
+	for _, userID := range observerIDs {
+		if _, err := tx.ExecContext(ctx, `update room_members set role = ?, display_order = ? where room_id = ? and user_id = ?`, RoleObserver, order, roomID, userID); err != nil {
+			return fmt.Errorf("update observer order: %w", err)
+		}
+		order++
+	}
+	return tx.Commit()
+}
+
+// Kick marks a member removed while preserving at least one moderator.
+func (s *Service) Kick(ctx context.Context, roomID string, userID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin kick: %w", err)
+	}
+	defer rollback(tx)
+	role, err := memberRole(ctx, tx, roomID, userID)
+	if err != nil {
+		return err
+	}
+	if role == RoleMod {
+		count, err := modCount(ctx, tx, roomID)
+		if err != nil {
+			return err
+		}
+		if count <= 1 {
+			return ErrLastMod
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `update room_members set kicked_at = ? where room_id = ? and user_id = ?`, nowText(), roomID, userID); err != nil {
+		return fmt.Errorf("kick member: %w", err)
+	}
+	return tx.Commit()
+}
+
 // MarkKickedForTest records a kicked member. Realtime mod controls replace this in the next milestone.
 func (s *Service) MarkKickedForTest(ctx context.Context, roomID string, userID string) error {
 	_, err := s.db.ExecContext(ctx, `update room_members set kicked_at = ? where room_id = ? and user_id = ?`, nowText(), roomID, userID)
@@ -246,4 +380,34 @@ var (
 	ErrKicked              = errors.New("member was kicked")
 	ErrNotFound            = errors.New("not found")
 	ErrNotMember           = errors.New("not a room member")
+	ErrInvalidRole         = errors.New("invalid member role")
+	ErrInvalidReorder      = errors.New("invalid member order")
+	ErrLastMod             = errors.New("cannot remove the last moderator")
 )
+
+func memberRole(ctx context.Context, tx *sql.Tx, roomID string, userID string) (string, error) {
+	var role string
+	err := tx.QueryRowContext(ctx, `select role from room_members where room_id = ? and user_id = ? and kicked_at is null`, roomID, userID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotMember
+	}
+	if err != nil {
+		return "", fmt.Errorf("read member role: %w", err)
+	}
+	return role, nil
+}
+
+func modCount(ctx context.Context, tx *sql.Tx, roomID string) (int, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `select count(*) from room_members where room_id = ? and role = ? and kicked_at is null`, roomID, RoleMod).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count mods: %w", err)
+	}
+	return count, nil
+}
+
+func participantRoleFor(current string) string {
+	if current == RoleMod {
+		return RoleMod
+	}
+	return RoleParticipant
+}

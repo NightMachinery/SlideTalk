@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/NightMachinery/SlideTalk/internal/auth"
+	"github.com/NightMachinery/SlideTalk/internal/realtime"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
+	"nhooyr.io/websocket"
+	"nhooyr.io/websocket/wsjson"
 )
 
 // ServerOptions configures the SlideTalk HTTP server.
@@ -21,6 +24,7 @@ type ServerOptions struct {
 	StaticDir   string
 	AuthService *auth.Service
 	RoomService *rooms.Service
+	Hub         *realtime.Hub
 }
 
 // New returns a configured HTTP handler for the SlideTalk server.
@@ -30,6 +34,7 @@ func New(options ServerOptions) http.Handler {
 	app := &appServer{
 		auth:         options.AuthService,
 		rooms:        options.RoomService,
+		hub:          options.Hub,
 		adminLimiter: newFailureLimiter(5, 15*time.Minute),
 	}
 
@@ -61,6 +66,7 @@ func New(options ServerOptions) http.Handler {
 type appServer struct {
 	auth         *auth.Service
 	rooms        *rooms.Service
+	hub          *realtime.Hub
 	adminLimiter *failureLimiter
 }
 
@@ -82,6 +88,10 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.getRoom)(w, withRoomID(r, roomPathValue(r.URL.Path, "")))
 	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/join") != "":
 		s.withUser(s.joinRoom)(w, withRoomID(r, roomPathValue(r.URL.Path, "/join")))
+	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/ws-ticket") != "":
+		s.withUser(s.postWSTicket)(w, withRoomID(r, roomPathValue(r.URL.Path, "/ws-ticket")))
+	case r.Method == http.MethodGet && r.URL.Path == "/api/ws":
+		s.handleWS(w, r)
 	default:
 		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
 	}
@@ -215,6 +225,77 @@ func (s *appServer) joinRoom(w http.ResponseWriter, r *http.Request, user auth.U
 	writeJSON(w, http.StatusOK, details)
 }
 
+func (s *appServer) postWSTicket(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.hub == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	ticket, err := s.hub.IssueTicket(r.Context(), roomIDFromContext(r.Context()), user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ticket)
+}
+
+func (s *appServer) handleWS(w http.ResponseWriter, r *http.Request) {
+	if s.hub == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	claims, err := s.hub.ConsumeTicket(r.URL.Query().Get("ticket"))
+	if err != nil {
+		writeProblem(w, http.StatusUnauthorized, "Unauthorized", "Invalid websocket ticket.")
+		return
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	client := &realtime.Client{RoomID: claims.RoomID, UserID: claims.UserID, Send: make(chan realtime.Event, 16)}
+	s.hub.Register(client)
+	defer s.hub.Unregister(client)
+	s.hub.BroadcastSnapshot(r.Context(), claims.RoomID, "")
+
+	errCh := make(chan error, 1)
+	go func() {
+		for event := range client.Send {
+			if err := wsjson.Write(r.Context(), conn, event); err != nil {
+				errCh <- err
+				return
+			}
+		}
+		errCh <- nil
+	}()
+	for {
+		var command realtime.Command
+		readErr := make(chan error, 1)
+		go func() {
+			readErr <- wsjson.Read(r.Context(), conn, &command)
+		}()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				return
+			}
+		case err := <-readErr:
+			if err != nil {
+				return
+			}
+		}
+		if command.Type == "" {
+			return
+		}
+		if err := s.hub.HandleCommand(r.Context(), claims.RoomID, claims.UserID, command); err != nil {
+			client.Send <- realtime.Event{Type: realtime.EventError, RequestID: command.RequestID, Code: codeForRealtimeError(err), Message: messageForRealtimeError(err)}
+			continue
+		}
+		s.hub.BroadcastSnapshot(r.Context(), claims.RoomID, command.RequestID)
+	}
+}
+
 func writeRoomError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, rooms.ErrInvalidPassword):
@@ -229,6 +310,28 @@ func writeRoomError(w http.ResponseWriter, err error) {
 		writeProblem(w, http.StatusForbidden, "Forbidden", "You were removed from this room.")
 	default:
 		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Room operation failed.")
+	}
+}
+
+func codeForRealtimeError(err error) string {
+	switch {
+	case errors.Is(err, realtime.ErrForbidden):
+		return "forbidden"
+	case errors.Is(err, realtime.ErrBadCommand), errors.Is(err, rooms.ErrInvalidRole), errors.Is(err, rooms.ErrInvalidReorder):
+		return "bad_request"
+	default:
+		return "failed"
+	}
+}
+
+func messageForRealtimeError(err error) string {
+	switch {
+	case errors.Is(err, realtime.ErrForbidden):
+		return "Only moderators can change room order."
+	case errors.Is(err, rooms.ErrLastMod):
+		return "A room must keep at least one moderator."
+	default:
+		return err.Error()
 	}
 }
 

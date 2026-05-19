@@ -22,6 +22,11 @@ export type RoomDetails = {
   membership: Membership;
 };
 
+export type WSTicket = {
+  ticket: string;
+  expiresAt: string;
+};
+
 const tokenKey = 'slidetalk.authToken';
 
 export function getAuthToken(): string {
@@ -69,6 +74,13 @@ export async function joinRoom(roomId: string, password: string): Promise<RoomDe
 
 export async function getRoom(roomId: string): Promise<RoomDetails> {
   return api(`/api/rooms/${encodeURIComponent(roomId)}`);
+}
+
+export async function createWSTicket(roomId: string): Promise<WSTicket> {
+  return api(`/api/rooms/${encodeURIComponent(roomId)}/ws-ticket`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  });
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

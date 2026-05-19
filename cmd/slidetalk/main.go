@@ -14,6 +14,7 @@ import (
 	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/config"
 	"github.com/NightMachinery/SlideTalk/internal/httpserver"
+	"github.com/NightMachinery/SlideTalk/internal/realtime"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
 	"github.com/NightMachinery/SlideTalk/internal/store"
 )
@@ -45,10 +46,11 @@ func run() error {
 	if err := authService.EnsureAdminToken(context.Background()); err != nil {
 		return err
 	}
+	roomService := rooms.NewService(db)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: rooms.NewService(db)}),
+		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: roomService, Hub: realtime.NewHub(db, authService, roomService)}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

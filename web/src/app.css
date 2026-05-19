@@ -277,6 +277,136 @@ h2 {
   font-weight: 740;
 }
 
+.roundtable {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(280px, 4fr);
+  gap: 18px;
+  max-width: 1180px;
+  margin: 24px auto 0;
+}
+
+.room-board,
+.observer-panel {
+  border: 1px solid oklch(82% 0.025 245);
+  border-radius: 8px;
+  background: oklch(99% 0.006 235 / 0.88);
+  box-shadow: 0 24px 70px oklch(38% 0.05 245 / 0.12);
+}
+
+.room-board {
+  padding: 20px;
+}
+
+.observer-panel {
+  padding: 16px;
+}
+
+.room-board-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.room-board-header h2 {
+  font-size: clamp(1.7rem, 3vw, 2.7rem);
+}
+
+.connection-pill {
+  border-radius: 999px;
+  padding: 7px 11px;
+  color: oklch(34% 0.04 245);
+  background: oklch(91% 0.018 245);
+  font-size: 0.82rem;
+  font-weight: 780;
+}
+
+.connection-pill.connected {
+  color: oklch(30% 0.07 165);
+  background: oklch(91% 0.06 165);
+}
+
+.connection-pill.disconnected {
+  color: oklch(36% 0.12 28);
+  background: oklch(94% 0.04 28);
+}
+
+.speaker-ledger,
+.member-list {
+  display: grid;
+  gap: 12px;
+}
+
+.list-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  background: oklch(93% 0.03 220);
+}
+
+.list-toggle span {
+  flex: 1;
+  text-align: left;
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid oklch(84% 0.018 245);
+  border-radius: 8px;
+  padding: 14px;
+  background: oklch(98% 0.006 235);
+}
+
+.observer-row {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.member-identity,
+.member-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.member-identity h3 {
+  margin: 0 0 2px;
+  color: oklch(22% 0.018 245);
+  font-size: 1rem;
+}
+
+.member-identity p {
+  margin: 0;
+  color: oklch(45% 0.03 245);
+  font-size: 0.86rem;
+}
+
+.member-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.member-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.82rem;
+}
+
+.danger-button {
+  color: oklch(97% 0.01 28);
+  background: oklch(48% 0.17 28);
+}
+
+.danger-button:hover:not(:disabled) {
+  background: oklch(42% 0.17 28);
+}
+
 code {
   border-radius: 6px;
   padding: 3px 6px;
@@ -290,8 +420,17 @@ code {
 
   .workspace,
   .control-grid,
+  .roundtable,
   .room-summary {
     grid-template-columns: 1fr;
+  }
+
+  .member-row {
+    grid-template-columns: 1fr;
+  }
+
+  .member-actions {
+    justify-content: flex-start;
   }
 
   .room-summary {

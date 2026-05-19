@@ -10,9 +10,14 @@
     type RoomDetails,
     type User
   } from './lib/api';
+  import { connectRealtime, type RealtimeConnection, type RealtimeEvent, type RoomSnapshot } from './lib/realtime';
+  import Roundtable from './lib/room/Roundtable.svelte';
 
   let user = $state<User | null>(null);
   let room = $state<RoomDetails | null>(null);
+  let snapshot = $state<RoomSnapshot | null>(null);
+  let realtime = $state<RealtimeConnection | null>(null);
+  let connectionStatus = $state<'connecting' | 'connected' | 'disconnected'>('disconnected');
   let displayName = $state('');
   let adminToken = $state('');
   let createTitle = $state('');
@@ -62,6 +67,7 @@
   async function submitCreateRoom() {
     await run(async () => {
       room = await createRoom(createTitle, createPassword);
+      await openRealtime(room.room.id);
       createTitle = '';
       createPassword = '';
       notice = `Created ${room.room.title}.`;
@@ -71,6 +77,7 @@
   async function submitJoinRoom() {
     await run(async () => {
       room = await joinRoom(joinRoomId, joinPassword);
+      await openRealtime(room.room.id);
       joinPassword = '';
       notice = `Joined ${room.room.title}.`;
     });
@@ -91,6 +98,26 @@
 
   function messageFrom(error: unknown) {
     return error instanceof Error ? error.message : 'Something went wrong.';
+  }
+
+  async function openRealtime(roomId: string) {
+    realtime?.close();
+    snapshot = null;
+    connectionStatus = 'connecting';
+    realtime = await connectRealtime(
+      roomId,
+      (event: RealtimeEvent) => {
+        if (event.type === 'room.snapshot' && event.payload) {
+          snapshot = event.payload;
+        }
+        if (event.type === 'error') {
+          errorMessage = event.message ?? 'Realtime command failed.';
+        }
+      },
+      (status) => {
+        connectionStatus = status;
+      }
+    );
   }
 </script>
 
@@ -203,7 +230,15 @@
       <p class="feedback notice" role="status">Save a display name before creating or joining rooms.</p>
     {/if}
 
-    {#if room}
+    {#if snapshot && realtime}
+      <Roundtable
+        {snapshot}
+        status={connectionStatus}
+        send={(command) => {
+          realtime?.send(command);
+        }}
+      />
+    {:else if room}
       <section class="room-summary" aria-label="Joined room">
         <div>
           <div class="panel-title">
