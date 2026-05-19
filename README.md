@@ -66,4 +66,3 @@ Seed milestone plans live in [plans/seed/000-index.md](plans/seed/000-index.md).
 ```text
 Implement the next milestone.
 ```
-
