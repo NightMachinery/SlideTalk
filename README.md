@@ -2,7 +2,7 @@
 
 SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking order, observer queue, shared timer, slides, and optional discussion notes synchronized for groups that already have a separate audio call.
 
-This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, and hand-raise queues.
+This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, and admin-only PDF slide storage with expiration cleanup.
 
 ## Requirements
 
@@ -47,6 +47,8 @@ POST /api/rooms
 GET /api/rooms/{roomId}
 POST /api/rooms/{roomId}/join
 POST /api/rooms/{roomId}/ws-ticket
+GET /api/slides/{sha256}
+POST /api/slides
 GET /api/ws?ticket={ticket}
 ```
 
@@ -66,10 +68,11 @@ The Go server reads these environment variables:
 - `SLIDETALK_DATA_DIR`: app data directory, default `~/.slidetalk`
 - `SLIDETALK_PUBLIC_URL`: public URL used by later deployment milestones
 - `SLIDETALK_DEV`: set to `1` for development mode
+- `SLIDETALK_SLIDE_MAX_BYTES`: PDF upload limit, default `209715200`
 
-On startup, the server creates `~/.slidetalk/admin_token` if it does not already exist. Submit that token in the profile panel to promote the current browser identity to site admin.
+On startup, the server creates `~/.slidetalk/admin_token` and `~/.slidetalk/slides` if they do not already exist. Submit that token in the profile panel to promote the current browser identity to site admin.
 
-Room participants connect to `/api/ws` with a one-time room-scoped ticket. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, and manual or queue-based raised hands.
+Room participants connect to `/api/ws` with a one-time room-scoped ticket. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, and manual or queue-based raised hands. Site admins can attach PDF slide decks to rooms; the browser hashes files before upload, the server stores files by SHA-256, and expired room references are cleaned up hourly.
 
 ## Planning
 

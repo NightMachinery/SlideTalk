@@ -16,6 +16,7 @@ import (
 	"github.com/NightMachinery/SlideTalk/internal/httpserver"
 	"github.com/NightMachinery/SlideTalk/internal/realtime"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
+	"github.com/NightMachinery/SlideTalk/internal/slides"
 	"github.com/NightMachinery/SlideTalk/internal/store"
 )
 
@@ -47,10 +48,20 @@ func run() error {
 		return err
 	}
 	roomService := rooms.NewService(db)
+	slideService, err := slides.NewService(db, filepath.Join(cfg.DataDir, "slides"), cfg.SlideMaxBytes)
+	if err != nil {
+		return err
+	}
+	if err := slideService.Cleanup(context.Background(), time.Now().UTC()); err != nil {
+		return err
+	}
+	cleanupCtx, stopCleanup := context.WithCancel(context.Background())
+	defer stopCleanup()
+	go runSlideCleanup(cleanupCtx, slideService)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: roomService, Hub: realtime.NewHub(db, authService, roomService)}),
+		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: roomService, Hub: realtime.NewHub(db, authService, roomService), SlideService: slideService}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -75,5 +86,20 @@ func run() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.Shutdown(ctx)
+	}
+}
+
+func runSlideCleanup(ctx context.Context, service *slides.Service) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case at := <-ticker.C:
+			if err := service.Cleanup(ctx, at.UTC()); err != nil {
+				log.Printf("slide cleanup failed: %v", err)
+			}
+		}
 	}
 }

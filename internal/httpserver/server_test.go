@@ -3,7 +3,10 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +17,7 @@ import (
 	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/realtime"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
+	"github.com/NightMachinery/SlideTalk/internal/slides"
 	"github.com/NightMachinery/SlideTalk/internal/store"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
@@ -141,6 +145,82 @@ func TestWSTicketEndpointAndSocketSnapshot(t *testing.T) {
 	}
 }
 
+func TestSlideUploadRejectsNonAdmin(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Decks","password":""}`, "creator"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+	body, contentType := slideUploadBody(t, roomID, "deck.pdf", []byte("%PDF-1.7\n"), sha256HexTest([]byte("%PDF-1.7\n")))
+	request := httptest.NewRequest(http.MethodPost, "/api/slides", body)
+	request.Header.Set("Authorization", "Bearer creator")
+	request.Header.Set("Content-Type", contentType)
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestSlideUploadRejectsNonPDFExtension(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	body, contentType := slideUploadBody(t, roomID, "deck.txt", []byte("%PDF-1.7\n"), sha256HexTest([]byte("%PDF-1.7\n")))
+	request := httptest.NewRequest(http.MethodPost, "/api/slides", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestSlideUploadRejectsHashMismatch(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	body, contentType := slideUploadBody(t, roomID, "deck.pdf", []byte("%PDF-1.7\n"), sha256HexTest([]byte("other")))
+	request := httptest.NewRequest(http.MethodPost, "/api/slides", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestSlideStatusReportsMissingPhysicalFile(t *testing.T) {
+	dataDir := t.TempDir()
+	server := newAPITestServerWithDataDir(t, dataDir)
+	roomID := createAdminRoom(t, server)
+	content := []byte("%PDF-1.7\nmissing\n")
+	sum := sha256HexTest(content)
+	body, contentType := slideUploadBody(t, roomID, "deck.pdf", content, sum)
+	request := httptest.NewRequest(http.MethodPost, "/api/slides", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusCreated)
+	if err := os.Remove(filepath.Join(dataDir, "slides", sum+".pdf")); err != nil {
+		t.Fatalf("remove slide: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, apiRequest(http.MethodGet, "/api/slides/"+sum, "", "admin"))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status code = %d body = %s", response.Code, response.Body.String())
+	}
+	if !bytes.Contains(response.Body.Bytes(), []byte(`"missing":true`)) {
+		t.Fatalf("expected missing status, got %s", response.Body.String())
+	}
+}
+
 func newAPITestServer(t *testing.T) http.Handler {
 	t.Helper()
 	return newAPITestServerWithDataDir(t, t.TempDir())
@@ -164,11 +244,12 @@ func newAPITestServerWithDataDir(t *testing.T, dataDir string) http.Handler {
 	if err := authService.EnsureAdminToken(context.Background()); err != nil {
 		t.Fatalf("ensure admin token: %v", err)
 	}
-	return New(ServerOptions{
-		AuthService: authService,
-		RoomService: rooms.NewService(db),
-		Hub:         realtime.NewHub(db, authService, rooms.NewService(db)),
-	})
+	return dataDirHandler{Handler: New(ServerOptions{
+		AuthService:  authService,
+		RoomService:  rooms.NewService(db),
+		Hub:          realtime.NewHub(db, authService, rooms.NewService(db)),
+		SlideService: mustSlideService(t, db, dataDir),
+	}), dataDir: dataDir}
 }
 
 func apiRequest(method string, path string, body string, token string) *http.Request {
@@ -230,4 +311,73 @@ func extractRoomID(t *testing.T, body string) string {
 		t.Fatalf("could not find id terminator in %s", body)
 	}
 	return rest[:end]
+}
+
+func createAdminRoom(t *testing.T, server http.Handler) string {
+	t.Helper()
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "admin"), http.StatusOK)
+	data, ok := serverDataDir(server)
+	if ok {
+		token, err := os.ReadFile(filepath.Join(data, "admin_token"))
+		if err != nil {
+			t.Fatalf("read admin token: %v", err)
+		}
+		serveJSON(t, server, apiRequest(http.MethodPost, "/api/me/admin-token", `{"token":"`+string(token)+`"}`, "admin"), http.StatusOK)
+	} else {
+		t.Fatal("test server did not expose data dir")
+	}
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Decks","password":""}`, "admin"), http.StatusCreated)
+	return extractRoomID(t, create.Body.String())
+}
+
+func slideUploadBody(t *testing.T, roomID string, name string, content []byte, sha string) (*bytes.Buffer, string) {
+	t.Helper()
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	fields := map[string]string{
+		"roomId":       roomID,
+		"sha256":       sha,
+		"originalName": name,
+		"expiresAt":    time.Now().UTC().Add(14 * 24 * time.Hour).Format(time.RFC3339Nano),
+	}
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("write field: %v", err)
+		}
+	}
+	part, err := writer.CreateFormFile("file", name)
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	return body, writer.FormDataContentType()
+}
+
+func sha256HexTest(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+type dataDirHandler struct {
+	http.Handler
+	dataDir string
+}
+
+func serverDataDir(handler http.Handler) (string, bool) {
+	value, ok := handler.(dataDirHandler)
+	return value.dataDir, ok
+}
+
+func mustSlideService(t *testing.T, db *store.DB, dataDir string) *slides.Service {
+	t.Helper()
+	service, err := slides.NewService(db, filepath.Join(dataDir, "slides"), 200*1024*1024)
+	if err != nil {
+		t.Fatalf("new slide service: %v", err)
+	}
+	return service
 }

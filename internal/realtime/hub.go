@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -185,6 +186,11 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		return Snapshot{}, err
 	}
 	snapshot.Hands = hands
+	slide, err := h.roomSlide(ctx, roomID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot.Slide = slide
 	return snapshot, nil
 }
 
@@ -550,6 +556,37 @@ func (h *Hub) cleanMemberTurnState(ctx context.Context, roomID string, userID st
 		}
 	}
 	return nil
+}
+
+func (h *Hub) roomSlide(ctx context.Context, roomID string) (*SnapshotSlide, error) {
+	var slide SnapshotSlide
+	var storedPath string
+	var missingAt sql.NullString
+	err := h.db.QueryRowContext(
+		ctx,
+		`select rs.sha256, rs.original_name, rs.expires_at, sf.stored_path, sf.missing_at
+		 from room_slides rs
+		 join slide_files sf on sf.sha256 = rs.sha256
+		 where rs.room_id = ?`,
+		roomID,
+	).Scan(&slide.SHA256, &slide.OriginalName, &slide.ExpiresAt, &storedPath, &missingAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read room slide: %w", err)
+	}
+	if _, err := os.Stat(storedPath); errors.Is(err, os.ErrNotExist) {
+		slide.Missing = true
+		if !missingAt.Valid {
+			if _, err := h.db.ExecContext(ctx, `update slide_files set missing_at = ? where sha256 = ?`, time.Now().UTC().Format(time.RFC3339Nano), slide.SHA256); err != nil {
+				return nil, fmt.Errorf("mark snapshot slide missing: %w", err)
+			}
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("stat room slide: %w", err)
+	}
+	return &slide, nil
 }
 
 func participantIndex(participants []SnapshotMember, userID string) int {

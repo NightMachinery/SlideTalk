@@ -54,6 +54,29 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			foreign key(room_id) references rooms(id),
 			foreign key(user_id) references users(id)
 		)`,
+		`create table if not exists slide_files (
+			sha256 text primary key,
+			ext text not null,
+			size_bytes integer not null,
+			mime_type text not null,
+			stored_path text not null,
+			uploaded_by_user_id text not null,
+			created_at text not null,
+			missing_at text,
+			foreign key(uploaded_by_user_id) references users(id)
+		)`,
+		`create table if not exists room_slides (
+			room_id text primary key,
+			sha256 text not null,
+			original_name text not null,
+			expires_at text not null,
+			uploaded_by_user_id text not null,
+			created_at text not null,
+			updated_at text not null,
+			foreign key(room_id) references rooms(id),
+			foreign key(sha256) references slide_files(sha256),
+			foreign key(uploaded_by_user_id) references users(id)
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {

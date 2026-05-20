@@ -60,7 +60,7 @@ type Snapshot struct {
 	CurrentTurn  SnapshotTurn     `json:"currentTurn"`
 	Timer        SnapshotTimer    `json:"timer"`
 	Hands        []SnapshotHand   `json:"hands"`
-	Slide        any              `json:"slide"`
+	Slide        *SnapshotSlide   `json:"slide"`
 	Markdown     string           `json:"markdown"`
 }
 
@@ -107,6 +107,14 @@ type SnapshotHand struct {
 	UserID      string `json:"userId"`
 	DisplayName string `json:"displayName"`
 	RaisedAt    string `json:"raisedAt"`
+}
+
+// SnapshotSlide describes the room's attached deck.
+type SnapshotSlide struct {
+	SHA256       string `json:"sha256"`
+	OriginalName string `json:"originalName"`
+	ExpiresAt    string `json:"expiresAt"`
+	Missing      bool   `json:"missing"`
 }
 
 // WSTicket is a short-lived room-scoped connection token.

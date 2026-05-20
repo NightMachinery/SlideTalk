@@ -27,6 +27,13 @@ export type WSTicket = {
   expiresAt: string;
 };
 
+export type SlideStatus = {
+  exists: boolean;
+  sha256: string;
+  alreadyUploaded: boolean;
+  missing: boolean;
+};
+
 const tokenKey = 'slidetalk.authToken';
 
 export function getAuthToken(): string {
@@ -80,6 +87,55 @@ export async function createWSTicket(roomId: string): Promise<WSTicket> {
   return api(`/api/rooms/${encodeURIComponent(roomId)}/ws-ticket`, {
     method: 'POST',
     body: JSON.stringify({})
+  });
+}
+
+export async function getSlideStatus(sha256: string): Promise<SlideStatus> {
+  return api(`/api/slides/${encodeURIComponent(sha256)}`);
+}
+
+export function uploadSlide(
+  input: {
+    roomId: string;
+    sha256: string;
+    expiresAt: string;
+    originalName: string;
+    file?: File;
+  },
+  onProgress: (percent: number) => void
+): Promise<SlideStatus> {
+  const form = new FormData();
+  form.set('roomId', input.roomId);
+  form.set('sha256', input.sha256);
+  form.set('expiresAt', input.expiresAt);
+  form.set('originalName', input.originalName);
+  if (input.file) {
+    form.set('file', input.file, input.originalName);
+  }
+
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/slides');
+    request.setRequestHeader('Authorization', `Bearer ${getAuthToken()}`);
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    request.onload = () => {
+      if (request.status < 200 || request.status >= 300) {
+        try {
+          const problem = JSON.parse(request.responseText) as { detail?: string };
+          reject(new Error(problem.detail ?? 'Request failed.'));
+        } catch {
+          reject(new Error('Request failed.'));
+        }
+        return;
+      }
+      resolve(JSON.parse(request.responseText) as SlideStatus);
+    };
+    request.onerror = () => reject(new Error('Slide upload failed.'));
+    request.send(form);
   });
 }
 

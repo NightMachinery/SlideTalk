@@ -37,7 +37,12 @@ export type RoomSnapshot = {
     displayName: string;
     raisedAt: string;
   }[];
-  slide: unknown;
+  slide: {
+    sha256: string;
+    originalName: string;
+    expiresAt: string;
+    missing: boolean;
+  } | null;
   markdown: string;
 };
 

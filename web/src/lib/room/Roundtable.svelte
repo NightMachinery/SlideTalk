@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ChevronLeft, ChevronRight, Eye, Hand, LogOut, Mic, RotateCcw, Shield, Timer, UserRound, UsersRound } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, Eye, FileWarning, Hand, LogOut, Mic, RotateCcw, Shield, Timer, Upload, UserRound, UsersRound } from '@lucide/svelte';
+  import { getSlideStatus, uploadSlide } from '../api';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { shouldIgnoreShortcut } from './shortcuts';
 
@@ -18,8 +19,15 @@
   let observersCollapsed = $state(false);
   let timerDurationSeconds = $state(300);
   let nowMs = $state(Date.now());
+  let slideFile = $state<File | null>(null);
+  let slideExpiresAt = $state(defaultExpirationInput());
+  let slideBusy = $state(false);
+  let slideProgress = $state(0);
+  let slideMessage = $state('');
+  let slideError = $state('');
 
   const isMod = $derived(snapshot.caller.role === 'mod');
+  const canManageSlides = $derived(snapshot.caller.isAdmin);
   const currentSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.currentSpeakerUserId));
   const nextSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.nextSpeakerUserId));
   const callerHand = $derived(snapshot.hands.find((hand) => hand.userId === snapshot.caller.userId));
@@ -131,6 +139,43 @@
     send({ type: 'hand.lower', payload: { userId } });
   }
 
+  async function submitSlideUpload() {
+    if (!slideFile || slideBusy) return;
+    slideBusy = true;
+    slideProgress = 0;
+    slideMessage = 'Hashing slide...';
+    slideError = '';
+    try {
+      const sha256 = await sha256File(slideFile);
+      const status = await getSlideStatus(sha256);
+      if (status.missing) {
+        slideError = 'This slide file was deleted manually on the server.';
+        return;
+      }
+      slideMessage = status.alreadyUploaded ? 'Attaching existing slide...' : 'Uploading slide...';
+      await uploadSlide(
+        {
+          roomId: snapshot.room.id,
+          sha256,
+          expiresAt: new Date(slideExpiresAt).toISOString(),
+          originalName: slideFile.name,
+          file: status.alreadyUploaded ? undefined : slideFile
+        },
+        (percent) => {
+          slideProgress = percent;
+        }
+      );
+      slideProgress = 100;
+      slideMessage = status.alreadyUploaded ? 'Slide attached.' : 'Slide uploaded.';
+      slideFile = null;
+    } catch (error) {
+      slideError = error instanceof Error ? error.message : 'Slide upload failed.';
+      slideMessage = '';
+    } finally {
+      slideBusy = false;
+    }
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     if (shouldIgnoreShortcut(event)) return;
     if (!isMod) return;
@@ -152,6 +197,16 @@
     const minutes = Math.floor(seconds / 60);
     const remainder = seconds % 60;
     return `${minutes}:${remainder.toString().padStart(2, '0')}`;
+  }
+
+  function defaultExpirationInput() {
+    const date = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    return date.toISOString().slice(0, 16);
+  }
+
+  async function sha256File(file: File) {
+    const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   }
 </script>
 
@@ -277,6 +332,58 @@
   </div>
 
   <aside class="observer-panel">
+    <div class="slide-panel" aria-label="Slides">
+      <div class="panel-title">
+        {#if snapshot.slide?.missing}
+          <FileWarning size={19} />
+        {:else}
+          <Upload size={19} />
+        {/if}
+        <h2>Slides</h2>
+      </div>
+      {#if snapshot.slide}
+        <p class={['slide-state', snapshot.slide.missing && 'missing']}>
+          {snapshot.slide.missing ? 'File was deleted manually' : snapshot.slide.originalName}
+        </p>
+        <p class="slide-expiry">Expires {new Date(snapshot.slide.expiresAt).toLocaleDateString()}</p>
+      {:else}
+        <p class="slide-state">No slide deck attached</p>
+      {/if}
+      {#if canManageSlides}
+        <form class="slide-upload" onsubmit={(event) => { event.preventDefault(); submitSlideUpload(); }}>
+          <label>
+            PDF
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              disabled={slideBusy}
+              onchange={(event) => {
+                slideFile = event.currentTarget.files?.[0] ?? null;
+                slideMessage = '';
+                slideError = '';
+              }}
+            />
+          </label>
+          <label>
+            Expiration
+            <input type="datetime-local" bind:value={slideExpiresAt} disabled={slideBusy} />
+          </label>
+          <button type="submit" disabled={slideBusy || !slideFile}>
+            <Upload size={16} /> {slideBusy ? 'Working' : 'Upload PDF'}
+          </button>
+          {#if slideBusy || slideProgress > 0}
+            <progress max="100" value={slideProgress}>{slideProgress}%</progress>
+          {/if}
+          {#if slideMessage}
+            <p class="upload-message">{slideMessage}</p>
+          {/if}
+          {#if slideError}
+            <p class="upload-error" role="alert">{slideError}</p>
+          {/if}
+        </form>
+      {/if}
+    </div>
+
     <button class="list-toggle" type="button" onclick={() => (observersCollapsed = !observersCollapsed)}>
       <Eye size={19} />
       <span>Observers</span>

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,16 +16,18 @@ import (
 	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/realtime"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
+	"github.com/NightMachinery/SlideTalk/internal/slides"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
 
 // ServerOptions configures the SlideTalk HTTP server.
 type ServerOptions struct {
-	StaticDir   string
-	AuthService *auth.Service
-	RoomService *rooms.Service
-	Hub         *realtime.Hub
+	StaticDir    string
+	AuthService  *auth.Service
+	RoomService  *rooms.Service
+	Hub          *realtime.Hub
+	SlideService *slides.Service
 }
 
 // New returns a configured HTTP handler for the SlideTalk server.
@@ -35,6 +38,7 @@ func New(options ServerOptions) http.Handler {
 		auth:         options.AuthService,
 		rooms:        options.RoomService,
 		hub:          options.Hub,
+		slides:       options.SlideService,
 		adminLimiter: newFailureLimiter(5, 15*time.Minute),
 	}
 
@@ -67,6 +71,7 @@ type appServer struct {
 	auth         *auth.Service
 	rooms        *rooms.Service
 	hub          *realtime.Hub
+	slides       *slides.Service
 	adminLimiter *failureLimiter
 }
 
@@ -84,6 +89,10 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.postAdminToken)(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rooms":
 		s.withUser(s.postRoom)(w, r)
+	case r.Method == http.MethodGet && slidePathValue(r.URL.Path) != "":
+		s.withUser(s.getSlideStatus)(w, withSlideSHA(r, slidePathValue(r.URL.Path)))
+	case r.Method == http.MethodPost && r.URL.Path == "/api/slides":
+		s.withUser(s.postSlide)(w, r)
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "") != "":
 		s.withUser(s.getRoom)(w, withRoomID(r, roomPathValue(r.URL.Path, "")))
 	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/join") != "":
@@ -238,6 +247,71 @@ func (s *appServer) postWSTicket(w http.ResponseWriter, r *http.Request, user au
 	writeJSON(w, http.StatusOK, ticket)
 }
 
+func (s *appServer) getSlideStatus(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.slides == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	if !user.IsAdmin {
+		writeProblem(w, http.StatusForbidden, "Forbidden", "Only site admins can inspect slide storage.")
+		return
+	}
+	status, err := s.slides.Status(r.Context(), slideSHAFromContext(r.Context()))
+	if err != nil {
+		writeSlideError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *appServer) postSlide(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.slides == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	if !user.IsAdmin {
+		writeProblem(w, http.StatusForbidden, "Forbidden", "Only site admins can upload slides.")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.slides.MaxBytes()+10<<20)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Slide upload must be multipart form data.")
+		return
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(r.FormValue("expiresAt")))
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Slide expiration must be an RFC3339 timestamp.")
+		return
+	}
+	var file io.Reader
+	mimeType := ""
+	uploadedFile, header, err := r.FormFile("file")
+	if err == nil {
+		defer uploadedFile.Close()
+		file = uploadedFile
+		mimeType = header.Header.Get("Content-Type")
+	} else if !errors.Is(err, http.ErrMissingFile) {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Slide file field is invalid.")
+		return
+	}
+	status, err := s.slides.Store(r.Context(), user.ID, slides.StoreInput{
+		RoomID:       r.FormValue("roomId"),
+		SHA256:       r.FormValue("sha256"),
+		OriginalName: r.FormValue("originalName"),
+		ExpiresAt:    expiresAt,
+		MIMEType:     mimeType,
+		File:         file,
+	})
+	if err != nil {
+		writeSlideError(w, err)
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), r.FormValue("roomId"), "")
+	}
+	writeJSON(w, http.StatusCreated, status)
+}
+
 func (s *appServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	if s.hub == nil {
 		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
@@ -310,6 +384,17 @@ func writeRoomError(w http.ResponseWriter, err error) {
 		writeProblem(w, http.StatusForbidden, "Forbidden", "You were removed from this room.")
 	default:
 		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Room operation failed.")
+	}
+}
+
+func writeSlideError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, slides.ErrUnsupportedFile), errors.Is(err, slides.ErrHashMismatch), errors.Is(err, slides.ErrInvalidHash), errors.Is(err, slides.ErrInvalidExpiry), errors.Is(err, slides.ErrFileRequired), errors.Is(err, slides.ErrTooLarge):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
+	case errors.Is(err, slides.ErrMissingFile):
+		writeProblem(w, http.StatusConflict, "Conflict", err.Error())
+	default:
+		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Slide operation failed.")
 	}
 }
 
@@ -390,6 +475,7 @@ type problem struct {
 }
 
 const roomIDContextKey contextKey = "roomID"
+const slideSHAContextKey contextKey = "slideSHA"
 
 func roomPathValue(path string, suffix string) string {
 	const prefix = "/api/rooms/"
@@ -403,12 +489,33 @@ func roomPathValue(path string, suffix string) string {
 	return value
 }
 
+func slidePathValue(path string) string {
+	const prefix = "/api/slides/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	value := strings.TrimPrefix(path, prefix)
+	if value == "" || strings.Contains(value, "/") {
+		return ""
+	}
+	return value
+}
+
 func withRoomID(r *http.Request, roomID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), roomIDContextKey, roomID))
 }
 
 func roomIDFromContext(ctx context.Context) string {
 	value, _ := ctx.Value(roomIDContextKey).(string)
+	return value
+}
+
+func withSlideSHA(r *http.Request, sha string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), slideSHAContextKey, sha))
+}
+
+func slideSHAFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(slideSHAContextKey).(string)
 	return value
 }
 
