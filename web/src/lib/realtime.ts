@@ -14,6 +14,8 @@ export type RoomSnapshot = {
     noSlideMode: boolean;
     allowParticipantMarkdown: boolean;
     raiseHandMode: 'off' | 'manual' | 'queue';
+    slidePage: number;
+    sharedNavigationEnabled: boolean;
   };
   caller: {
     userId: string;
@@ -44,6 +46,9 @@ export type RoomSnapshot = {
     missing: boolean;
   } | null;
   markdown: string;
+  markdownUpdatedByUserId: string;
+  markdownUpdatedByName: string;
+  markdownUpdatedAt: string;
 };
 
 export type RealtimeEvent = {
@@ -89,7 +94,20 @@ export type RealtimeCommand =
     }
   | {
       type: 'settings.update';
-      payload: { raiseHandMode: 'off' | 'manual' | 'queue' };
+      payload: {
+        raiseHandMode?: 'off' | 'manual' | 'queue';
+        sharedNavigationEnabled?: boolean;
+        noSlideMode?: boolean;
+        allowParticipantMarkdown?: boolean;
+      };
+    }
+  | {
+      type: 'slide.navigate';
+      payload: { page: number; modSharedNavigationEnabled: boolean };
+    }
+  | {
+      type: 'markdown.update';
+      payload: { markdown: string };
     };
 
 export type RealtimeConnection = {

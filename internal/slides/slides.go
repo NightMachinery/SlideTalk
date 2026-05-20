@@ -44,6 +44,13 @@ type Status struct {
 	Missing         bool   `json:"missing"`
 }
 
+// RoomFile describes the current PDF file attached to a room.
+type RoomFile struct {
+	SHA256       string
+	OriginalName string
+	StoredPath   string
+}
+
 var (
 	ErrUnsupportedFile = errors.New("only PDF slide files are supported")
 	ErrHashMismatch    = errors.New("slide hash does not match uploaded file")
@@ -52,6 +59,7 @@ var (
 	ErrFileRequired    = errors.New("slide file is required")
 	ErrInvalidExpiry   = errors.New("slide expiration must be in the future")
 	ErrTooLarge        = errors.New("slide file exceeds size limit")
+	ErrNoRoomSlide     = errors.New("room has no slide file")
 )
 
 // NewService creates the slide directory and returns a service.
@@ -104,6 +112,37 @@ func (s *Service) Status(ctx context.Context, sha string) (Status, error) {
 		}
 	}
 	return status, nil
+}
+
+// CurrentRoomFile returns the current room PDF unless it is absent or manually missing.
+func (s *Service) CurrentRoomFile(ctx context.Context, roomID string) (RoomFile, error) {
+	var file RoomFile
+	var missingAt sql.NullString
+	err := s.db.QueryRowContext(
+		ctx,
+		`select rs.sha256, rs.original_name, sf.stored_path, sf.missing_at
+		 from room_slides rs
+		 join slide_files sf on sf.sha256 = rs.sha256
+		 where rs.room_id = ?`,
+		roomID,
+	).Scan(&file.SHA256, &file.OriginalName, &file.StoredPath, &missingAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RoomFile{}, ErrNoRoomSlide
+	}
+	if err != nil {
+		return RoomFile{}, fmt.Errorf("read room slide file: %w", err)
+	}
+	if _, err := os.Stat(file.StoredPath); errors.Is(err, os.ErrNotExist) {
+		if !missingAt.Valid {
+			if _, err := s.db.ExecContext(ctx, `update slide_files set missing_at = ? where sha256 = ?`, nowText(), file.SHA256); err != nil {
+				return RoomFile{}, fmt.Errorf("mark room slide missing: %w", err)
+			}
+		}
+		return RoomFile{}, ErrMissingFile
+	} else if err != nil {
+		return RoomFile{}, fmt.Errorf("stat room slide file: %w", err)
+	}
+	return file, nil
 }
 
 // Store validates and stores a PDF, then upserts the room slide reference.

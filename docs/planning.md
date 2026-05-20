@@ -1,6 +1,6 @@
 # SlideTalk Planning
 
-Seed milestone plans live in `../plans/seed/`. Milestones 001 through 005 have created the runnable Go/Svelte foundation, local-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, current-speaker turns, shared timers, raised-hand modes, and admin-only PDF slide storage with dedupe, per-room expiration, cleanup, and manual-deletion reporting.
+Seed milestone plans live in `../plans/seed/`. Milestones 001 through 006 have created the runnable Go/Svelte foundation, local-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, current-speaker turns, shared timers, raised-hand modes, admin-only PDF slide storage with dedupe, per-room expiration, cleanup, manual-deletion reporting, shared PDF viewing, moderator navigation sync, and no-slide markdown mode.
 
 Start with `../plans/seed/000-index.md`. A fresh implementation context should read that index, implement the first unchecked milestone, update the checkbox only after verification passes, commit the milestone, and stop.
 

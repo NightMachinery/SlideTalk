@@ -90,6 +90,13 @@ export async function createWSTicket(roomId: string): Promise<WSTicket> {
   });
 }
 
+export function slideFileRequest(roomId: string): { url: string; headers: Record<string, string> } {
+  return {
+    url: `/api/rooms/${encodeURIComponent(roomId)}/slide/file`,
+    headers: { Authorization: `Bearer ${getAuthToken()}` }
+  };
+}
+
 export async function getSlideStatus(sha256: string): Promise<SlideStatus> {
   return api(`/api/slides/${encodeURIComponent(sha256)}`);
 }

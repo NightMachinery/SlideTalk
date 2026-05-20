@@ -39,7 +39,7 @@ If the worktree is dirty before implementation, inspect `git status --short`. Do
 - [x] 003 Realtime Roundtable: `plans/seed/003-realtime-roundtable.md`
 - [x] 004 Turns, Timers, Hands: `plans/seed/004-turns-timers-hands.md`
 - [x] 005 Slide Storage: `plans/seed/005-slide-storage.md`
-- [ ] 006 Slide Viewer And Markdown Mode: `plans/seed/006-slide-viewer-markdown.md`
+- [x] 006 Slide Viewer And Markdown Mode: `plans/seed/006-slide-viewer-markdown.md`
 - [ ] 007 Admin And Room Settings: `plans/seed/007-admin-and-room-settings.md`
 - [ ] 008 Self Hosting: `plans/seed/008-self-hosting.md`
 - [ ] 009 Hardening: `plans/seed/009-hardening.md`

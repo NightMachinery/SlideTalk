@@ -21,6 +21,8 @@ const (
 	CommandTimerReset     = "timer.reset"
 	CommandHandRaise      = "hand.raise"
 	CommandHandLower      = "hand.lower"
+	CommandSlideNavigate  = "slide.navigate"
+	CommandMarkdownUpdate = "markdown.update"
 	CommandSettingsUpdate = "settings.update"
 )
 
@@ -53,15 +55,18 @@ type Event struct {
 
 // Snapshot is the full room state sent to a connected client.
 type Snapshot struct {
-	Room         SnapshotRoom     `json:"room"`
-	Caller       SnapshotCaller   `json:"caller"`
-	Participants []SnapshotMember `json:"participants"`
-	Observers    []SnapshotMember `json:"observers"`
-	CurrentTurn  SnapshotTurn     `json:"currentTurn"`
-	Timer        SnapshotTimer    `json:"timer"`
-	Hands        []SnapshotHand   `json:"hands"`
-	Slide        *SnapshotSlide   `json:"slide"`
-	Markdown     string           `json:"markdown"`
+	Room                    SnapshotRoom     `json:"room"`
+	Caller                  SnapshotCaller   `json:"caller"`
+	Participants            []SnapshotMember `json:"participants"`
+	Observers               []SnapshotMember `json:"observers"`
+	CurrentTurn             SnapshotTurn     `json:"currentTurn"`
+	Timer                   SnapshotTimer    `json:"timer"`
+	Hands                   []SnapshotHand   `json:"hands"`
+	Slide                   *SnapshotSlide   `json:"slide"`
+	Markdown                string           `json:"markdown"`
+	MarkdownUpdatedByUserID string           `json:"markdownUpdatedByUserId"`
+	MarkdownUpdatedByName   string           `json:"markdownUpdatedByName"`
+	MarkdownUpdatedAt       string           `json:"markdownUpdatedAt"`
 }
 
 // SnapshotRoom is room metadata in realtime snapshots.
@@ -71,6 +76,8 @@ type SnapshotRoom struct {
 	NoSlideMode              bool   `json:"noSlideMode"`
 	AllowParticipantMarkdown bool   `json:"allowParticipantMarkdown"`
 	RaiseHandMode            string `json:"raiseHandMode"`
+	SlidePage                int    `json:"slidePage"`
+	SharedNavigationEnabled  bool   `json:"sharedNavigationEnabled"`
 }
 
 // SnapshotCaller identifies the receiving user.

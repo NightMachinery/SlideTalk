@@ -93,6 +93,8 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.getSlideStatus)(w, withSlideSHA(r, slidePathValue(r.URL.Path)))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/slides":
 		s.withUser(s.postSlide)(w, r)
+	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "/slide/file") != "":
+		s.withUser(s.getRoomSlideFile)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide/file")))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "") != "":
 		s.withUser(s.getRoom)(w, withRoomID(r, roomPathValue(r.URL.Path, "")))
 	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/join") != "":
@@ -312,6 +314,36 @@ func (s *appServer) postSlide(w http.ResponseWriter, r *http.Request, user auth.
 	writeJSON(w, http.StatusCreated, status)
 }
 
+func (s *appServer) getRoomSlideFile(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.slides == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	if _, err := s.rooms.GetForUser(r.Context(), roomID, user.ID); err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	file, err := s.slides.CurrentRoomFile(r.Context(), roomID)
+	if err != nil {
+		writeSlideError(w, err)
+		return
+	}
+	handle, err := os.Open(file.StoredPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeSlideError(w, slides.ErrMissingFile)
+			return
+		}
+		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Could not read slide file.")
+		return
+	}
+	defer handle.Close()
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `inline; filename="`+strings.ReplaceAll(file.OriginalName, `"`, "")+`"`)
+	http.ServeContent(w, r, file.OriginalName, time.Time{}, handle)
+}
+
 func (s *appServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	if s.hub == nil {
 		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
@@ -363,6 +395,9 @@ func (s *appServer) handleWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.hub.HandleCommand(r.Context(), claims.RoomID, claims.UserID, command); err != nil {
+			if errors.Is(err, realtime.ErrNoBroadcast) {
+				continue
+			}
 			client.Send <- realtime.Event{Type: realtime.EventError, RequestID: command.RequestID, Code: codeForRealtimeError(err), Message: messageForRealtimeError(err)}
 			continue
 		}
@@ -391,8 +426,10 @@ func writeSlideError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, slides.ErrUnsupportedFile), errors.Is(err, slides.ErrHashMismatch), errors.Is(err, slides.ErrInvalidHash), errors.Is(err, slides.ErrInvalidExpiry), errors.Is(err, slides.ErrFileRequired), errors.Is(err, slides.ErrTooLarge):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
+	case errors.Is(err, slides.ErrNoRoomSlide):
+		writeProblem(w, http.StatusNotFound, "Not Found", "Room has no slide file.")
 	case errors.Is(err, slides.ErrMissingFile):
-		writeProblem(w, http.StatusConflict, "Conflict", err.Error())
+		writeProblem(w, http.StatusNotFound, "Not Found", err.Error())
 	default:
 		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Slide operation failed.")
 	}

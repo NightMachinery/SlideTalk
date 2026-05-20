@@ -25,6 +25,10 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			no_slide_mode integer not null default 0,
 			markdown text not null default '',
 			allow_participant_markdown integer not null default 0,
+			slide_page integer not null default 1,
+			shared_navigation_enabled integer not null default 1,
+			markdown_updated_by_user_id text,
+			markdown_updated_at text,
 			current_speaker_user_id text,
 			timer_state text not null default 'stopped',
 			timer_duration_seconds integer not null default 0,
@@ -88,11 +92,15 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	alterStatements := map[string]string{
-		"current_speaker_user_id": `alter table rooms add column current_speaker_user_id text`,
-		"timer_state":             `alter table rooms add column timer_state text not null default 'stopped'`,
-		"timer_duration_seconds":  `alter table rooms add column timer_duration_seconds integer not null default 0`,
-		"timer_started_at":        `alter table rooms add column timer_started_at text`,
-		"raise_hand_mode":         `alter table rooms add column raise_hand_mode text not null default 'off'`,
+		"current_speaker_user_id":     `alter table rooms add column current_speaker_user_id text`,
+		"timer_state":                 `alter table rooms add column timer_state text not null default 'stopped'`,
+		"timer_duration_seconds":      `alter table rooms add column timer_duration_seconds integer not null default 0`,
+		"timer_started_at":            `alter table rooms add column timer_started_at text`,
+		"raise_hand_mode":             `alter table rooms add column raise_hand_mode text not null default 'off'`,
+		"slide_page":                  `alter table rooms add column slide_page integer not null default 1`,
+		"shared_navigation_enabled":   `alter table rooms add column shared_navigation_enabled integer not null default 1`,
+		"markdown_updated_by_user_id": `alter table rooms add column markdown_updated_by_user_id text`,
+		"markdown_updated_at":         `alter table rooms add column markdown_updated_at text`,
 	}
 	for column, statement := range alterStatements {
 		if !slices.Contains(roomColumns, column) {

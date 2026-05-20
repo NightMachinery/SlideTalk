@@ -360,6 +360,192 @@ h2 {
   font-size: clamp(1.7rem, 3vw, 2.7rem);
 }
 
+.workspace-console {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace-console.no-slide-mode {
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+}
+
+.document-panel,
+.room-rail {
+  min-width: 0;
+}
+
+.document-panel {
+  border: 1px solid oklch(82% 0.025 245);
+  border-radius: 8px;
+  background: oklch(98% 0.006 235 / 0.78);
+  overflow: hidden;
+}
+
+.document-toolbar {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid oklch(84% 0.018 245);
+  padding: 14px;
+}
+
+.document-toolbar h3 {
+  margin: 0;
+  color: oklch(21% 0.018 245);
+  font-size: 1.05rem;
+}
+
+.document-toolbar p {
+  margin: 5px 0 0;
+  color: oklch(43% 0.028 245);
+  font-size: 0.86rem;
+}
+
+.missing {
+  color: oklch(36% 0.12 28);
+}
+
+.slide-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.slide-controls button,
+.markdown-editor button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.toggle-field {
+  display: inline-flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 36px;
+  padding: 0 14px;
+  color: oklch(34% 0.028 245);
+  font-size: 0.86rem;
+}
+
+.toggle-field input {
+  width: auto;
+  min-height: auto;
+}
+
+.pdf-panel,
+.markdown-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.pdf-panel > .toggle-field,
+.markdown-panel > .toggle-field {
+  margin-left: 14px;
+}
+
+.pdf-canvas-wrap {
+  display: grid;
+  place-items: start center;
+  min-height: 420px;
+  max-height: 72vh;
+  overflow: auto;
+  padding: 16px;
+  background:
+    linear-gradient(45deg, oklch(91% 0.012 245) 25%, transparent 25%),
+    linear-gradient(-45deg, oklch(91% 0.012 245) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, oklch(91% 0.012 245) 75%),
+    linear-gradient(-45deg, transparent 75%, oklch(91% 0.012 245) 75%);
+  background-color: oklch(96% 0.006 245);
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0;
+  background-size: 20px 20px;
+}
+
+.pdf-canvas-wrap canvas {
+  max-width: 100%;
+  border-radius: 4px;
+  background: white;
+  box-shadow: 0 16px 40px oklch(28% 0.04 245 / 0.22);
+}
+
+.empty-document {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 360px;
+  padding: 28px;
+  color: oklch(43% 0.028 245);
+  text-align: center;
+}
+
+.markdown-preview {
+  min-height: 280px;
+  padding: 18px;
+  color: oklch(25% 0.018 245);
+  line-height: 1.58;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview p {
+  max-width: 72ch;
+}
+
+.markdown-preview h1 {
+  margin-bottom: 12px;
+  font-size: 1.55rem;
+  line-height: 1.15;
+}
+
+.markdown-preview h2 {
+  margin: 18px 0 10px;
+  font-size: 1.2rem;
+}
+
+.markdown-preview p {
+  margin-bottom: 12px;
+}
+
+.markdown-editor {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid oklch(84% 0.018 245);
+  padding: 14px;
+}
+
+.markdown-editor textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  border: 1px solid oklch(78% 0.026 245);
+  border-radius: 8px;
+  padding: 12px;
+  color: oklch(18% 0.018 245);
+  background: oklch(99% 0.006 235);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.room-rail {
+  display: grid;
+  gap: 14px;
+}
+
+.room-rail .turn-console {
+  grid-template-columns: 1fr;
+  margin-bottom: 0;
+}
+
 .next-speaker {
   margin: 8px 0 0;
   color: oklch(42% 0.032 245);
@@ -602,6 +788,8 @@ code {
   .workspace,
   .control-grid,
   .roundtable,
+  .workspace-console,
+  .workspace-console.no-slide-mode,
   .room-summary,
   .turn-console {
     grid-template-columns: 1fr;

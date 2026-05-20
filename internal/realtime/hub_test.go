@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -286,6 +287,82 @@ func TestTimerStopPreservesRemainingDuration(t *testing.T) {
 	}
 	if snapshot.Timer.DurationSeconds > 221 || snapshot.Timer.DurationSeconds < 219 {
 		t.Fatalf("remaining duration = %d, want about 220", snapshot.Timer.DurationSeconds)
+	}
+}
+
+func TestSlideNavigateUpdatesSharedPageOnlyWhenSharingEnabled(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+
+	err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandSlideNavigate,
+		Payload: mustJSON(t, map[string]any{"page": 2, "modSharedNavigationEnabled": true}),
+	})
+	if err == nil {
+		t.Fatal("participant shared navigation succeeded")
+	}
+	err = hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSlideNavigate,
+		Payload: mustJSON(t, map[string]any{"page": 3, "modSharedNavigationEnabled": false}),
+	})
+	if !errors.Is(err, ErrNoBroadcast) {
+		t.Fatalf("sharing-disabled navigate error = %v, want no broadcast sentinel", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Room.SlidePage != 1 {
+		t.Fatalf("slide page = %d, want unchanged default 1", snapshot.Room.SlidePage)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSlideNavigate,
+		Payload: mustJSON(t, map[string]any{"page": 4, "modSharedNavigationEnabled": true}),
+	}); err != nil {
+		t.Fatalf("shared navigate: %v", err)
+	}
+	snapshot, err = hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Room.SlidePage != 4 {
+		t.Fatalf("slide page = %d, want 4", snapshot.Room.SlidePage)
+	}
+}
+
+func TestParticipantMarkdownRequiresRoomSetting(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+
+	err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandMarkdownUpdate,
+		Payload: mustJSON(t, map[string]string{"markdown": "# Participant notes"}),
+	})
+	if err == nil {
+		t.Fatal("participant markdown edit succeeded while disabled")
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSettingsUpdate,
+		Payload: mustJSON(t, map[string]any{"allowParticipantMarkdown": true, "noSlideMode": true, "sharedNavigationEnabled": false}),
+	}); err != nil {
+		t.Fatalf("enable participant markdown: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandMarkdownUpdate,
+		Payload: mustJSON(t, map[string]string{"markdown": "# Participant notes"}),
+	}); err != nil {
+		t.Fatalf("participant markdown edit after enable: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Markdown != "# Participant notes" {
+		t.Fatalf("markdown = %q", snapshot.Markdown)
+	}
+	if snapshot.MarkdownUpdatedByUserID != participantID || snapshot.MarkdownUpdatedAt == "" {
+		t.Fatalf("markdown metadata missing: %+v", snapshot)
 	}
 }
 

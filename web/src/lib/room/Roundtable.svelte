@@ -1,9 +1,21 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ChevronLeft, ChevronRight, Eye, FileWarning, Hand, LogOut, Mic, RotateCcw, Shield, Timer, Upload, UserRound, UsersRound } from '@lucide/svelte';
-  import { getSlideStatus, uploadSlide } from '../api';
+  import { ChevronLeft, ChevronRight, Eye, FileText, FileWarning, Hand, LogOut, Mic, RotateCcw, Save, Shield, Timer, Upload, UserRound, UsersRound } from '@lucide/svelte';
+  import { getSlideStatus, slideFileRequest, uploadSlide } from '../api';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
+  import { parseMarkdown } from './markdown';
+  import { pageFromSharedNavigation } from './slides';
   import { shouldIgnoreShortcut } from './shortcuts';
+
+  type PDFDocumentLike = {
+    numPages: number;
+    getPage(page: number): Promise<{
+      getViewport(input: { scale: number }): { width: number; height: number };
+      render(input: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }): {
+        promise: Promise<void>;
+      };
+    }>;
+  };
 
   let {
     snapshot,
@@ -25,13 +37,24 @@
   let slideProgress = $state(0);
   let slideMessage = $state('');
   let slideError = $state('');
+  let slideCanvas = $state<HTMLCanvasElement | null>(null);
+  let pdfDocument = $state<PDFDocumentLike | null>(null);
+  let pdfError = $state('');
+  let localPage = $state(1);
+  let followSharedNavigation = $state(true);
+  let modShareNavigation = $state(false);
+  let markdownDraft = $state('');
+  let markdownMessage = $state('');
 
   const isMod = $derived(snapshot.caller.role === 'mod');
   const canManageSlides = $derived(snapshot.caller.isAdmin);
+  const canEditMarkdown = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowParticipantMarkdown));
   const currentSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.currentSpeakerUserId));
   const nextSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.nextSpeakerUserId));
   const callerHand = $derived(snapshot.hands.find((hand) => hand.userId === snapshot.caller.userId));
   const canUseHands = $derived(snapshot.caller.role !== 'observer' && snapshot.room.raiseHandMode !== 'off');
+  const markdownBlocks = $derived(parseMarkdown(snapshot.markdown || ''));
+  const markdownEditorVisible = $derived(snapshot.room.noSlideMode && canEditMarkdown);
   const timerSync = $derived.by(() => {
     const serverNowMs = Date.parse(snapshot.timer.serverNow);
     const receivedAtMs = Date.now();
@@ -55,6 +78,74 @@
       nowMs = Date.now();
     }, 1000);
     return () => window.clearInterval(interval);
+  });
+
+  $effect(() => {
+    if (followSharedNavigation) {
+      localPage = pageFromSharedNavigation({
+        localPage,
+        sharedPage: snapshot.room.slidePage,
+        followShared: followSharedNavigation
+      });
+    }
+    modShareNavigation = snapshot.room.sharedNavigationEnabled;
+  });
+
+  $effect(() => {
+    markdownDraft = snapshot.markdown;
+  });
+
+  $effect(() => {
+    const slideKey = snapshot.slide?.sha256;
+    if (!slideKey || snapshot.slide?.missing || snapshot.room.noSlideMode) {
+      pdfDocument = null;
+      pdfError = '';
+      return;
+    }
+
+    let cancelled = false;
+    pdfError = '';
+    void loadPDF().catch((error) => {
+      if (!cancelled) {
+        pdfDocument = null;
+        pdfError = error instanceof Error ? error.message : 'Could not load PDF.';
+      }
+    });
+
+    async function loadPDF() {
+      const [{ GlobalWorkerOptions, getDocument }, worker] = await Promise.all([
+        import('pdfjs-dist'),
+        import('pdfjs-dist/build/pdf.worker.mjs?url')
+      ]);
+      GlobalWorkerOptions.workerSrc = worker.default;
+      const request = slideFileRequest(snapshot.room.id);
+      const document = await getDocument({ url: request.url, httpHeaders: request.headers }).promise;
+      if (!cancelled) {
+        pdfDocument = document as PDFDocumentLike;
+        localPage = pageFromSharedNavigation({
+          localPage,
+          sharedPage: snapshot.room.slidePage,
+          followShared: followSharedNavigation
+        });
+      }
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  $effect(() => {
+    if (!pdfDocument || !slideCanvas || snapshot.room.noSlideMode) return;
+    let cancelled = false;
+    void renderPDFPage(pdfDocument, slideCanvas, localPage).catch((error) => {
+      if (!cancelled) {
+        pdfError = error instanceof Error ? error.message : 'Could not render PDF page.';
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   });
 
   function moveMember(list: SnapshotMember[], index: number, direction: -1 | 1) {
@@ -127,6 +218,10 @@
     send({ type: 'settings.update', payload: { raiseHandMode: mode } });
   }
 
+  function setRoomBooleanSetting(name: 'sharedNavigationEnabled' | 'noSlideMode' | 'allowParticipantMarkdown', value: boolean) {
+    send({ type: 'settings.update', payload: { [name]: value } });
+  }
+
   function toggleHand() {
     if (callerHand) {
       send({ type: 'hand.lower' });
@@ -137,6 +232,26 @@
 
   function lowerHand(userId: string) {
     send({ type: 'hand.lower', payload: { userId } });
+  }
+
+  function navigateSlide(direction: -1 | 1) {
+    const maximum = totalPageCount();
+    const next = Math.min(Math.max(localPage + direction, 1), maximum);
+    localPage = next;
+    if (isMod) {
+      send({
+        type: 'slide.navigate',
+        payload: {
+          page: next,
+          modSharedNavigationEnabled: modShareNavigation
+        }
+      });
+    }
+  }
+
+  function submitMarkdown() {
+    send({ type: 'markdown.update', payload: { markdown: markdownDraft } });
+    markdownMessage = 'Saved.';
   }
 
   async function submitSlideUpload() {
@@ -191,6 +306,16 @@
       event.preventDefault();
       toggleTimer();
     }
+    if (event.key === '[') {
+      if (!modShareNavigation) return;
+      event.preventDefault();
+      navigateSlide(-1);
+    }
+    if (event.key === ']') {
+      if (!modShareNavigation) return;
+      event.preventDefault();
+      navigateSlide(1);
+    }
   }
 
   function formatDuration(seconds: number) {
@@ -208,6 +333,27 @@
     const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
     return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   }
+
+  function totalPageCount() {
+    return Math.max(pdfDocument?.numPages ?? snapshot.room.slidePage ?? 1, 1);
+  }
+
+  async function renderPDFPage(document: PDFDocumentLike, canvas: HTMLCanvasElement, page: number) {
+    const pdfPage = await document.getPage(page);
+    const containerWidth = canvas.parentElement?.clientWidth ?? 800;
+    const baseViewport = pdfPage.getViewport({ scale: 1 });
+    const scale = Math.min(containerWidth / baseViewport.width, 1.8);
+    const viewport = pdfPage.getViewport({ scale });
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(viewport.width * ratio);
+    canvas.height = Math.floor(viewport.height * ratio);
+    canvas.style.width = `${Math.floor(viewport.width)}px`;
+    canvas.style.height = `${Math.floor(viewport.height)}px`;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    await pdfPage.render({ canvasContext: context, viewport }).promise;
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -223,7 +369,121 @@
       <span class={['connection-pill', status]}>{status}</span>
     </div>
 
-    <div class="turn-console" aria-label="Turn controls">
+    <div class="workspace-console" class:no-slide-mode={snapshot.room.noSlideMode}>
+      <section class="document-panel" aria-label={snapshot.room.noSlideMode ? 'Shared markdown' : 'Slides'}>
+        {#if snapshot.room.noSlideMode}
+          <div class="markdown-panel">
+            <div class="document-toolbar">
+              <div>
+                <p class="kicker">Markdown mode</p>
+                <h3>Shared notes</h3>
+                {#if snapshot.markdownUpdatedAt}
+                  <p>Last edited by {snapshot.markdownUpdatedByName || snapshot.markdownUpdatedByUserId} at {new Date(snapshot.markdownUpdatedAt).toLocaleString()}</p>
+                {/if}
+              </div>
+              {#if isMod}
+                <label class="toggle-field">
+                  <input
+                    type="checkbox"
+                    checked={snapshot.room.allowParticipantMarkdown}
+                    onchange={(event) => setRoomBooleanSetting('allowParticipantMarkdown', event.currentTarget.checked)}
+                  />
+                  Participant edits
+                </label>
+              {/if}
+            </div>
+            <div class="markdown-preview">
+              {#if markdownBlocks.length === 0}
+                <p>No shared notes yet.</p>
+              {:else}
+                {#each markdownBlocks as block, index (`${block.kind}-${index}-${block.text}`)}
+                  {#if block.kind === 'h1'}
+                    <h1>{block.text}</h1>
+                  {:else if block.kind === 'h2'}
+                    <h2>{block.text}</h2>
+                  {:else}
+                    <p>{block.text}</p>
+                  {/if}
+                {/each}
+              {/if}
+            </div>
+            {#if markdownEditorVisible}
+              <form class="markdown-editor" onsubmit={(event) => { event.preventDefault(); submitMarkdown(); }}>
+                <textarea bind:value={markdownDraft} maxlength={65536} rows="8" aria-label="Shared markdown"></textarea>
+                <button type="submit">
+                  <Save size={16} /> Save notes
+                </button>
+                {#if markdownMessage}
+                  <p>{markdownMessage}</p>
+                {/if}
+              </form>
+            {/if}
+          </div>
+        {:else}
+          <div class="pdf-panel">
+            <div class="document-toolbar">
+              <div>
+                <p class="kicker">Slide deck</p>
+                <h3>{snapshot.slide?.originalName ?? 'No PDF attached'}</h3>
+                {#if snapshot.slide?.missing}
+                  <p class="missing">File was deleted manually.</p>
+                {:else if snapshot.slide}
+                  <p>Page {localPage} of {totalPageCount()}</p>
+                {/if}
+              </div>
+              <div class="slide-controls">
+                <button type="button" onclick={() => navigateSlide(-1)} disabled={localPage <= 1 || !snapshot.slide || snapshot.slide.missing}>
+                  <ChevronLeft size={16} /> Page
+                </button>
+                <button type="button" onclick={() => navigateSlide(1)} disabled={localPage >= totalPageCount() || !snapshot.slide || snapshot.slide.missing}>
+                  Page <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+            {#if isMod}
+              <label class="toggle-field">
+                <input
+                  type="checkbox"
+                  bind:checked={modShareNavigation}
+                  onchange={(event) => setRoomBooleanSetting('sharedNavigationEnabled', event.currentTarget.checked)}
+                />
+                Share navigation
+              </label>
+            {/if}
+            <label class="toggle-field">
+              <input type="checkbox" bind:checked={followSharedNavigation} />
+              Follow moderator navigation
+            </label>
+            {#if snapshot.slide && !snapshot.slide.missing}
+              <div class="pdf-canvas-wrap">
+                <canvas bind:this={slideCanvas}></canvas>
+              </div>
+            {:else}
+              <div class="empty-document">
+                <FileText size={34} />
+                <p>{snapshot.slide?.missing ? 'The attached slide file is missing.' : 'Upload a PDF to show slides here.'}</p>
+              </div>
+            {/if}
+            {#if pdfError}
+              <p class="upload-error" role="alert">{pdfError}</p>
+            {/if}
+          </div>
+        {/if}
+      </section>
+
+      <aside class="room-rail">
+        {#if isMod}
+          <label class="toggle-field">
+            <input
+              type="checkbox"
+              checked={snapshot.room.noSlideMode}
+              onchange={(event) => setRoomBooleanSetting('noSlideMode', event.currentTarget.checked)}
+            />
+            No-slide markdown mode
+          </label>
+        {/if}
+
+        <div class="turn-console" aria-label="Turn controls">
       <div class="current-speaker-card">
         <Mic size={24} />
         <div>
@@ -268,7 +528,7 @@
           <Hand size={17} /> {callerHand ? 'Lower hand' : 'Raise hand'}
         </button>
       {/if}
-    </div>
+        </div>
 
     {#if snapshot.hands.length > 0}
       <div class="hand-queue" aria-label="Raised hands">
@@ -328,6 +588,8 @@
           {/each}
         </div>
       {/if}
+    </div>
+      </aside>
     </div>
   </div>
 

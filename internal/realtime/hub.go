@@ -119,14 +119,19 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		Title                    string
 		NoSlideMode              bool
 		AllowParticipantMarkdown bool
+		SlidePage                int
+		SharedNavigationEnabled  bool
 		Markdown                 string
+		MarkdownUpdatedByUserID  sql.NullString
+		MarkdownUpdatedByName    sql.NullString
+		MarkdownUpdatedAt        sql.NullString
 		CurrentSpeakerUserID     sql.NullString
 		TimerState               string
 		TimerDurationSeconds     int
 		TimerStartedAt           sql.NullString
 		RaiseHandMode            string
 	}
-	if err := h.db.QueryRowContext(ctx, `select id, title, no_slide_mode, allow_participant_markdown, markdown, current_speaker_user_id, timer_state, timer_duration_seconds, timer_started_at, raise_hand_mode from rooms where id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.NoSlideMode, &roomRow.AllowParticipantMarkdown, &roomRow.Markdown, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
+	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.no_slide_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.NoSlideMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Snapshot{}, rooms.ErrNotFound
 		}
@@ -143,6 +148,8 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			NoSlideMode:              roomRow.NoSlideMode,
 			AllowParticipantMarkdown: roomRow.AllowParticipantMarkdown,
 			RaiseHandMode:            roomRow.RaiseHandMode,
+			SlidePage:                roomRow.SlidePage,
+			SharedNavigationEnabled:  roomRow.SharedNavigationEnabled,
 		},
 		Caller: SnapshotCaller{
 			UserID:  callerUserID,
@@ -158,6 +165,15 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			ServerNow:       time.Now().UTC().Format(time.RFC3339Nano),
 		},
 		Markdown: roomRow.Markdown,
+	}
+	if roomRow.MarkdownUpdatedByUserID.Valid {
+		snapshot.MarkdownUpdatedByUserID = roomRow.MarkdownUpdatedByUserID.String
+	}
+	if roomRow.MarkdownUpdatedByName.Valid {
+		snapshot.MarkdownUpdatedByName = roomRow.MarkdownUpdatedByName.String
+	}
+	if roomRow.MarkdownUpdatedAt.Valid {
+		snapshot.MarkdownUpdatedAt = roomRow.MarkdownUpdatedAt.String
 	}
 	if roomRow.TimerStartedAt.Valid {
 		snapshot.Timer.StartedAt = &roomRow.TimerStartedAt.String
@@ -333,23 +349,86 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 		if _, err := h.db.ExecContext(ctx, `delete from raised_hands where room_id = ? and user_id = ?`, roomID, targetUserID); err != nil {
 			return fmt.Errorf("lower hand: %w", err)
 		}
+	case CommandSlideNavigate:
+		if !isMod {
+			return ErrForbidden
+		}
+		var payload struct {
+			Page                       int  `json:"page"`
+			ModSharedNavigationEnabled bool `json:"modSharedNavigationEnabled"`
+		}
+		if err := json.Unmarshal(command.Payload, &payload); err != nil {
+			return ErrBadCommand
+		}
+		if payload.Page < 1 {
+			return ErrBadCommand
+		}
+		if !payload.ModSharedNavigationEnabled {
+			return ErrNoBroadcast
+		}
+		if _, err := h.db.ExecContext(ctx, `update rooms set slide_page = ? where id = ?`, payload.Page, roomID); err != nil {
+			return fmt.Errorf("navigate slide: %w", err)
+		}
+	case CommandMarkdownUpdate:
+		if !isMod {
+			var allow bool
+			if err := h.db.QueryRowContext(ctx, `select allow_participant_markdown from rooms where id = ?`, roomID).Scan(&allow); err != nil {
+				return fmt.Errorf("read markdown setting: %w", err)
+			}
+			if !allow || details.Membership.Role == rooms.RoleObserver {
+				return ErrForbidden
+			}
+		}
+		var payload struct {
+			Markdown string `json:"markdown"`
+		}
+		if err := json.Unmarshal(command.Payload, &payload); err != nil {
+			return ErrBadCommand
+		}
+		if len([]byte(payload.Markdown)) > 64*1024 {
+			return ErrBadCommand
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if _, err := h.db.ExecContext(ctx, `update rooms set markdown = ?, markdown_updated_by_user_id = ?, markdown_updated_at = ? where id = ?`, payload.Markdown, callerUserID, now, roomID); err != nil {
+			return fmt.Errorf("update markdown: %w", err)
+		}
 	case CommandSettingsUpdate:
 		if !isMod {
 			return ErrForbidden
 		}
 		var payload struct {
-			RaiseHandMode string `json:"raiseHandMode"`
+			RaiseHandMode            *string `json:"raiseHandMode"`
+			SharedNavigationEnabled  *bool   `json:"sharedNavigationEnabled"`
+			NoSlideMode              *bool   `json:"noSlideMode"`
+			AllowParticipantMarkdown *bool   `json:"allowParticipantMarkdown"`
 		}
 		if err := json.Unmarshal(command.Payload, &payload); err != nil {
 			return ErrBadCommand
 		}
-		if payload.RaiseHandMode != RaiseHandModeOff && payload.RaiseHandMode != RaiseHandModeManual && payload.RaiseHandMode != RaiseHandModeQueue {
-			return ErrBadCommand
+		if payload.RaiseHandMode != nil {
+			if *payload.RaiseHandMode != RaiseHandModeOff && *payload.RaiseHandMode != RaiseHandModeManual && *payload.RaiseHandMode != RaiseHandModeQueue {
+				return ErrBadCommand
+			}
+			if _, err := h.db.ExecContext(ctx, `update rooms set raise_hand_mode = ? where id = ?`, *payload.RaiseHandMode, roomID); err != nil {
+				return fmt.Errorf("update raise hand mode: %w", err)
+			}
 		}
-		if _, err := h.db.ExecContext(ctx, `update rooms set raise_hand_mode = ? where id = ?`, payload.RaiseHandMode, roomID); err != nil {
-			return fmt.Errorf("update settings: %w", err)
+		if payload.SharedNavigationEnabled != nil {
+			if _, err := h.db.ExecContext(ctx, `update rooms set shared_navigation_enabled = ? where id = ?`, *payload.SharedNavigationEnabled, roomID); err != nil {
+				return fmt.Errorf("update shared navigation: %w", err)
+			}
 		}
-		if payload.RaiseHandMode == RaiseHandModeOff {
+		if payload.NoSlideMode != nil {
+			if _, err := h.db.ExecContext(ctx, `update rooms set no_slide_mode = ? where id = ?`, *payload.NoSlideMode, roomID); err != nil {
+				return fmt.Errorf("update no slide mode: %w", err)
+			}
+		}
+		if payload.AllowParticipantMarkdown != nil {
+			if _, err := h.db.ExecContext(ctx, `update rooms set allow_participant_markdown = ? where id = ?`, *payload.AllowParticipantMarkdown, roomID); err != nil {
+				return fmt.Errorf("update participant markdown setting: %w", err)
+			}
+		}
+		if payload.RaiseHandMode != nil && *payload.RaiseHandMode == RaiseHandModeOff {
 			if _, err := h.db.ExecContext(ctx, `delete from raised_hands where room_id = ?`, roomID); err != nil {
 				return fmt.Errorf("clear hands: %w", err)
 			}
@@ -669,4 +748,5 @@ var (
 	ErrInvalidTicket = errors.New("invalid websocket ticket")
 	ErrForbidden     = errors.New("forbidden")
 	ErrBadCommand    = errors.New("bad command")
+	ErrNoBroadcast   = errors.New("no broadcast")
 )

@@ -221,6 +221,61 @@ func TestSlideStatusReportsMissingPhysicalFile(t *testing.T) {
 	}
 }
 
+func TestRoomMemberCanFetchCurrentPDFAndNonMemberCannot(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	content := []byte("%PDF-1.7\nstream\n")
+	body, contentType := slideUploadBody(t, roomID, "deck.pdf", content, sha256HexTest(content))
+	request := httptest.NewRequest(http.MethodPost, "/api/slides", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusCreated)
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/slide/file", "", "admin"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("member status = %d body = %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Fatalf("content type = %q, want application/pdf", got)
+	}
+	if !bytes.Equal(response.Body.Bytes(), content) {
+		t.Fatalf("streamed content mismatch: %q", response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/slide/file", "", "stranger"))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("non-member status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRoomSlideFileReportsManualDeletion(t *testing.T) {
+	dataDir := t.TempDir()
+	server := newAPITestServerWithDataDir(t, dataDir)
+	roomID := createAdminRoom(t, server)
+	content := []byte("%PDF-1.7\ndeleted\n")
+	sum := sha256HexTest(content)
+	body, contentType := slideUploadBody(t, roomID, "deck.pdf", content, sum)
+	request := httptest.NewRequest(http.MethodPost, "/api/slides", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusCreated)
+	if err := os.Remove(filepath.Join(dataDir, "slides", sum+".pdf")); err != nil {
+		t.Fatalf("remove slide: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/slide/file", "", "admin"))
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing file status = %d body = %s", response.Code, response.Body.String())
+	}
+	if !bytes.Contains(response.Body.Bytes(), []byte("deleted manually")) {
+		t.Fatalf("expected manual deletion problem, got %s", response.Body.String())
+	}
+}
+
 func newAPITestServer(t *testing.T) http.Handler {
 	t.Helper()
 	return newAPITestServerWithDataDir(t, t.TempDir())

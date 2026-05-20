@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"slices"
 	"testing"
 )
 
@@ -19,6 +20,17 @@ func TestMigrateCreatesSeedTables(t *testing.T) {
 			err := db.QueryRowContext(ctx, "select name from sqlite_master where type = 'table' and name = ?", table).Scan(&name)
 			if err != nil {
 				t.Fatalf("expected table %s to exist: %v", table, err)
+			}
+		})
+	}
+	for _, column := range []string{"slide_page", "shared_navigation_enabled", "markdown_updated_by_user_id", "markdown_updated_at"} {
+		t.Run("rooms."+column, func(t *testing.T) {
+			columns, err := columns(ctx, db.DB, "rooms")
+			if err != nil {
+				t.Fatalf("read room columns: %v", err)
+			}
+			if !slices.Contains(columns, column) {
+				t.Fatalf("expected rooms.%s to exist", column)
 			}
 		})
 	}
