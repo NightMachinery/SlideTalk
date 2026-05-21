@@ -289,6 +289,39 @@ func TestWSTicketEndpointAndSocketSnapshot(t *testing.T) {
 	}
 }
 
+func TestRoomSnapshotEndpointReturnsInitialLiveState(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Live","password":""}`, "creator"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+
+	response := serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/snapshot", "", "creator"), http.StatusOK)
+
+	var snapshot realtime.Snapshot
+	if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if snapshot.Room.ID != roomID || snapshot.Room.Title != "Live" {
+		t.Fatalf("snapshot room = %+v, want id %q title Live", snapshot.Room, roomID)
+	}
+	if snapshot.Caller.Role != rooms.RoleMod {
+		t.Fatalf("caller role = %q, want %q", snapshot.Caller.Role, rooms.RoleMod)
+	}
+	if len(snapshot.Participants) != 1 || snapshot.Participants[0].DisplayName != "Ada" {
+		t.Fatalf("participants = %+v, want creator participant", snapshot.Participants)
+	}
+}
+
+func TestRoomSnapshotEndpointRequiresMembership(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Live","password":""}`, "creator"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "stranger"), http.StatusOK)
+
+	serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/snapshot", "", "stranger"), http.StatusNotFound)
+}
+
 func TestWSTicketCreationIsRateLimited(t *testing.T) {
 	server := newAPITestServer(t)
 	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)

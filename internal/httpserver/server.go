@@ -115,6 +115,8 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.deleteRoomSlide)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide")))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "/slide/file") != "":
 		s.withUser(s.getRoomSlideFile)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide/file")))
+	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "/snapshot") != "":
+		s.withUser(s.getRoomSnapshot)(w, withRoomID(r, roomPathValue(r.URL.Path, "/snapshot")))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "") != "":
 		s.withUser(s.getRoom)(w, withRoomID(r, roomPathValue(r.URL.Path, "")))
 	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/join") != "":
@@ -274,6 +276,19 @@ func (s *appServer) getRoom(w http.ResponseWriter, r *http.Request, user auth.Us
 		return
 	}
 	writeJSON(w, http.StatusOK, details)
+}
+
+func (s *appServer) getRoomSnapshot(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.hub == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	snapshot, err := s.hub.Snapshot(r.Context(), roomIDFromContext(r.Context()), user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (s *appServer) joinRoom(w http.ResponseWriter, r *http.Request, user auth.User) {
