@@ -34,6 +34,22 @@ export type SlideStatus = {
   missing: boolean;
 };
 
+export type Admin = {
+  id: string;
+  displayName: string;
+  createdAt: string;
+};
+
+export type RoomSettingsInput = {
+  title?: string;
+  password?: string;
+  passwordAction?: 'set' | 'clear';
+  noSlideMode?: boolean;
+  allowParticipantMarkdown?: boolean;
+  sharedNavigationEnabled?: boolean;
+  raiseHandMode?: 'off' | 'manual' | 'queue';
+};
+
 const tokenKey = 'slidetalk.authToken';
 
 export function getAuthToken(): string {
@@ -65,6 +81,21 @@ export async function submitAdminToken(token: string): Promise<User> {
   });
 }
 
+export async function listAdmins(): Promise<Admin[]> {
+  return api('/api/admins');
+}
+
+export async function demoteAdmin(userId: string): Promise<void> {
+  return apiVoid(`/api/admins/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+}
+
+export async function demoteAllAdmins(includeSelf: boolean): Promise<void> {
+  return apiVoid('/api/admins/demote-all', {
+    method: 'POST',
+    body: JSON.stringify({ includeSelf })
+  });
+}
+
 export async function createRoom(title: string, password: string): Promise<RoomDetails> {
   return api('/api/rooms', {
     method: 'POST',
@@ -90,6 +121,13 @@ export async function createWSTicket(roomId: string): Promise<WSTicket> {
   });
 }
 
+export async function updateRoomSettings(roomId: string, input: RoomSettingsInput): Promise<Room> {
+  return api(`/api/rooms/${encodeURIComponent(roomId)}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(input)
+  });
+}
+
 export function slideFileRequest(roomId: string): { url: string; headers: Record<string, string> } {
   return {
     url: `/api/rooms/${encodeURIComponent(roomId)}/slide/file`,
@@ -111,6 +149,44 @@ export function uploadSlide(
   },
   onProgress: (percent: number) => void
 ): Promise<SlideStatus> {
+  return uploadSlideRequest('/api/slides', input, onProgress);
+}
+
+export function uploadRoomSlide(
+  input: {
+    roomId: string;
+    sha256: string;
+    expiresAt: string;
+    originalName: string;
+    file?: File;
+  },
+  onProgress: (percent: number) => void
+): Promise<SlideStatus> {
+  return uploadSlideRequest(`/api/rooms/${encodeURIComponent(input.roomId)}/slide`, input, onProgress);
+}
+
+export async function updateRoomSlideExpiration(roomId: string, expiresAt: string): Promise<void> {
+  return apiVoid(`/api/rooms/${encodeURIComponent(roomId)}/slide`, {
+    method: 'PATCH',
+    body: JSON.stringify({ expiresAt })
+  });
+}
+
+export async function removeRoomSlide(roomId: string): Promise<void> {
+  return apiVoid(`/api/rooms/${encodeURIComponent(roomId)}/slide`, { method: 'DELETE' });
+}
+
+function uploadSlideRequest(
+  path: string,
+  input: {
+    roomId: string;
+    sha256: string;
+    expiresAt: string;
+    originalName: string;
+    file?: File;
+  },
+  onProgress: (percent: number) => void
+): Promise<SlideStatus> {
   const form = new FormData();
   form.set('roomId', input.roomId);
   form.set('sha256', input.sha256);
@@ -122,7 +198,7 @@ export function uploadSlide(
 
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open('POST', '/api/slides');
+    request.open('POST', path);
     request.setRequestHeader('Authorization', `Bearer ${getAuthToken()}`);
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) {
@@ -162,4 +238,20 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+async function apiVoid(path: string, init: RequestInit = {}): Promise<void> {
+  const response = await fetch(path, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getAuthToken()}`,
+      ...init.headers
+    }
+  });
+
+  if (!response.ok) {
+    const problem = await response.json().catch(() => ({ detail: 'Request failed.' }));
+    throw new Error(problem.detail ?? 'Request failed.');
+  }
 }

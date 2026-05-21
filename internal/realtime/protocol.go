@@ -73,6 +73,7 @@ type Snapshot struct {
 type SnapshotRoom struct {
 	ID                       string `json:"id"`
 	Title                    string `json:"title"`
+	HasPassword              bool   `json:"hasPassword"`
 	NoSlideMode              bool   `json:"noSlideMode"`
 	AllowParticipantMarkdown bool   `json:"allowParticipantMarkdown"`
 	RaiseHandMode            string `json:"raiseHandMode"`

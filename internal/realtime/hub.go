@@ -117,6 +117,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 	var roomRow struct {
 		ID                       string
 		Title                    string
+		PasswordHash             sql.NullString
 		NoSlideMode              bool
 		AllowParticipantMarkdown bool
 		SlidePage                int
@@ -131,7 +132,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		TimerStartedAt           sql.NullString
 		RaiseHandMode            string
 	}
-	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.no_slide_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.NoSlideMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
+	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.no_slide_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.NoSlideMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Snapshot{}, rooms.ErrNotFound
 		}
@@ -145,6 +146,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		Room: SnapshotRoom{
 			ID:                       roomRow.ID,
 			Title:                    roomRow.Title,
+			HasPassword:              roomRow.PasswordHash.Valid,
 			NoSlideMode:              roomRow.NoSlideMode,
 			AllowParticipantMarkdown: roomRow.AllowParticipantMarkdown,
 			RaiseHandMode:            roomRow.RaiseHandMode,

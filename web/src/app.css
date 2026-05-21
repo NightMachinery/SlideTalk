@@ -217,6 +217,47 @@ h2 {
   padding-top: 18px;
 }
 
+.admin-list {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid oklch(84% 0.018 245);
+  padding-top: 18px;
+}
+
+.admin-list p {
+  margin: 0;
+  color: oklch(42% 0.026 245);
+  font-size: 0.88rem;
+}
+
+.admin-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid oklch(84% 0.018 245);
+  border-radius: 8px;
+  padding: 10px;
+  background: oklch(98% 0.006 235);
+}
+
+.admin-row strong,
+.admin-row span {
+  display: block;
+}
+
+.admin-row span {
+  margin-top: 3px;
+  color: oklch(46% 0.026 245);
+  font-size: 0.82rem;
+}
+
+.admin-row button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.82rem;
+}
+
 .control-grid {
   display: grid;
   grid-template-columns: minmax(0, 7fr) minmax(300px, 5fr);
@@ -539,6 +580,42 @@ h2 {
 .room-rail {
   display: grid;
   gap: 14px;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid oklch(85% 0.022 245);
+  border-radius: 8px;
+  padding: 12px;
+  background: oklch(98% 0.006 235 / 0.72);
+}
+
+.settings-panel h3 {
+  margin: 0;
+  color: oklch(22% 0.018 245);
+  font-size: 0.95rem;
+}
+
+.settings-form {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 12px;
+  font-size: 0.86rem;
 }
 
 .room-rail .turn-console {

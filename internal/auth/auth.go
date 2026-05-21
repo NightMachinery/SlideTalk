@@ -26,6 +26,13 @@ type User struct {
 	IsAdmin     bool   `json:"isAdmin"`
 }
 
+// Admin is public admin membership metadata.
+type Admin struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	CreatedAt   string `json:"createdAt"`
+}
+
 // Service provides user and bootstrap-admin operations.
 type Service struct {
 	db      *store.DB
@@ -133,6 +140,77 @@ func (s *Service) PromoteWithAdminToken(ctx context.Context, userID string, subm
 	return true, nil
 }
 
+// ListAdmins returns current site admins in creation order.
+func (s *Service) ListAdmins(ctx context.Context) ([]Admin, error) {
+	rows, err := s.db.QueryContext(ctx, `select id, display_name, created_at from users where is_admin = 1 order by created_at asc`)
+	if err != nil {
+		return nil, fmt.Errorf("list admins: %w", err)
+	}
+	defer rows.Close()
+	var admins []Admin
+	for rows.Next() {
+		var admin Admin
+		if err := rows.Scan(&admin.ID, &admin.DisplayName, &admin.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan admin: %w", err)
+		}
+		admins = append(admins, admin)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate admins: %w", err)
+	}
+	return admins, nil
+}
+
+// DemoteAdmin removes one user's site-admin status while preserving recovery.
+func (s *Service) DemoteAdmin(ctx context.Context, userID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin demote admin: %w", err)
+	}
+	defer rollback(tx)
+	var adminCount int
+	if err := tx.QueryRowContext(ctx, `select count(*) from users where is_admin = 1`).Scan(&adminCount); err != nil {
+		return fmt.Errorf("count admins: %w", err)
+	}
+	var targetIsAdmin bool
+	if err := tx.QueryRowContext(ctx, `select is_admin from users where id = ?`, userID).Scan(&targetIsAdmin); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("read target admin: %w", err)
+	}
+	if targetIsAdmin && adminCount <= 1 && !s.AdminTokenExists() {
+		return ErrNoAdminRecovery
+	}
+	if _, err := tx.ExecContext(ctx, `update users set is_admin = 0, updated_at = ? where id = ?`, nowText(), userID); err != nil {
+		return fmt.Errorf("demote admin: %w", err)
+	}
+	return tx.Commit()
+}
+
+// DemoteAllAdmins demotes all admins or all admins except caller.
+func (s *Service) DemoteAllAdmins(ctx context.Context, callerUserID string, includeSelf bool) error {
+	if includeSelf && !s.AdminTokenExists() {
+		return ErrNoAdminRecovery
+	}
+	query := `update users set is_admin = 0, updated_at = ? where is_admin = 1 and id <> ?`
+	args := []any{nowText(), callerUserID}
+	if includeSelf {
+		query = `update users set is_admin = 0, updated_at = ? where is_admin = 1`
+		args = []any{nowText()}
+	}
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("demote admins: %w", err)
+	}
+	return nil
+}
+
+// AdminTokenExists reports whether the bootstrap token file can recover admin access.
+func (s *Service) AdminTokenExists() bool {
+	_, err := os.Stat(s.adminTokenPath())
+	return err == nil
+}
+
 func (s *Service) adminTokenPath() string {
 	return filepath.Join(s.dataDir, "admin_token")
 }
@@ -158,4 +236,9 @@ var (
 	ErrUnauthorized       = errors.New("unauthorized")
 	ErrNotFound           = errors.New("not found")
 	ErrInvalidDisplayName = errors.New("display name must be 1 to 80 characters")
+	ErrNoAdminRecovery    = errors.New("admin demotion would leave no recovery path")
 )
+
+func rollback(tx *sql.Tx) {
+	_ = tx.Rollback()
+}

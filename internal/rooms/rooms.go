@@ -71,6 +71,17 @@ type JoinInput struct {
 	Password string
 }
 
+// SettingsInput is a partial room settings update.
+type SettingsInput struct {
+	Title                    *string
+	Password                 *string
+	ClearPassword            bool
+	NoSlideMode              *bool
+	AllowParticipantMarkdown *bool
+	SharedNavigationEnabled  *bool
+	RaiseHandMode            *string
+}
+
 // Create creates a room and makes the creator a moderator.
 func (s *Service) Create(ctx context.Context, creatorUserID string, input CreateInput) (Room, error) {
 	title := strings.TrimSpace(input.Title)
@@ -188,6 +199,82 @@ func (s *Service) GetForUser(ctx context.Context, roomID string, userID string) 
 		return Details{}, ErrKicked
 	}
 	return details, nil
+}
+
+// UpdateSettings applies moderator-controlled room settings.
+func (s *Service) UpdateSettings(ctx context.Context, roomID string, input SettingsInput) (Room, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Room{}, fmt.Errorf("begin update room settings: %w", err)
+	}
+	defer rollback(tx)
+
+	if input.Title != nil {
+		title := strings.TrimSpace(*input.Title)
+		if title == "" || len([]rune(title)) > 120 {
+			return Room{}, ErrInvalidTitle
+		}
+		if _, err := tx.ExecContext(ctx, `update rooms set title = ?, updated_at = ? where id = ?`, title, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update room title: %w", err)
+		}
+	}
+	if input.Password != nil {
+		passwordHash, err := hashPassword(*input.Password)
+		if err != nil {
+			return Room{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `update rooms set password_hash = ?, updated_at = ? where id = ?`, nullableString(passwordHash), nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update room password: %w", err)
+		}
+	}
+	if input.ClearPassword {
+		if _, err := tx.ExecContext(ctx, `update rooms set password_hash = null, updated_at = ? where id = ?`, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("clear room password: %w", err)
+		}
+	}
+	if input.NoSlideMode != nil {
+		if _, err := tx.ExecContext(ctx, `update rooms set no_slide_mode = ?, updated_at = ? where id = ?`, *input.NoSlideMode, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update no slide mode: %w", err)
+		}
+	}
+	if input.AllowParticipantMarkdown != nil {
+		if _, err := tx.ExecContext(ctx, `update rooms set allow_participant_markdown = ?, updated_at = ? where id = ?`, *input.AllowParticipantMarkdown, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update participant markdown: %w", err)
+		}
+	}
+	if input.SharedNavigationEnabled != nil {
+		if _, err := tx.ExecContext(ctx, `update rooms set shared_navigation_enabled = ?, updated_at = ? where id = ?`, *input.SharedNavigationEnabled, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update shared navigation: %w", err)
+		}
+	}
+	if input.RaiseHandMode != nil {
+		mode := strings.TrimSpace(*input.RaiseHandMode)
+		if mode != "off" && mode != "manual" && mode != "queue" {
+			return Room{}, ErrInvalidRaiseHandMode
+		}
+		if _, err := tx.ExecContext(ctx, `update rooms set raise_hand_mode = ?, updated_at = ? where id = ?`, mode, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update raise hand mode: %w", err)
+		}
+		if mode == "off" {
+			if _, err := tx.ExecContext(ctx, `delete from raised_hands where room_id = ?`, roomID); err != nil {
+				return Room{}, fmt.Errorf("clear hands: %w", err)
+			}
+		}
+	}
+
+	var room Room
+	var passwordHash sql.NullString
+	if err := tx.QueryRowContext(ctx, `select id, title, password_hash from rooms where id = ?`, roomID).Scan(&room.ID, &room.Title, &passwordHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Room{}, ErrNotFound
+		}
+		return Room{}, fmt.Errorf("read updated room: %w", err)
+	}
+	room.HasPassword = passwordHash.Valid
+	if err := tx.Commit(); err != nil {
+		return Room{}, fmt.Errorf("commit room settings: %w", err)
+	}
+	return room, nil
 }
 
 // ListMembers returns non-kicked room members in display order.
@@ -374,15 +461,16 @@ func rollback(tx *sql.Tx) {
 }
 
 var (
-	ErrInvalidTitle        = errors.New("room title must be 1 to 120 characters")
-	ErrDisplayNameRequired = errors.New("display name required")
-	ErrInvalidPassword     = errors.New("invalid room password")
-	ErrKicked              = errors.New("member was kicked")
-	ErrNotFound            = errors.New("not found")
-	ErrNotMember           = errors.New("not a room member")
-	ErrInvalidRole         = errors.New("invalid member role")
-	ErrInvalidReorder      = errors.New("invalid member order")
-	ErrLastMod             = errors.New("cannot remove the last moderator")
+	ErrInvalidTitle         = errors.New("room title must be 1 to 120 characters")
+	ErrDisplayNameRequired  = errors.New("display name required")
+	ErrInvalidPassword      = errors.New("invalid room password")
+	ErrKicked               = errors.New("member was kicked")
+	ErrNotFound             = errors.New("not found")
+	ErrNotMember            = errors.New("not a room member")
+	ErrInvalidRole          = errors.New("invalid member role")
+	ErrInvalidReorder       = errors.New("invalid member order")
+	ErrLastMod              = errors.New("cannot remove the last moderator")
+	ErrInvalidRaiseHandMode = errors.New("invalid raise hand mode")
 )
 
 func memberRole(ctx context.Context, tx *sql.Tx, roomID string, userID string) (string, error) {

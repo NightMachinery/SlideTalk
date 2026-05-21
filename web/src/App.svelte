@@ -3,10 +3,14 @@
   import { CirclePlus, DoorOpen, KeyRound, PanelsTopLeft, ShieldCheck, UserRound } from '@lucide/svelte';
   import {
     createRoom,
+    demoteAdmin,
+    demoteAllAdmins,
     getMe,
     joinRoom,
+    listAdmins,
     submitAdminToken,
     updateProfile,
+    type Admin,
     type RoomDetails,
     type User
   } from './lib/api';
@@ -20,6 +24,10 @@
   let connectionStatus = $state<'connecting' | 'connected' | 'disconnected'>('disconnected');
   let displayName = $state('');
   let adminToken = $state('');
+  let admins = $state<Admin[]>([]);
+  let adminPanelMessage = $state('');
+  let confirmDemoteUserId = $state('');
+  let confirmDemoteAll = $state(false);
   let createTitle = $state('');
   let createPassword = $state('');
   let joinRoomId = $state('');
@@ -41,6 +49,9 @@
     try {
       user = await getMe();
       displayName = user.displayName;
+      if (user.isAdmin) {
+        admins = await listAdmins();
+      }
     } catch (error) {
       errorMessage = messageFrom(error);
     } finally {
@@ -60,7 +71,47 @@
     await run(async () => {
       user = await submitAdminToken(adminToken);
       adminToken = '';
+      admins = await listAdmins();
       notice = 'Admin access enabled.';
+    });
+  }
+
+  async function refreshAdmins() {
+    if (!user?.isAdmin) return;
+    admins = await listAdmins();
+    adminPanelMessage = 'Admin list updated.';
+  }
+
+  async function submitDemoteAdmin(admin: Admin) {
+    if (confirmDemoteUserId !== admin.id) {
+      confirmDemoteUserId = admin.id;
+      adminPanelMessage = `Confirm demoting ${admin.displayName || admin.id}.`;
+      return;
+    }
+    await run(async () => {
+      await demoteAdmin(admin.id);
+      confirmDemoteUserId = '';
+      user = await getMe();
+      if (user.isAdmin) {
+        admins = await listAdmins();
+      } else {
+        admins = [];
+      }
+      adminPanelMessage = 'Admin demoted.';
+    });
+  }
+
+  async function submitDemoteAll() {
+    if (!confirmDemoteAll) {
+      confirmDemoteAll = true;
+      adminPanelMessage = 'Confirm demoting all other admins.';
+      return;
+    }
+    await run(async () => {
+      await demoteAllAdmins(false);
+      confirmDemoteAll = false;
+      admins = await listAdmins();
+      adminPanelMessage = 'Other admins demoted.';
     });
   }
 
@@ -179,6 +230,33 @@
             Enable admin
           </button>
         </div>
+
+        {#if user?.isAdmin}
+          <div class="admin-list" aria-label="Admin membership">
+            <div class="panel-title">
+              <ShieldCheck size={20} />
+              <h2>Admins</h2>
+            </div>
+            <button type="button" disabled={busy} onclick={refreshAdmins}>Refresh admins</button>
+            {#each admins as admin (admin.id)}
+              <article class="admin-row">
+                <div>
+                  <strong>{admin.displayName || admin.id}</strong>
+                  <span>{new Date(admin.createdAt).toLocaleDateString()}</span>
+                </div>
+                <button class="danger-button" type="button" disabled={busy} onclick={() => submitDemoteAdmin(admin)}>
+                  {confirmDemoteUserId === admin.id ? 'Confirm demote' : 'Demote'}
+                </button>
+              </article>
+            {/each}
+            <button class="danger-button" type="button" disabled={busy || admins.length <= 1} onclick={submitDemoteAll}>
+              {confirmDemoteAll ? 'Confirm demote others' : 'Demote all others'}
+            </button>
+            {#if adminPanelMessage}
+              <p>{adminPanelMessage}</p>
+            {/if}
+          </div>
+        {/if}
       </aside>
     </section>
 

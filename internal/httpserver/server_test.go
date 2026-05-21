@@ -99,6 +99,47 @@ func TestAdminTokenEndpointPromotesUser(t *testing.T) {
 	}
 }
 
+func TestAdminListAndDemotionRequireAdmin(t *testing.T) {
+	server := newAPITestServer(t)
+	adminID := createAdminUser(t, server, "admin", "Ada")
+	otherID := createAdminUser(t, server, "other-admin", "Grace")
+
+	serveJSON(t, server, apiRequest(http.MethodGet, "/api/admins", "", "guest"), http.StatusForbidden)
+	list := serveJSON(t, server, apiRequest(http.MethodGet, "/api/admins", "", "admin"), http.StatusOK)
+	if !bytes.Contains(list.Body.Bytes(), []byte(adminID)) || !bytes.Contains(list.Body.Bytes(), []byte(otherID)) {
+		t.Fatalf("admin list missing users: %s", list.Body.String())
+	}
+
+	serveJSON(t, server, apiRequest(http.MethodDelete, "/api/admins/"+otherID, "", "guest"), http.StatusForbidden)
+	serveJSON(t, server, apiRequest(http.MethodDelete, "/api/admins/"+otherID, "", "admin"), http.StatusNoContent)
+	updated := serveJSON(t, server, apiRequest(http.MethodGet, "/api/me", "", "other-admin"), http.StatusOK)
+	if !bytes.Contains(updated.Body.Bytes(), []byte(`"isAdmin":false`)) {
+		t.Fatalf("expected demoted user, got %s", updated.Body.String())
+	}
+}
+
+func TestDemoteAllProtectsRecoveryPath(t *testing.T) {
+	dataDir := t.TempDir()
+	server := newAPITestServerWithDataDir(t, dataDir)
+	createAdminUser(t, server, "admin", "Ada")
+	createAdminUser(t, server, "other-admin", "Grace")
+	if err := os.Remove(filepath.Join(dataDir, "admin_token")); err != nil {
+		t.Fatalf("remove admin token: %v", err)
+	}
+
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/admins/demote-all", `{"includeSelf":true}`, "admin"), http.StatusBadRequest)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/admins/demote-all", `{}`, "admin"), http.StatusNoContent)
+
+	admin := serveJSON(t, server, apiRequest(http.MethodGet, "/api/me", "", "admin"), http.StatusOK)
+	if !bytes.Contains(admin.Body.Bytes(), []byte(`"isAdmin":true`)) {
+		t.Fatalf("caller should remain admin when includeSelf is false: %s", admin.Body.String())
+	}
+	other := serveJSON(t, server, apiRequest(http.MethodGet, "/api/me", "", "other-admin"), http.StatusOK)
+	if !bytes.Contains(other.Body.Bytes(), []byte(`"isAdmin":false`)) {
+		t.Fatalf("other admin should be demoted: %s", other.Body.String())
+	}
+}
+
 func TestRoomCreateAndPasswordJoin(t *testing.T) {
 	server := newAPITestServer(t)
 	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)
@@ -108,6 +149,25 @@ func TestRoomCreateAndPasswordJoin(t *testing.T) {
 	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "guest"), http.StatusOK)
 	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "guest"), http.StatusUnauthorized)
 	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"password":"secret"}`, "guest"), http.StatusOK)
+}
+
+func TestRoomSettingsRequireModAndCanClearPassword(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "mod"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Private","password":"secret"}`, "mod"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "guest"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"password":"secret"}`, "guest"), http.StatusOK)
+
+	body := `{"title":"Open Room","passwordAction":"clear","noSlideMode":true,"allowParticipantMarkdown":true,"sharedNavigationEnabled":true,"raiseHandMode":"queue"}`
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", body, "guest"), http.StatusForbidden)
+	updated := serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", body, "mod"), http.StatusOK)
+	if !bytes.Contains(updated.Body.Bytes(), []byte(`"title":"Open Room"`)) || !bytes.Contains(updated.Body.Bytes(), []byte(`"hasPassword":false`)) {
+		t.Fatalf("settings response did not include renamed open room: %s", updated.Body.String())
+	}
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Lin"}`, "new-guest"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "new-guest"), http.StatusOK)
 }
 
 func TestWSTicketEndpointAndSocketSnapshot(t *testing.T) {
@@ -143,6 +203,30 @@ func TestWSTicketEndpointAndSocketSnapshot(t *testing.T) {
 	if err == nil {
 		t.Fatal("reused websocket ticket connected")
 	}
+}
+
+func TestRoomSlideReplacementAndRemovalControlsReferenceOnly(t *testing.T) {
+	dataDir := t.TempDir()
+	server := newAPITestServerWithDataDir(t, dataDir)
+	roomID := createAdminRoom(t, server)
+	content := []byte("%PDF-1.7\nfirst\n")
+	sum := sha256HexTest(content)
+	body, contentType := slideUploadBody(t, roomID, "first.pdf", content, sum)
+	request := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/slide", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusCreated)
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "guest"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "guest"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/slide", `{"expiresAt":"`+time.Now().UTC().Add(48*time.Hour).Format(time.RFC3339Nano)+`"}`, "guest"), http.StatusForbidden)
+
+	serveJSON(t, server, apiRequest(http.MethodDelete, "/api/rooms/"+roomID+"/slide", "", "guest"), http.StatusForbidden)
+	serveJSON(t, server, apiRequest(http.MethodDelete, "/api/rooms/"+roomID+"/slide", "", "admin"), http.StatusNoContent)
+	if _, err := os.Stat(filepath.Join(dataDir, "slides", sum+".pdf")); err != nil {
+		t.Fatalf("slide file should remain after room reference removal: %v", err)
+	}
+	serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/slide/file", "", "admin"), http.StatusNotFound)
 }
 
 func TestSlideUploadRejectsNonAdmin(t *testing.T) {
@@ -370,19 +454,30 @@ func extractRoomID(t *testing.T, body string) string {
 
 func createAdminRoom(t *testing.T, server http.Handler) string {
 	t.Helper()
-	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "admin"), http.StatusOK)
+	createAdminUser(t, server, "admin", "Ada")
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Decks","password":""}`, "admin"), http.StatusCreated)
+	return extractRoomID(t, create.Body.String())
+}
+
+func createAdminUser(t *testing.T, server http.Handler, token string, displayName string) string {
+	t.Helper()
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"`+displayName+`"}`, token), http.StatusOK)
 	data, ok := serverDataDir(server)
 	if ok {
-		token, err := os.ReadFile(filepath.Join(data, "admin_token"))
+		adminToken, err := os.ReadFile(filepath.Join(data, "admin_token"))
 		if err != nil {
 			t.Fatalf("read admin token: %v", err)
 		}
-		serveJSON(t, server, apiRequest(http.MethodPost, "/api/me/admin-token", `{"token":"`+string(token)+`"}`, "admin"), http.StatusOK)
+		serveJSON(t, server, apiRequest(http.MethodPost, "/api/me/admin-token", `{"token":"`+string(adminToken)+`"}`, token), http.StatusOK)
 	} else {
 		t.Fatal("test server did not expose data dir")
 	}
-	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Decks","password":""}`, "admin"), http.StatusCreated)
-	return extractRoomID(t, create.Body.String())
+	me := serveJSON(t, server, apiRequest(http.MethodGet, "/api/me", "", token), http.StatusOK)
+	var user auth.User
+	if err := json.Unmarshal(me.Body.Bytes(), &user); err != nil {
+		t.Fatalf("decode admin user: %v", err)
+	}
+	return user.ID
 }
 
 func slideUploadBody(t *testing.T, roomID string, name string, content []byte, sha string) (*bytes.Buffer, string) {

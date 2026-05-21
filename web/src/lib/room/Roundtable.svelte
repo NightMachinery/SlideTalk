@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ChevronLeft, ChevronRight, Eye, FileText, FileWarning, Hand, LogOut, Mic, RotateCcw, Save, Shield, Timer, Upload, UserRound, UsersRound } from '@lucide/svelte';
-  import { getSlideStatus, slideFileRequest, uploadSlide } from '../api';
+  import { ChevronLeft, ChevronRight, Eye, FileText, FileWarning, Hand, LogOut, Mic, RotateCcw, Save, Settings, Shield, Timer, Trash2, Upload, UserRound, UsersRound } from '@lucide/svelte';
+  import { getSlideStatus, removeRoomSlide, slideFileRequest, updateRoomSettings, updateRoomSlideExpiration, uploadRoomSlide } from '../api';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { parseMarkdown } from './markdown';
   import { pageFromSharedNavigation } from './slides';
@@ -37,6 +37,7 @@
   let slideProgress = $state(0);
   let slideMessage = $state('');
   let slideError = $state('');
+  let slideConfirmRemove = $state(false);
   let slideCanvas = $state<HTMLCanvasElement | null>(null);
   let pdfDocument = $state<PDFDocumentLike | null>(null);
   let pdfError = $state('');
@@ -45,9 +46,14 @@
   let modShareNavigation = $state(false);
   let markdownDraft = $state('');
   let markdownMessage = $state('');
+  let roomTitleDraft = $state('');
+  let roomPasswordDraft = $state('');
+  let settingsMessage = $state('');
+  let settingsError = $state('');
 
   const isMod = $derived(snapshot.caller.role === 'mod');
-  const canManageSlides = $derived(snapshot.caller.isAdmin);
+  const canManageSlides = $derived(isMod);
+  const canChangeSlideExpiration = $derived(isMod && snapshot.caller.isAdmin);
   const canEditMarkdown = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowParticipantMarkdown));
   const currentSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.currentSpeakerUserId));
   const nextSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.nextSpeakerUserId));
@@ -93,6 +99,16 @@
 
   $effect(() => {
     markdownDraft = snapshot.markdown;
+  });
+
+  $effect(() => {
+    roomTitleDraft = snapshot.room.title;
+  });
+
+  $effect(() => {
+    if (snapshot.slide?.expiresAt) {
+      slideExpiresAt = new Date(snapshot.slide.expiresAt).toISOString().slice(0, 16);
+    }
   });
 
   $effect(() => {
@@ -222,6 +238,41 @@
     send({ type: 'settings.update', payload: { [name]: value } });
   }
 
+  async function saveRoomTitle() {
+    settingsError = '';
+    settingsMessage = '';
+    try {
+      await updateRoomSettings(snapshot.room.id, { title: roomTitleDraft });
+      settingsMessage = 'Room title saved.';
+    } catch (error) {
+      settingsError = error instanceof Error ? error.message : 'Room title update failed.';
+    }
+  }
+
+  async function setRoomPassword() {
+    settingsError = '';
+    settingsMessage = '';
+    try {
+      await updateRoomSettings(snapshot.room.id, { passwordAction: 'set', password: roomPasswordDraft });
+      roomPasswordDraft = '';
+      settingsMessage = 'Room password updated.';
+    } catch (error) {
+      settingsError = error instanceof Error ? error.message : 'Password update failed.';
+    }
+  }
+
+  async function clearRoomPassword() {
+    settingsError = '';
+    settingsMessage = '';
+    try {
+      await updateRoomSettings(snapshot.room.id, { passwordAction: 'clear' });
+      roomPasswordDraft = '';
+      settingsMessage = 'Room password cleared.';
+    } catch (error) {
+      settingsError = error instanceof Error ? error.message : 'Password clear failed.';
+    }
+  }
+
   function toggleHand() {
     if (callerHand) {
       send({ type: 'hand.lower' });
@@ -262,13 +313,13 @@
     slideError = '';
     try {
       const sha256 = await sha256File(slideFile);
-      const status = await getSlideStatus(sha256);
+      const status = snapshot.caller.isAdmin ? await getSlideStatus(sha256) : { alreadyUploaded: false, missing: false };
       if (status.missing) {
         slideError = 'This slide file was deleted manually on the server.';
         return;
       }
       slideMessage = status.alreadyUploaded ? 'Attaching existing slide...' : 'Uploading slide...';
-      await uploadSlide(
+      await uploadRoomSlide(
         {
           roomId: snapshot.room.id,
           sha256,
@@ -288,6 +339,37 @@
       slideMessage = '';
     } finally {
       slideBusy = false;
+    }
+  }
+
+  async function saveSlideExpiration() {
+    if (!snapshot.slide) return;
+    slideError = '';
+    slideMessage = '';
+    try {
+      await updateRoomSlideExpiration(snapshot.room.id, new Date(slideExpiresAt).toISOString());
+      slideMessage = 'Slide expiration updated.';
+    } catch (error) {
+      slideError = error instanceof Error ? error.message : 'Slide expiration update failed.';
+    }
+  }
+
+  async function submitRemoveSlide() {
+    if (!slideConfirmRemove) {
+      slideConfirmRemove = true;
+      slideMessage = 'Confirm removing the slide from this room.';
+      slideError = '';
+      return;
+    }
+    slideError = '';
+    slideMessage = '';
+    try {
+      await removeRoomSlide(snapshot.room.id);
+      slideConfirmRemove = false;
+      slideFile = null;
+      slideMessage = 'Slide removed from room.';
+    } catch (error) {
+      slideError = error instanceof Error ? error.message : 'Slide removal failed.';
     }
   }
 
@@ -473,14 +555,69 @@
 
       <aside class="room-rail">
         {#if isMod}
-          <label class="toggle-field">
-            <input
-              type="checkbox"
-              checked={snapshot.room.noSlideMode}
-              onchange={(event) => setRoomBooleanSetting('noSlideMode', event.currentTarget.checked)}
-            />
-            No-slide markdown mode
-          </label>
+          <section class="settings-panel" aria-label="Room settings">
+            <div class="panel-title">
+              <Settings size={18} />
+              <h3>Room settings</h3>
+            </div>
+            <form class="settings-form" onsubmit={(event) => { event.preventDefault(); saveRoomTitle(); }}>
+              <label>
+                Room title
+                <input bind:value={roomTitleDraft} maxlength="120" />
+              </label>
+              <button type="submit" disabled={roomTitleDraft.trim() === '' || roomTitleDraft.trim() === snapshot.room.title}>
+                Save title
+              </button>
+            </form>
+            <form class="settings-form" onsubmit={(event) => { event.preventDefault(); setRoomPassword(); }}>
+              <label>
+                Room password
+                <input bind:value={roomPasswordDraft} type="password" placeholder={snapshot.room.hasPassword ? 'Set a new password' : 'Add a password'} />
+              </label>
+              <div class="settings-actions">
+                <button type="submit" disabled={roomPasswordDraft.trim() === ''}>Set password</button>
+                <button class="danger-button" type="button" disabled={!snapshot.room.hasPassword} onclick={clearRoomPassword}>Clear password</button>
+              </div>
+            </form>
+            <label class="toggle-field">
+              <input
+                type="checkbox"
+                checked={snapshot.room.noSlideMode}
+                onchange={(event) => setRoomBooleanSetting('noSlideMode', event.currentTarget.checked)}
+              />
+              No-slide markdown mode
+            </label>
+            <label class="toggle-field">
+              <input
+                type="checkbox"
+                checked={snapshot.room.allowParticipantMarkdown}
+                onchange={(event) => setRoomBooleanSetting('allowParticipantMarkdown', event.currentTarget.checked)}
+              />
+              Participant markdown edits
+            </label>
+            <label class="toggle-field">
+              <input
+                type="checkbox"
+                checked={snapshot.room.sharedNavigationEnabled}
+                onchange={(event) => setRoomBooleanSetting('sharedNavigationEnabled', event.currentTarget.checked)}
+              />
+              Shared navigation default
+            </label>
+            <label class="compact-field">
+              Hands
+              <select value={snapshot.room.raiseHandMode} onchange={(event) => setRaiseHandMode(event.currentTarget.value as 'off' | 'manual' | 'queue')}>
+                <option value="off">Off</option>
+                <option value="manual">Manual</option>
+                <option value="queue">Queue</option>
+              </select>
+            </label>
+            {#if settingsMessage}
+              <p class="upload-message">{settingsMessage}</p>
+            {/if}
+            {#if settingsError}
+              <p class="upload-error" role="alert">{settingsError}</p>
+            {/if}
+          </section>
         {/if}
 
         <div class="turn-console" aria-label="Turn controls">
@@ -514,14 +651,6 @@
           <button type="button" title="Reset timer" onclick={resetTimer}>
             <RotateCcw size={16} /> Reset
           </button>
-          <label class="compact-field">
-            Hands
-            <select value={snapshot.room.raiseHandMode} onchange={(event) => setRaiseHandMode(event.currentTarget.value as 'off' | 'manual' | 'queue')}>
-              <option value="off">Off</option>
-              <option value="manual">Manual</option>
-              <option value="queue">Queue</option>
-            </select>
-          </label>
         </div>
       {:else if canUseHands}
         <button class="hand-toggle" type="button" onclick={toggleHand}>
@@ -630,9 +759,17 @@
             Expiration
             <input type="datetime-local" bind:value={slideExpiresAt} disabled={slideBusy} />
           </label>
-          <button type="submit" disabled={slideBusy || !slideFile}>
-            <Upload size={16} /> {slideBusy ? 'Working' : 'Upload PDF'}
-          </button>
+          <div class="settings-actions">
+            <button type="submit" disabled={slideBusy || !slideFile}>
+              <Upload size={16} /> {slideBusy ? 'Working' : 'Replace PDF'}
+            </button>
+            {#if canChangeSlideExpiration}
+              <button type="button" disabled={slideBusy || !snapshot.slide} onclick={saveSlideExpiration}>Save expiration</button>
+            {/if}
+            <button class="danger-button" type="button" disabled={slideBusy || !snapshot.slide} onclick={submitRemoveSlide}>
+              <Trash2 size={16} /> {slideConfirmRemove ? 'Confirm remove' : 'Remove'}
+            </button>
+          </div>
           {#if slideBusy || slideProgress > 0}
             <progress max="100" value={slideProgress}>{slideProgress}%</progress>
           {/if}

@@ -11,6 +11,7 @@ export type RoomSnapshot = {
   room: {
     id: string;
     title: string;
+    hasPassword: boolean;
     noSlideMode: boolean;
     allowParticipantMarkdown: boolean;
     raiseHandMode: 'off' | 'manual' | 'queue';

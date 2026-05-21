@@ -42,6 +42,7 @@ type Status struct {
 	SHA256          string `json:"sha256"`
 	AlreadyUploaded bool   `json:"alreadyUploaded"`
 	Missing         bool   `json:"missing"`
+	RoomID          string `json:"-"`
 }
 
 // RoomFile describes the current PDF file attached to a room.
@@ -239,7 +240,34 @@ func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (S
 	if err := tx.Commit(); err != nil {
 		return Status{}, fmt.Errorf("commit slide store: %w", err)
 	}
-	return Status{Exists: true, SHA256: sha, AlreadyUploaded: status.AlreadyUploaded, Missing: false}, nil
+	return Status{Exists: true, SHA256: sha, AlreadyUploaded: status.AlreadyUploaded, Missing: false, RoomID: input.RoomID}, nil
+}
+
+// UpdateRoomExpiration changes the current room slide expiration.
+func (s *Service) UpdateRoomExpiration(ctx context.Context, roomID string, expiresAt time.Time) error {
+	if !expiresAt.After(time.Now().UTC()) {
+		return ErrInvalidExpiry
+	}
+	result, err := s.db.ExecContext(ctx, `update room_slides set expires_at = ?, updated_at = ? where room_id = ?`, expiresAt.UTC().Format(time.RFC3339Nano), nowText(), roomID)
+	if err != nil {
+		return fmt.Errorf("update slide expiration: %w", err)
+	}
+	if changed, err := result.RowsAffected(); err == nil && changed == 0 {
+		return ErrNoRoomSlide
+	}
+	return nil
+}
+
+// RemoveRoomSlide removes the room slide reference without deleting the physical file.
+func (s *Service) RemoveRoomSlide(ctx context.Context, roomID string) error {
+	result, err := s.db.ExecContext(ctx, `delete from room_slides where room_id = ?`, roomID)
+	if err != nil {
+		return fmt.Errorf("remove room slide: %w", err)
+	}
+	if changed, err := result.RowsAffected(); err == nil && changed == 0 {
+		return ErrNoRoomSlide
+	}
+	return nil
 }
 
 // Cleanup deletes expired room references and files that no unexpired references need.

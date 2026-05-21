@@ -87,12 +87,26 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.patchMe)(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/me/admin-token":
 		s.withUser(s.postAdminToken)(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/admins":
+		s.withUser(s.getAdmins)(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/admins/demote-all":
+		s.withUser(s.postDemoteAllAdmins)(w, r)
+	case r.Method == http.MethodDelete && adminPathValue(r.URL.Path) != "":
+		s.withUser(s.deleteAdmin)(w, withAdminID(r, adminPathValue(r.URL.Path)))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rooms":
 		s.withUser(s.postRoom)(w, r)
 	case r.Method == http.MethodGet && slidePathValue(r.URL.Path) != "":
 		s.withUser(s.getSlideStatus)(w, withSlideSHA(r, slidePathValue(r.URL.Path)))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/slides":
 		s.withUser(s.postSlide)(w, r)
+	case r.Method == http.MethodPatch && roomPathValue(r.URL.Path, "/settings") != "":
+		s.withUser(s.patchRoomSettings)(w, withRoomID(r, roomPathValue(r.URL.Path, "/settings")))
+	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/slide") != "":
+		s.withUser(s.postRoomSlide)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide")))
+	case r.Method == http.MethodPatch && roomPathValue(r.URL.Path, "/slide") != "":
+		s.withUser(s.patchRoomSlide)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide")))
+	case r.Method == http.MethodDelete && roomPathValue(r.URL.Path, "/slide") != "":
+		s.withUser(s.deleteRoomSlide)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide")))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "/slide/file") != "":
 		s.withUser(s.getRoomSlideFile)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide/file")))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "") != "":
@@ -182,6 +196,46 @@ func (s *appServer) postAdminToken(w http.ResponseWriter, r *http.Request, user 
 	writeJSON(w, http.StatusOK, updated)
 }
 
+func (s *appServer) getAdmins(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if !requireAdmin(w, user) {
+		return
+	}
+	admins, err := s.auth.ListAdmins(r.Context())
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Could not list admins.")
+		return
+	}
+	writeJSON(w, http.StatusOK, admins)
+}
+
+func (s *appServer) deleteAdmin(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if !requireAdmin(w, user) {
+		return
+	}
+	if err := s.auth.DemoteAdmin(r.Context(), adminIDFromContext(r.Context())); err != nil {
+		writeAdminError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *appServer) postDemoteAllAdmins(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if !requireAdmin(w, user) {
+		return
+	}
+	var input struct {
+		IncludeSelf bool `json:"includeSelf"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := s.auth.DemoteAllAdmins(r.Context(), user.ID, input.IncludeSelf); err != nil {
+		writeAdminError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *appServer) postRoom(w http.ResponseWriter, r *http.Request, user auth.User) {
 	if s.rooms == nil {
 		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
@@ -236,6 +290,59 @@ func (s *appServer) joinRoom(w http.ResponseWriter, r *http.Request, user auth.U
 	writeJSON(w, http.StatusOK, details)
 }
 
+func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	if !s.requireRoomMod(w, r, user, roomID) {
+		return
+	}
+	var input struct {
+		Title                    *string `json:"title"`
+		Password                 *string `json:"password"`
+		PasswordAction           string  `json:"passwordAction"`
+		NoSlideMode              *bool   `json:"noSlideMode"`
+		AllowParticipantMarkdown *bool   `json:"allowParticipantMarkdown"`
+		SharedNavigationEnabled  *bool   `json:"sharedNavigationEnabled"`
+		RaiseHandMode            *string `json:"raiseHandMode"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	settings := rooms.SettingsInput{
+		Title:                    input.Title,
+		NoSlideMode:              input.NoSlideMode,
+		AllowParticipantMarkdown: input.AllowParticipantMarkdown,
+		SharedNavigationEnabled:  input.SharedNavigationEnabled,
+		RaiseHandMode:            input.RaiseHandMode,
+	}
+	switch strings.TrimSpace(input.PasswordAction) {
+	case "":
+	case "set":
+		if input.Password == nil {
+			writeProblem(w, http.StatusBadRequest, "Bad Request", "Password is required when setting a room password.")
+			return
+		}
+		settings.Password = input.Password
+	case "clear":
+		settings.ClearPassword = true
+	default:
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Password action must be set or clear.")
+		return
+	}
+	room, err := s.rooms.UpdateSettings(r.Context(), roomID, settings)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), roomID, "")
+	}
+	writeJSON(w, http.StatusOK, room)
+}
+
 func (s *appServer) postWSTicket(w http.ResponseWriter, r *http.Request, user auth.User) {
 	if s.hub == nil {
 		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
@@ -275,15 +382,101 @@ func (s *appServer) postSlide(w http.ResponseWriter, r *http.Request, user auth.
 		writeProblem(w, http.StatusForbidden, "Forbidden", "Only site admins can upload slides.")
 		return
 	}
+	status, ok := s.storeSlideFromMultipart(w, r, user.ID, "")
+	if !ok {
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), status.RoomID, "")
+	}
+	writeJSON(w, http.StatusCreated, status)
+}
+
+func (s *appServer) postRoomSlide(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.slides == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	if !s.requireRoomMod(w, r, user, roomID) {
+		return
+	}
+	status, ok := s.storeSlideFromMultipart(w, r, user.ID, roomID)
+	if !ok {
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), roomID, "")
+	}
+	writeJSON(w, http.StatusCreated, status)
+}
+
+func (s *appServer) patchRoomSlide(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.slides == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	if !s.requireRoomMod(w, r, user, roomID) {
+		return
+	}
+	if !user.IsAdmin {
+		writeProblem(w, http.StatusForbidden, "Forbidden", "Only site admins can change slide expiration.")
+		return
+	}
+	var input struct {
+		ExpiresAt string `json:"expiresAt"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(input.ExpiresAt))
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Slide expiration must be an RFC3339 timestamp.")
+		return
+	}
+	if err := s.slides.UpdateRoomExpiration(r.Context(), roomID, expiresAt); err != nil {
+		writeSlideError(w, err)
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), roomID, "")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *appServer) deleteRoomSlide(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.slides == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	if !s.requireRoomMod(w, r, user, roomID) {
+		return
+	}
+	if err := s.slides.RemoveRoomSlide(r.Context(), roomID); err != nil {
+		writeSlideError(w, err)
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), roomID, "")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *appServer) storeSlideFromMultipart(w http.ResponseWriter, r *http.Request, userID string, roomID string) (slides.Status, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.slides.MaxBytes()+10<<20)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Bad Request", "Slide upload must be multipart form data.")
-		return
+		return slides.Status{}, false
 	}
 	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(r.FormValue("expiresAt")))
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "Bad Request", "Slide expiration must be an RFC3339 timestamp.")
-		return
+		return slides.Status{}, false
+	}
+	if roomID == "" {
+		roomID = r.FormValue("roomId")
 	}
 	var file io.Reader
 	mimeType := ""
@@ -294,10 +487,10 @@ func (s *appServer) postSlide(w http.ResponseWriter, r *http.Request, user auth.
 		mimeType = header.Header.Get("Content-Type")
 	} else if !errors.Is(err, http.ErrMissingFile) {
 		writeProblem(w, http.StatusBadRequest, "Bad Request", "Slide file field is invalid.")
-		return
+		return slides.Status{}, false
 	}
-	status, err := s.slides.Store(r.Context(), user.ID, slides.StoreInput{
-		RoomID:       r.FormValue("roomId"),
+	status, err := s.slides.Store(r.Context(), userID, slides.StoreInput{
+		RoomID:       roomID,
 		SHA256:       r.FormValue("sha256"),
 		OriginalName: r.FormValue("originalName"),
 		ExpiresAt:    expiresAt,
@@ -306,12 +499,9 @@ func (s *appServer) postSlide(w http.ResponseWriter, r *http.Request, user auth.
 	})
 	if err != nil {
 		writeSlideError(w, err)
-		return
+		return slides.Status{}, false
 	}
-	if s.hub != nil {
-		s.hub.BroadcastSnapshot(r.Context(), r.FormValue("roomId"), "")
-	}
-	writeJSON(w, http.StatusCreated, status)
+	return status, true
 }
 
 func (s *appServer) getRoomSlideFile(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -413,6 +603,8 @@ func writeRoomError(w http.ResponseWriter, err error) {
 		writeProblem(w, http.StatusBadRequest, "Bad Request", "Set a display name before using rooms.")
 	case errors.Is(err, rooms.ErrInvalidTitle):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
+	case errors.Is(err, rooms.ErrInvalidRaiseHandMode):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, rooms.ErrNotFound), errors.Is(err, rooms.ErrNotMember):
 		writeProblem(w, http.StatusNotFound, "Not Found", "Room was not found.")
 	case errors.Is(err, rooms.ErrKicked):
@@ -420,6 +612,38 @@ func writeRoomError(w http.ResponseWriter, err error) {
 	default:
 		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Room operation failed.")
 	}
+}
+
+func writeAdminError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, auth.ErrNotFound):
+		writeProblem(w, http.StatusNotFound, "Not Found", "Admin was not found.")
+	case errors.Is(err, auth.ErrNoAdminRecovery):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
+	default:
+		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Admin operation failed.")
+	}
+}
+
+func requireAdmin(w http.ResponseWriter, user auth.User) bool {
+	if user.IsAdmin {
+		return true
+	}
+	writeProblem(w, http.StatusForbidden, "Forbidden", "Only site admins can manage admins.")
+	return false
+}
+
+func (s *appServer) requireRoomMod(w http.ResponseWriter, r *http.Request, user auth.User, roomID string) bool {
+	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return false
+	}
+	if details.Membership.Role != rooms.RoleMod {
+		writeProblem(w, http.StatusForbidden, "Forbidden", "Only room moderators can change room settings.")
+		return false
+	}
+	return true
 }
 
 func writeSlideError(w http.ResponseWriter, err error) {
@@ -513,6 +737,7 @@ type problem struct {
 
 const roomIDContextKey contextKey = "roomID"
 const slideSHAContextKey contextKey = "slideSHA"
+const adminIDContextKey contextKey = "adminID"
 
 func roomPathValue(path string, suffix string) string {
 	const prefix = "/api/rooms/"
@@ -538,6 +763,18 @@ func slidePathValue(path string) string {
 	return value
 }
 
+func adminPathValue(path string) string {
+	const prefix = "/api/admins/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	value := strings.TrimPrefix(path, prefix)
+	if value == "" || strings.Contains(value, "/") {
+		return ""
+	}
+	return value
+}
+
 func withRoomID(r *http.Request, roomID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), roomIDContextKey, roomID))
 }
@@ -553,6 +790,15 @@ func withSlideSHA(r *http.Request, sha string) *http.Request {
 
 func slideSHAFromContext(ctx context.Context) string {
 	value, _ := ctx.Value(slideSHAContextKey).(string)
+	return value
+}
+
+func withAdminID(r *http.Request, adminID string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), adminIDContextKey, adminID))
+}
+
+func adminIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(adminIDContextKey).(string)
 	return value
 }
 
