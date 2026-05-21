@@ -4,7 +4,7 @@ SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking or
 
 SlideTalk is not an audio/video conferencing system, a public event platform, or an account-management service. It assumes a small trusted group, a separate call, and an operator who controls the host.
 
-This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, admin-only PDF slide storage with expiration cleanup, shared PDF viewing, no-slide markdown mode, admin membership controls, moderator room settings, room migration links, slide replacement/removal, and no-Docker self-hosting with Caddy and tmux.
+This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, PDF slide storage with expiration cleanup, shared PDF viewing, no-slide markdown mode, admin membership controls, moderator room settings, room migration links, slide replacement/removal, and no-Docker self-hosting with Caddy and tmux.
 
 ## Requirements
 
@@ -115,7 +115,7 @@ Runtime data lives under `~/.slidetalk` by default:
 - `~/.slidetalk/admin_token`
 - `~/.slidetalk/slides/`
 
-Room participants connect to `/api/ws` with a one-time room-scoped ticket. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, manual or queue-based raised hands, shared slide navigation, markdown updates, room settings, password changes, and slide replacement/removal. Site admins can manage admin membership and can change existing slide expiration. The browser hashes files before upload, the server stores files by SHA-256, and expired room references are cleaned up hourly.
+Room participants connect to `/api/ws` with a one-time room-scoped ticket. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, manual or queue-based raised hands, shared slide navigation, markdown updates, room settings, password changes, and slide replacement/removal. Room moderators can upload or replace the PDF attached to their room. Site admins can manage admin membership, inspect slide storage status, and change existing slide expiration. The browser hashes files before upload, the server stores files by SHA-256, and expired room references are cleaned up hourly.
 
 Room moderators can create 24-hour migration links from room settings. A migration ID is a bearer secret that is shown once to the issuing browser, lets the holder join that room even when it has a password, and is stored in SQLite only as a SHA-256 hash.
 
