@@ -1,3 +1,5 @@
+import type { RoomSnapshot } from './realtime';
+
 export type User = {
   id: string;
   displayName: string;
@@ -118,6 +120,10 @@ export async function joinRoom(roomId: string, password: string, migrationId = '
 
 export async function getRoom(roomId: string): Promise<RoomDetails> {
   return api(`/api/rooms/${encodeURIComponent(roomId)}`);
+}
+
+export async function getRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
+  return api(`/api/rooms/${encodeURIComponent(roomId)}/snapshot`);
 }
 
 export async function createWSTicket(roomId: string): Promise<WSTicket> {

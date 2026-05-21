@@ -94,11 +94,11 @@ describe('connectRealtime', () => {
       }
     );
 
-    connection.send({ type: 'turn.next' });
+    expect(connection.send({ type: 'turn.next' })).toBe(false);
     expect(FakeWebSocket.sockets[0].sent).toHaveLength(0);
 
     FakeWebSocket.sockets[0].open();
-    connection.send({ type: 'turn.next' });
+    expect(connection.send({ type: 'turn.next' })).toBe(true);
     expect(FakeWebSocket.sockets[0].sent).toHaveLength(1);
   });
 });

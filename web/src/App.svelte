@@ -7,6 +7,7 @@
     demoteAllAdmins,
     getRoom,
     getMe,
+    getRoomSnapshot,
     joinRoom,
     listAdmins,
     submitAdminToken,
@@ -133,25 +134,21 @@
 
   async function submitCreateRoom() {
     await run(async () => {
-      room = await createRoom(createTitle, createPassword);
-      await openRealtime(room.room.id);
-      updateRoomURL(room.room.id);
+      const details = await createRoom(createTitle, createPassword);
+      await activateRoom(details, `Created ${details.room.title}.`);
       createTitle = '';
       createPassword = '';
-      notice = `Created ${room.room.title}.`;
     });
   }
 
   async function submitJoinRoom() {
     await run(async () => {
       const normalizedRoomId = roomIdFromInput(joinRoomId, window.location.href);
-      room = await joinRoom(normalizedRoomId, joinPassword, joinMigrationId);
-      await openRealtime(room.room.id);
-      updateRoomURL(room.room.id);
-      joinRoomId = room.room.id;
+      const details = await joinRoom(normalizedRoomId, joinPassword, joinMigrationId);
+      await activateRoom(details, `Joined ${details.room.title}.`);
+      joinRoomId = details.room.id;
       joinPassword = '';
       joinMigrationId = '';
-      notice = `Joined ${room.room.title}.`;
     });
   }
 
@@ -171,19 +168,32 @@
         details = await joinRoom(normalizedRoomId, '', migrationId);
         joined = true;
       }
-      room = details;
-      await openRealtime(details.room.id);
-      updateRoomURL(details.room.id);
       if (joined) {
         joinMigrationId = '';
-        notice = `Joined ${details.room.title}.`;
+        await activateRoom(details, `Joined ${details.room.title}.`);
       } else {
-        notice = `Opened ${details.room.title}.`;
+        await activateRoom(details, `Opened ${details.room.title}.`);
       }
     } catch (error) {
       errorMessage = messageFrom(error);
     } finally {
       busy = false;
+    }
+  }
+
+  async function activateRoom(details: RoomDetails, message: string) {
+    realtime?.close();
+    realtime = null;
+    snapshot = null;
+    room = details;
+    snapshot = await getRoomSnapshot(details.room.id);
+    updateRoomURL(details.room.id);
+    notice = message;
+    try {
+      await openRealtime(details.room.id);
+    } catch (error) {
+      connectionStatus = 'disconnected';
+      errorMessage = messageFrom(error);
     }
   }
 
@@ -232,8 +242,6 @@
   }
 
   async function openRealtime(roomId: string) {
-    realtime?.close();
-    snapshot = null;
     connectionStatus = 'connecting';
     realtime = await connectRealtime(
       roomId,
@@ -388,12 +396,15 @@
       <p class="feedback notice" role="status">Save a display name before creating or joining rooms.</p>
     {/if}
 
-    {#if snapshot && realtime}
+    {#if snapshot}
       <Roundtable
         {snapshot}
         status={connectionStatus}
         send={(command) => {
-          realtime?.send(command);
+          const sent = realtime?.send(command) ?? false;
+          if (!sent) {
+            errorMessage = 'Live connection is still connecting. Try again in a moment.';
+          }
         }}
       />
     {:else if room}
