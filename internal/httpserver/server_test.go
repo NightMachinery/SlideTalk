@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,27 @@ func TestHealthzReturnsOK(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersAreApplied(t *testing.T) {
+	server := New(ServerOptions{})
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := response.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+	}
+	csp := response.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'self'", "worker-src 'self' blob:", "connect-src 'self' ws: wss:", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("Content-Security-Policy = %q, missing %q", csp, want)
+		}
+	}
+}
+
 func TestUnknownAPIRouteReturnsProblemJSON(t *testing.T) {
 	server := New(ServerOptions{})
 	request := httptest.NewRequest(http.MethodGet, "/api/missing", nil)
@@ -56,6 +78,18 @@ func TestUnknownAPIRouteReturnsProblemJSON(t *testing.T) {
 	}
 	if got := response.Body.String(); got != "{\"type\":\"about:blank\",\"title\":\"Not Found\",\"status\":404,\"detail\":\"No API route matches /api/missing.\"}\n" {
 		t.Fatalf("expected problem body, got %q", got)
+	}
+}
+
+func TestJSONRequestBodyLimit(t *testing.T) {
+	server := newAPITestServer(t)
+	oversizedName := strings.Repeat("A", 1<<20)
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"`+oversizedName+`"}`, "token-one"))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
 	}
 }
 
@@ -151,6 +185,19 @@ func TestRoomCreateAndPasswordJoin(t *testing.T) {
 	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"password":"secret"}`, "guest"), http.StatusOK)
 }
 
+func TestRoomPasswordAttemptsAreRateLimited(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Private","password":"secret"}`, "creator"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "guest"), http.StatusOK)
+
+	for range 5 {
+		serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"password":"wrong"}`, "guest"), http.StatusUnauthorized)
+	}
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"password":"secret"}`, "guest"), http.StatusTooManyRequests)
+}
+
 func TestRoomSettingsRequireModAndCanClearPassword(t *testing.T) {
 	server := newAPITestServer(t)
 	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "mod"), http.StatusOK)
@@ -203,6 +250,18 @@ func TestWSTicketEndpointAndSocketSnapshot(t *testing.T) {
 	if err == nil {
 		t.Fatal("reused websocket ticket connected")
 	}
+}
+
+func TestWSTicketCreationIsRateLimited(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Live","password":""}`, "creator"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+
+	for range 10 {
+		serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/ws-ticket", `{}`, "creator"), http.StatusOK)
+	}
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/ws-ticket", `{}`, "creator"), http.StatusTooManyRequests)
 }
 
 func TestRoomSlideReplacementAndRemovalControlsReferenceOnly(t *testing.T) {

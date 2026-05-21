@@ -14,6 +14,7 @@
     type RoomDetails,
     type User
   } from './lib/api';
+  import { copyText } from './lib/clipboard';
   import { connectRealtime, type RealtimeConnection, type RealtimeEvent, type RoomSnapshot } from './lib/realtime';
   import Roundtable from './lib/room/Roundtable.svelte';
 
@@ -36,11 +37,16 @@
   let busy = $state(false);
   let errorMessage = $state('');
   let notice = $state('');
+  let shareFallbackText = $state('');
 
   const needsProfile = $derived(Boolean(user && user.displayName.trim() === ''));
 
   onMount(async () => {
     await loadProfile();
+    const roomParam = new URL(window.location.href).searchParams.get('room');
+    if (roomParam) {
+      joinRoomId = roomParam;
+    }
   });
 
   async function loadProfile() {
@@ -119,6 +125,7 @@
     await run(async () => {
       room = await createRoom(createTitle, createPassword);
       await openRealtime(room.room.id);
+      updateRoomURL(room.room.id);
       createTitle = '';
       createPassword = '';
       notice = `Created ${room.room.title}.`;
@@ -129,6 +136,7 @@
     await run(async () => {
       room = await joinRoom(joinRoomId, joinPassword);
       await openRealtime(room.room.id);
+      updateRoomURL(room.room.id);
       joinPassword = '';
       notice = `Joined ${room.room.title}.`;
     });
@@ -149,6 +157,32 @@
 
   function messageFrom(error: unknown) {
     return error instanceof Error ? error.message : 'Something went wrong.';
+  }
+
+  function updateRoomURL(roomId: string) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', roomId);
+    window.history.replaceState({}, '', url);
+  }
+
+  function roomShareText(roomId: string) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', roomId);
+    return url.toString();
+  }
+
+  async function copyRoomLink(roomId: string) {
+    const result = await copyText(roomShareText(roomId));
+    if (result.copied) {
+      shareFallbackText = '';
+      notice = 'Room link copied.';
+      return;
+    }
+    shareFallbackText = result.text;
+    notice = 'Select the room link field and copy it manually.';
+    window.setTimeout(() => {
+      document.querySelector<HTMLInputElement>('[data-share-fallback]')?.select();
+    });
   }
 
   async function openRealtime(roomId: string) {
@@ -324,8 +358,17 @@
             <h2>{room.room.title}</h2>
           </div>
           <p>Role: {room.membership.role}. Room ID: <code>{room.room.id}</code></p>
+          {#if shareFallbackText}
+            <label class="share-fallback">
+              Room link
+              <input data-share-fallback readonly value={shareFallbackText} />
+            </label>
+          {/if}
         </div>
-        <span>{room.room.hasPassword ? 'Password protected' : 'Open room'}</span>
+        <div class="room-summary-actions">
+          <button type="button" onclick={() => copyRoomLink(room.room.id)}>Copy room link</button>
+          <span>{room.room.hasPassword ? 'Password protected' : 'Open room'}</span>
+        </div>
       </section>
     {/if}
   {/if}

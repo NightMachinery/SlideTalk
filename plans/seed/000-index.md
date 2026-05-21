@@ -42,7 +42,7 @@ If the worktree is dirty before implementation, inspect `git status --short`. Do
 - [x] 006 Slide Viewer And Markdown Mode: `plans/seed/006-slide-viewer-markdown.md`
 - [x] 007 Admin And Room Settings: `plans/seed/007-admin-and-room-settings.md`
 - [x] 008 Self Hosting: `plans/seed/008-self-hosting.md`
-- [ ] 009 Hardening: `plans/seed/009-hardening.md`
+- [x] 009 Hardening: `plans/seed/009-hardening.md`
 
 ## Public API Shape
 

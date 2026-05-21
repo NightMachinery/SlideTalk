@@ -93,6 +93,14 @@ For HTTPS URLs, the script writes an explicit HTTP-to-HTTPS redirect block. For 
 
 Browser clipboard and other secure-context APIs may be unavailable on plain HTTP except on localhost. SlideTalk still works over HTTP, but browser features that require HTTPS can need manual copy/paste fallback behavior.
 
+The room-link copy control uses `navigator.clipboard` when the browser allows it. When clipboard access is blocked, the app shows a selected text field with the room link so users can copy manually.
+
+## Security Headers And Limits
+
+The Go server adds security headers to responses, including `nosniff`, `no-referrer`, and a Content Security Policy that allows same-origin app assets, blob workers for PDF rendering, and WebSocket connections. Caddy can add stricter outer headers if your deployment requires them.
+
+JSON request bodies are capped by the server. PDF uploads are capped by `SLIDETALK_SLIDE_MAX_BYTES`, which defaults to 200 MiB. Admin-token submissions, invalid room-password attempts, and WebSocket ticket creation are rate-limited.
+
 ## Proxy Environment
 
 The script does not hardcode proxy values. When it launches tmux sessions, it preserves existing proxy-related environment variables using tmux `-e NAME=value` arguments. This includes common `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, lowercase variants, and pnpm/npm proxy variables when they are already set.

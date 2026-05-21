@@ -40,6 +40,8 @@ func New(options ServerOptions) http.Handler {
 		hub:          options.Hub,
 		slides:       options.SlideService,
 		adminLimiter: newFailureLimiter(5, 15*time.Minute),
+		joinLimiter:  newFailureLimiter(5, 15*time.Minute),
+		wsLimiter:    newFailureLimiter(10, time.Minute),
 	}
 
 	var staticHandler http.Handler
@@ -47,7 +49,7 @@ func New(options ServerOptions) http.Handler {
 		staticHandler = http.FileServer(http.Dir(options.StaticDir))
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			mux.ServeHTTP(w, r)
 			return
@@ -64,7 +66,7 @@ func New(options ServerOptions) http.Handler {
 		}
 
 		http.NotFound(w, r)
-	})
+	}))
 }
 
 type appServer struct {
@@ -73,6 +75,8 @@ type appServer struct {
 	hub          *realtime.Hub
 	slides       *slides.Service
 	adminLimiter *failureLimiter
+	joinLimiter  *failureLimiter
+	wsLimiter    *failureLimiter
 }
 
 type contextKey string
@@ -278,10 +282,19 @@ func (s *appServer) joinRoom(w http.ResponseWriter, r *http.Request, user auth.U
 		return
 	}
 	roomID := roomIDFromContext(r.Context())
+	limitKey := r.RemoteAddr + ":" + user.ID + ":" + roomID
+	if s.joinLimiter.blocked(limitKey) {
+		writeProblem(w, http.StatusTooManyRequests, "Too Many Requests", "Too many room password attempts.")
+		return
+	}
 	if _, err := s.rooms.Join(r.Context(), roomID, user.ID, rooms.JoinInput{Password: input.Password}); err != nil {
+		if errors.Is(err, rooms.ErrInvalidPassword) {
+			s.joinLimiter.recordFailure(limitKey)
+		}
 		writeRoomError(w, err)
 		return
 	}
+	s.joinLimiter.reset(limitKey)
 	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
 	if err != nil {
 		writeRoomError(w, err)
@@ -348,11 +361,18 @@ func (s *appServer) postWSTicket(w http.ResponseWriter, r *http.Request, user au
 		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
 		return
 	}
-	ticket, err := s.hub.IssueTicket(r.Context(), roomIDFromContext(r.Context()), user.ID)
+	roomID := roomIDFromContext(r.Context())
+	limitKey := r.RemoteAddr + ":" + user.ID + ":" + roomID
+	if s.wsLimiter.blocked(limitKey) {
+		writeProblem(w, http.StatusTooManyRequests, "Too Many Requests", "Too many websocket ticket requests.")
+		return
+	}
+	ticket, err := s.hub.IssueTicket(r.Context(), roomID, user.ID)
 	if err != nil {
 		writeRoomError(w, err)
 		return
 	}
+	s.wsLimiter.recordFailure(limitKey)
 	writeJSON(w, http.StatusOK, ticket)
 }
 
@@ -689,6 +709,16 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 
 func isAPIPath(path string) bool {
 	return path == "/api" || len(path) > len("/api/") && path[:len("/api/")] == "/api/"
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self' blob:; connect-src 'self' ws: wss: blob:"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", csp)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeProblem(w http.ResponseWriter, status int, title string, detail string) {

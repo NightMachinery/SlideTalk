@@ -1,4 +1,4 @@
-import { createWSTicket } from './api';
+import { createWSTicket, type WSTicket } from './api';
 
 export type SnapshotMember = {
   userId: string;
@@ -116,29 +116,100 @@ export type RealtimeConnection = {
   close(): void;
 };
 
+type WebSocketLike = {
+  onopen: ((event: Event) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onmessage: ((event: MessageEvent) => void) | null;
+  send(message: string): void;
+  close(): void;
+};
+
+type RealtimeOptions = {
+  createTicket?: (roomId: string) => Promise<WSTicket>;
+  WebSocketClass?: new (url: string) => WebSocketLike;
+  reconnectDelaysMs?: number[];
+};
+
+const defaultReconnectDelaysMs = [500, 1000, 2000, 5000, 10000];
+
+export function realtimeURL(protocol: string, host: string, ticket: string): string {
+  const socketProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${socketProtocol}//${host}/api/ws?ticket=${encodeURIComponent(ticket)}`;
+}
+
 export async function connectRealtime(
   roomId: string,
   onEvent: (event: RealtimeEvent) => void,
-  onStatus: (status: 'connected' | 'disconnected') => void
+  onStatus: (status: 'connecting' | 'connected' | 'disconnected') => void,
+  options: RealtimeOptions = {}
 ): Promise<RealtimeConnection> {
-  const ticket = await createWSTicket(roomId);
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws?ticket=${encodeURIComponent(ticket.ticket)}`);
+  const createTicket = options.createTicket ?? createWSTicket;
+  const WebSocketClass = options.WebSocketClass ?? WebSocket;
+  const reconnectDelaysMs = options.reconnectDelaysMs ?? defaultReconnectDelaysMs;
+  let socket: WebSocketLike | null = null;
+  let closedByCaller = false;
+  let reconnectAttempt = 0;
+  let reconnectTimer: number | null = null;
 
-  socket.onopen = () => onStatus('connected');
-  socket.onclose = () => onStatus('disconnected');
-  socket.onerror = () => onStatus('disconnected');
-  socket.onmessage = (message) => {
-    onEvent(JSON.parse(message.data) as RealtimeEvent);
-  };
+  async function openSocket(statusOnStart: 'connecting' | null) {
+    if (closedByCaller) return;
+    if (statusOnStart) {
+      onStatus(statusOnStart);
+    }
+    const ticket = await createTicket(roomId);
+    if (closedByCaller) return;
+    const nextSocket = new WebSocketClass(realtimeURL(window.location.protocol, window.location.host, ticket.ticket));
+    socket = nextSocket;
+
+    nextSocket.onopen = () => {
+      reconnectAttempt = 0;
+      onStatus('connected');
+    };
+    nextSocket.onclose = () => {
+      if (closedByCaller || socket !== nextSocket) return;
+      onStatus('disconnected');
+      scheduleReconnect();
+    };
+    nextSocket.onerror = () => {
+      if (!closedByCaller) {
+        onStatus('disconnected');
+      }
+    };
+    nextSocket.onmessage = (message) => {
+      onEvent(JSON.parse(message.data) as RealtimeEvent);
+    };
+  }
+
+  function scheduleReconnect() {
+    const delay = reconnectDelaysMs[Math.min(reconnectAttempt, reconnectDelaysMs.length - 1)];
+    reconnectAttempt += 1;
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      void openSocket('connecting').catch(() => {
+        if (!closedByCaller) {
+          onStatus('disconnected');
+          scheduleReconnect();
+        }
+      });
+    }, delay);
+  }
+
+  await openSocket(null);
 
   return {
     send(command) {
+      if (!socket) return;
       const requestId = crypto.randomUUID();
       socket.send(JSON.stringify({ ...command, requestId }));
     },
     close() {
-      socket.close();
+      closedByCaller = true;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      socket?.close();
     }
   };
 }

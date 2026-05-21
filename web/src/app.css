@@ -321,6 +321,20 @@ h2 {
   font-weight: 740;
 }
 
+.room-summary-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.share-fallback {
+  max-width: min(100%, 520px);
+  margin-top: 12px;
+}
+
 .roundtable {
   display: grid;
   grid-template-columns: minmax(0, 8fr) minmax(280px, 4fr);
@@ -580,6 +594,15 @@ h2 {
 .room-rail {
   display: grid;
   gap: 14px;
+}
+
+.room-rail .turn-console {
+  order: -1;
+  position: sticky;
+  top: 12px;
+  z-index: 2;
+  background: oklch(99% 0.006 235 / 0.94);
+  backdrop-filter: blur(10px);
 }
 
 .settings-panel {
@@ -883,5 +906,24 @@ code {
   .room-summary {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .room-summary-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .document-panel {
+    order: -2;
+  }
+
+  .pdf-canvas-wrap {
+    min-height: 300px;
+    max-height: 62vh;
+    padding: 10px;
+  }
+
+  .room-rail .turn-console {
+    top: 0;
   }
 }
