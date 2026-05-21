@@ -57,6 +57,56 @@ func TestPasswordRoomRequiresCorrectPassword(t *testing.T) {
 	}
 }
 
+func TestExistingPasswordRoomMemberRejoinsWithoutPassword(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	creator := namedUser(t, ctx, authService, "creator-token", "Ada")
+	guest := namedUser(t, ctx, authService, "guest-token", "Grace")
+	service := NewService(db)
+
+	room, err := service.Create(ctx, creator.ID, CreateInput{Title: "Private", Password: "correct horse"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+	first, err := service.Join(ctx, room.ID, guest.ID, JoinInput{Password: "correct horse"})
+	if err != nil {
+		t.Fatalf("initial join: %v", err)
+	}
+
+	rejoined, err := service.Join(ctx, room.ID, guest.ID, JoinInput{})
+	if err != nil {
+		t.Fatalf("rejoin without password: %v", err)
+	}
+	if rejoined != first {
+		t.Fatalf("rejoined membership = %+v, want %+v", rejoined, first)
+	}
+}
+
+func TestKickedPasswordRoomMemberCannotRejoinWithPassword(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	creator := namedUser(t, ctx, authService, "creator-token", "Ada")
+	guest := namedUser(t, ctx, authService, "guest-token", "Grace")
+	service := NewService(db)
+
+	room, err := service.Create(ctx, creator.ID, CreateInput{Title: "Private", Password: "correct horse"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+	if _, err := service.Join(ctx, room.ID, guest.ID, JoinInput{Password: "correct horse"}); err != nil {
+		t.Fatalf("join room: %v", err)
+	}
+	if err := service.MarkKickedForTest(ctx, room.ID, guest.ID); err != nil {
+		t.Fatalf("kick member: %v", err)
+	}
+
+	if _, err := service.Join(ctx, room.ID, guest.ID, JoinInput{Password: "correct horse"}); err == nil {
+		t.Fatal("kicked password room member rejoined")
+	}
+}
+
 func TestMigrationLinkCanJoinPasswordRoom(t *testing.T) {
 	ctx := context.Background()
 	db := openRoomsTestDB(t)

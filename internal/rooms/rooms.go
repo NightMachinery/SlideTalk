@@ -206,8 +206,21 @@ func (s *Service) Join(ctx context.Context, roomID string, userID string, input 
 	if err := s.requireDisplayName(ctx, userID); err != nil {
 		return Membership{}, err
 	}
+	var existing Membership
+	var kickedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `select room_id, user_id, role, display_order, kicked_at from room_members where room_id = ? and user_id = ?`, roomID, userID).Scan(&existing.RoomID, &existing.UserID, &existing.Role, &existing.DisplayOrder, &kickedAt)
+	if err == nil {
+		if kickedAt.Valid {
+			return Membership{}, ErrKicked
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Membership{}, fmt.Errorf("read membership: %w", err)
+	}
+
 	var passwordHash sql.NullString
-	err := s.db.QueryRowContext(ctx, `select password_hash from rooms where id = ?`, roomID).Scan(&passwordHash)
+	err = s.db.QueryRowContext(ctx, `select password_hash from rooms where id = ?`, roomID).Scan(&passwordHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Membership{}, ErrNotFound
@@ -218,19 +231,6 @@ func (s *Service) Join(ctx context.Context, roomID string, userID string, input 
 		if strings.TrimSpace(input.MigrationID) == "" || !s.validMigrationLink(ctx, roomID, input.MigrationID) {
 			return Membership{}, ErrInvalidPassword
 		}
-	}
-
-	var existing Membership
-	var kickedAt sql.NullString
-	err = s.db.QueryRowContext(ctx, `select room_id, user_id, role, display_order, kicked_at from room_members where room_id = ? and user_id = ?`, roomID, userID).Scan(&existing.RoomID, &existing.UserID, &existing.Role, &existing.DisplayOrder, &kickedAt)
-	if err == nil {
-		if kickedAt.Valid {
-			return Membership{}, ErrKicked
-		}
-		return existing, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return Membership{}, fmt.Errorf("read membership: %w", err)
 	}
 
 	var nextOrder int

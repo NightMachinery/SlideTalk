@@ -5,6 +5,7 @@
     createRoom,
     demoteAdmin,
     demoteAllAdmins,
+    getRoom,
     getMe,
     joinRoom,
     listAdmins,
@@ -16,6 +17,7 @@
   } from './lib/api';
   import { copyText } from './lib/clipboard';
   import { connectRealtime, type RealtimeConnection, type RealtimeEvent, type RoomSnapshot } from './lib/realtime';
+  import { roomIdFromInput } from './lib/roomLink';
   import Roundtable from './lib/room/Roundtable.svelte';
 
   let user = $state<User | null>(null);
@@ -51,6 +53,9 @@
     const migrationParam = new URL(window.location.href).searchParams.get('migration');
     if (migrationParam) {
       joinMigrationId = migrationParam;
+    }
+    if (roomParam && user && user.displayName.trim() !== '') {
+      await autoOpenRoom(roomParam, migrationParam ?? '');
     }
   });
 
@@ -139,13 +144,47 @@
 
   async function submitJoinRoom() {
     await run(async () => {
-      room = await joinRoom(joinRoomId, joinPassword, joinMigrationId);
+      const normalizedRoomId = roomIdFromInput(joinRoomId, window.location.href);
+      room = await joinRoom(normalizedRoomId, joinPassword, joinMigrationId);
       await openRealtime(room.room.id);
       updateRoomURL(room.room.id);
+      joinRoomId = room.room.id;
       joinPassword = '';
       joinMigrationId = '';
       notice = `Joined ${room.room.title}.`;
     });
+  }
+
+  async function autoOpenRoom(roomInput: string, migrationId: string) {
+    busy = true;
+    errorMessage = '';
+    notice = '';
+    const normalizedRoomId = roomIdFromInput(roomInput, window.location.href);
+    joinRoomId = normalizedRoomId;
+    joinMigrationId = migrationId;
+    try {
+      let details: RoomDetails;
+      let joined = false;
+      try {
+        details = await getRoom(normalizedRoomId);
+      } catch {
+        details = await joinRoom(normalizedRoomId, '', migrationId);
+        joined = true;
+      }
+      room = details;
+      await openRealtime(details.room.id);
+      updateRoomURL(details.room.id);
+      if (joined) {
+        joinMigrationId = '';
+        notice = `Joined ${details.room.title}.`;
+      } else {
+        notice = `Opened ${details.room.title}.`;
+      }
+    } catch (error) {
+      errorMessage = messageFrom(error);
+    } finally {
+      busy = false;
+    }
   }
 
   async function run(task: () => Promise<void>) {
@@ -374,7 +413,7 @@
         </div>
         <div class="room-summary-actions">
           <button type="button" onclick={() => copyRoomLink(room.room.id)}>Copy room link</button>
-          <span>{room.room.hasPassword ? 'Password protected' : 'Open room'}</span>
+          <span>{room.room.hasPassword ? 'Password protected' : 'No password'}</span>
         </div>
       </section>
     {/if}
