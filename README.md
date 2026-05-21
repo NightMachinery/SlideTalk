@@ -50,6 +50,7 @@ DELETE /api/admins/{userId}
 POST /api/admins/demote-all
 POST /api/rooms
 GET /api/rooms/{roomId}
+GET /api/rooms/{roomId}/snapshot
 POST /api/rooms/{roomId}/join
 PATCH /api/rooms/{roomId}/settings
 POST /api/rooms/{roomId}/ws-ticket
@@ -115,7 +116,7 @@ Runtime data lives under `~/.slidetalk` by default:
 - `~/.slidetalk/admin_token`
 - `~/.slidetalk/slides/`
 
-Room participants connect to `/api/ws` with a one-time room-scoped ticket. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, manual or queue-based raised hands, shared slide navigation, markdown updates, room settings, password changes, and slide replacement/removal. Room moderators can upload or replace the PDF attached to their room. Site admins can manage admin membership, inspect slide storage status, and change existing slide expiration. The browser hashes files before upload, the server stores files by SHA-256, and expired room references are cleaned up hourly.
+Room participants fetch an initial room snapshot from `/api/rooms/{roomId}/snapshot`, then connect to `/api/ws` with a one-time room-scoped ticket for live updates. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, manual or queue-based raised hands, shared slide navigation, markdown updates, room settings, password changes, and slide replacement/removal. Room moderators can upload or replace the PDF attached to their room. Site admins can manage admin membership, inspect slide storage status, and change existing slide expiration. The browser hashes files before upload, the server stores files by SHA-256, and expired room references are cleaned up hourly.
 
 Room moderators can create 24-hour migration links from room settings. A migration ID is a bearer secret that is shown once to the issuing browser, lets the holder join that room even when it has a password, and is stored in SQLite only as a SHA-256 hash.
 
