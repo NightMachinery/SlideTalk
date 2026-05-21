@@ -2,7 +2,7 @@
 
 SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking order, observer queue, shared timer, slides, and optional discussion notes synchronized for groups that already have a separate audio call.
 
-This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, admin-only PDF slide storage with expiration cleanup, shared PDF viewing, no-slide markdown mode, admin membership controls, moderator room settings, and slide replacement/removal.
+This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, admin-only PDF slide storage with expiration cleanup, shared PDF viewing, no-slide markdown mode, admin membership controls, moderator room settings, slide replacement/removal, and no-Docker self-hosting with Caddy and tmux.
 
 ## Requirements
 
@@ -68,13 +68,29 @@ pnpm --dir web dev
 
 Vite proxies `/api` and `/healthz` to the Go server.
 
+## Self Hosting
+
+Run SlideTalk behind Caddy with tmux:
+
+```bash
+./self_host.zsh setup [url]
+./self_host.zsh redeploy [url]
+./self_host.zsh start [url]
+./self_host.zsh stop
+./self_host.zsh dev-start [url]
+```
+
+The default URL is `https://slidetalk.pinky.lilf.ir`. Production mode serves `web/dist` directly from Caddy and proxies API/WebSocket traffic to the Go server. Development mode proxies app traffic to Vite for hot reload.
+
+See [docs/self-hosting.md](docs/self-hosting.md) for prerequisites, data paths, Caddy behavior, HTTP caveats, proxy environment handling, and troubleshooting.
+
 ## Configuration
 
 The Go server reads these environment variables:
 
 - `SLIDETALK_ADDR`: listen address, default `127.0.0.1:8097`
 - `SLIDETALK_DATA_DIR`: app data directory, default `~/.slidetalk`
-- `SLIDETALK_PUBLIC_URL`: public URL used by later deployment milestones
+- `SLIDETALK_PUBLIC_URL`: public URL used by self-hosting and deployment workflows
 - `SLIDETALK_DEV`: set to `1` for development mode
 - `SLIDETALK_SLIDE_MAX_BYTES`: PDF upload limit, default `209715200`
 
