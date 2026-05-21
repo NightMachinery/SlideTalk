@@ -5,7 +5,7 @@ SlideTalk can run on a VPS without Docker by using the Go server, a Vite product
 ## Prerequisites
 
 - Go 1.22 or newer.
-- zsh with `nvm-load` available in an interactive shell.
+- zsh with `nvm-load` available to non-interactive login shells.
 - Node 20 through `nvm-load` and `nvm use 20`.
 - pnpm.
 - tmux.
@@ -42,7 +42,7 @@ The production tmux session is named `slidetalk` by default.
 ./self_host.zsh redeploy https://talk.example.com
 ```
 
-`redeploy` stops SlideTalk sessions, runs `git pull --ff-only` when the directory is a Git worktree, reinstalls frontend dependencies, rebuilds assets, updates Caddy, and starts production again.
+`redeploy` stops SlideTalk sessions, runs `git pull --ff-only` when the directory is a Git worktree, reinstalls frontend dependencies with a frozen pnpm lockfile, rebuilds assets, updates Caddy, and starts production again.
 
 ## Start And Stop
 
@@ -104,6 +104,10 @@ JSON request bodies are capped by the server. PDF uploads are capped by `SLIDETA
 ## Proxy Environment
 
 The script does not hardcode proxy values. When it launches tmux sessions, it preserves existing proxy-related environment variables using tmux `-e NAME=value` arguments. This includes common `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, lowercase variants, and pnpm/npm proxy variables when they are already set.
+
+## Shell Behavior
+
+The script runs Node and pnpm commands through non-interactive zsh login shells. This keeps `nvm-load` available without allowing deploy installs or builds to read from the terminal, which avoids suspended `redeploy` jobs in SSH or backgrounded shell contexts.
 
 ## Troubleshooting Occupied Ports
 

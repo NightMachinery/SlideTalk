@@ -9,6 +9,11 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
   "dependencies": {
     "@lucide/svelte": "^1.0.1",
     "pdfjs-dist": "^5.7.284"

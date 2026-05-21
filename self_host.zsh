@@ -62,14 +62,14 @@ require_base_commands() {
 	for cmd in go tmux caddy zsh ss; do
 		command -v "$cmd" >/dev/null 2>&1 || die "Missing required command: $cmd"
 	done
-	zsh -ic "nvm-load >/dev/null 2>&1 && nvm use ${NODE_VERSION} >/dev/null && command -v pnpm >/dev/null" \
+	zsh -lc "nvm-load >/dev/null 2>&1 && nvm use ${NODE_VERSION} >/dev/null && command -v pnpm >/dev/null" </dev/null \
 		|| die "Unable to load Node ${NODE_VERSION} with nvm-load and pnpm."
 }
 
 run_node_task() {
 	local task="$1"
 	local quoted_root=${(q)ROOT_DIR}
-	zsh -ic "set -e; nvm-load >/dev/null; nvm use ${NODE_VERSION} >/dev/null; cd ${quoted_root}; ${task}"
+	zsh -lc "set -e; nvm-load >/dev/null; nvm use ${NODE_VERSION} >/dev/null; cd ${quoted_root}; ${task}" </dev/null
 }
 
 port_in_use() {
@@ -131,7 +131,7 @@ wait_for_port_release() {
 
 install_dependencies() {
 	print -- "Installing frontend dependencies..."
-	run_node_task "pnpm --dir web install"
+	run_node_task "pnpm --dir web install --frozen-lockfile"
 }
 
 build_assets() {
@@ -271,7 +271,7 @@ start_dev() {
 	wait_for_port_release "$VITE_PORT" "Vite"
 	write_caddyfile "$public_url" dev
 	tmuxnew "$DEV_API_SESSION" "${env_args[@]}" zsh -lc "cd ${(q)ROOT_DIR}; export SLIDETALK_ADDR=${(q)GO_ADDR} SLIDETALK_PUBLIC_URL=${(q)public_url} SLIDETALK_DEV=1; exec go run ./cmd/slidetalk"
-	tmuxnew "$DEV_WEB_SESSION" "${env_args[@]}" zsh -ic "nvm-load >/dev/null; nvm use ${NODE_VERSION} >/dev/null; cd ${(q)ROOT_DIR}/web; exec pnpm dev --host ${VITE_HOST} --port ${VITE_PORT}"
+	tmuxnew "$DEV_WEB_SESSION" "${env_args[@]}" zsh -lc "nvm-load >/dev/null; nvm use ${NODE_VERSION} >/dev/null; cd ${(q)ROOT_DIR}/web; exec pnpm dev --host ${VITE_HOST} --port ${VITE_PORT}"
 	print -- "Started dev sessions: $DEV_API_SESSION, $DEV_WEB_SESSION"
 	print -- "SlideTalk dev mode is available through Caddy at $public_url"
 }

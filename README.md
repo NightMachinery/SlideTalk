@@ -78,6 +78,7 @@ go test -race ./...
 pnpm --dir web test
 pnpm --dir web build
 zsh -n self_host.zsh
+zsh scripts/test_self_host_shell.zsh
 ```
 
 ## Self Hosting
