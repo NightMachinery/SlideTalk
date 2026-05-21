@@ -32,7 +32,9 @@ Ticket creation is rate-limited per caller, remote address, and room. The client
 
 ## Migration Link Sensitivity
 
-The seed API index reserves a room migration-link endpoint, but this seed implementation does not expose a migration-link flow yet. Treat any future migration ID as a bearer secret: it should not appear in logs, screenshots, analytics, or public issue reports.
+Room moderators can create migration links from room settings. The API returns a migration ID once, stores only a SHA-256 hash, and expires each link after 24 hours. A valid migration ID lets the holder join that specific room even when the room has a password.
+
+Treat every migration ID as a bearer secret: it should not appear in logs, screenshots, analytics, or public issue reports.
 
 ## File Storage And Expiration
 

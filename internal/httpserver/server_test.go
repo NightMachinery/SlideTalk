@@ -217,6 +217,43 @@ func TestRoomSettingsRequireModAndCanClearPassword(t *testing.T) {
 	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "new-guest"), http.StatusOK)
 }
 
+func TestMigrationLinkRequiresModeratorAndReturnsBearerSecretOnce(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "mod"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Private","password":""}`, "mod"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "guest"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "guest"), http.StatusOK)
+
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/migration-link", `{}`, "guest"), http.StatusForbidden)
+	response := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/migration-link", `{}`, "mod"), http.StatusCreated)
+
+	if !bytes.Contains(response.Body.Bytes(), []byte(`"roomId":"`+roomID+`"`)) {
+		t.Fatalf("migration link response missing room id: %s", response.Body.String())
+	}
+	if !bytes.Contains(response.Body.Bytes(), []byte(`"migrationId":"`)) {
+		t.Fatalf("migration link response missing bearer secret: %s", response.Body.String())
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte(`"migrationIdHash"`)) {
+		t.Fatalf("migration link response leaked hash: %s", response.Body.String())
+	}
+}
+
+func TestMigrationLinkCanJoinPasswordRoom(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "mod"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Private","password":"secret"}`, "mod"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+	linkResponse := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/migration-link", `{}`, "mod"), http.StatusCreated)
+	var link rooms.MigrationLink
+	if err := json.Unmarshal(linkResponse.Body.Bytes(), &link); err != nil {
+		t.Fatalf("decode migration link: %v", err)
+	}
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "guest"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"migrationId":"wrong"}`, "guest"), http.StatusUnauthorized)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"migrationId":"`+link.MigrationID+`"}`, "guest"), http.StatusOK)
+}
+
 func TestWSTicketEndpointAndSocketSnapshot(t *testing.T) {
 	server := httptest.NewServer(newAPITestServer(t))
 	defer server.Close()

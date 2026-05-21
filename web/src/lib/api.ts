@@ -27,6 +27,12 @@ export type WSTicket = {
   expiresAt: string;
 };
 
+export type MigrationLink = {
+  roomId: string;
+  migrationId: string;
+  expiresAt: string;
+};
+
 export type SlideStatus = {
   exists: boolean;
   sha256: string;
@@ -103,10 +109,10 @@ export async function createRoom(title: string, password: string): Promise<RoomD
   });
 }
 
-export async function joinRoom(roomId: string, password: string): Promise<RoomDetails> {
+export async function joinRoom(roomId: string, password: string, migrationId = ''): Promise<RoomDetails> {
   return api(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
     method: 'POST',
-    body: JSON.stringify({ password })
+    body: JSON.stringify({ password, migrationId })
   });
 }
 
@@ -116,6 +122,13 @@ export async function getRoom(roomId: string): Promise<RoomDetails> {
 
 export async function createWSTicket(roomId: string): Promise<WSTicket> {
   return api(`/api/rooms/${encodeURIComponent(roomId)}/ws-ticket`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  });
+}
+
+export async function createMigrationLink(roomId: string): Promise<MigrationLink> {
+  return api(`/api/rooms/${encodeURIComponent(roomId)}/migration-link`, {
     method: 'POST',
     body: JSON.stringify({})
   });

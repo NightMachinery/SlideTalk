@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ChevronLeft, ChevronRight, Eye, FileText, FileWarning, Hand, LogOut, Mic, RotateCcw, Save, Settings, Shield, Timer, Trash2, Upload, UserRound, UsersRound } from '@lucide/svelte';
-  import { getSlideStatus, removeRoomSlide, slideFileRequest, updateRoomSettings, updateRoomSlideExpiration, uploadRoomSlide } from '../api';
+  import { ChevronLeft, ChevronRight, Eye, FileText, FileWarning, Hand, Link2, LogOut, Mic, RotateCcw, Save, Settings, Shield, Timer, Trash2, Upload, UserRound, UsersRound } from '@lucide/svelte';
+  import { createMigrationLink, getSlideStatus, removeRoomSlide, slideFileRequest, updateRoomSettings, updateRoomSlideExpiration, uploadRoomSlide } from '../api';
+  import { copyText } from '../clipboard';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { parseMarkdown } from './markdown';
   import { pageFromSharedNavigation } from './slides';
@@ -50,6 +51,7 @@
   let roomPasswordDraft = $state('');
   let settingsMessage = $state('');
   let settingsError = $state('');
+  let migrationFallbackText = $state('');
 
   const isMod = $derived(snapshot.caller.role === 'mod');
   const canManageSlides = $derived(isMod);
@@ -270,6 +272,30 @@
       settingsMessage = 'Room password cleared.';
     } catch (error) {
       settingsError = error instanceof Error ? error.message : 'Password clear failed.';
+    }
+  }
+
+  async function copyMigrationLink() {
+    settingsError = '';
+    settingsMessage = '';
+    migrationFallbackText = '';
+    try {
+      const link = await createMigrationLink(snapshot.room.id);
+      const url = new URL(window.location.href);
+      url.searchParams.set('room', link.roomId);
+      url.searchParams.set('migration', link.migrationId);
+      const result = await copyText(url.toString());
+      if (result.copied) {
+        settingsMessage = `Migration link copied. It expires ${new Date(link.expiresAt).toLocaleString()}.`;
+        return;
+      }
+      migrationFallbackText = result.text;
+      settingsMessage = `Select the migration link field and copy it manually. It expires ${new Date(link.expiresAt).toLocaleString()}.`;
+      window.setTimeout(() => {
+        document.querySelector<HTMLInputElement>('[data-migration-fallback]')?.select();
+      });
+    } catch (error) {
+      settingsError = error instanceof Error ? error.message : 'Migration link creation failed.';
     }
   }
 
@@ -611,6 +637,17 @@
                 <option value="queue">Queue</option>
               </select>
             </label>
+            <div class="settings-actions">
+              <button type="button" onclick={copyMigrationLink}>
+                <Link2 size={16} /> Copy migration link
+              </button>
+            </div>
+            {#if migrationFallbackText}
+              <label class="share-fallback">
+                Migration link
+                <input data-migration-fallback readonly value={migrationFallbackText} />
+              </label>
+            {/if}
             {#if settingsMessage}
               <p class="upload-message">{settingsMessage}</p>
             {/if}

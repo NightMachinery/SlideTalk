@@ -57,6 +57,32 @@ func TestPasswordRoomRequiresCorrectPassword(t *testing.T) {
 	}
 }
 
+func TestMigrationLinkCanJoinPasswordRoom(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	creator := namedUser(t, ctx, authService, "creator-token", "Ada")
+	guest := namedUser(t, ctx, authService, "guest-token", "Grace")
+	service := NewService(db)
+
+	room, err := service.Create(ctx, creator.ID, CreateInput{Title: "Private", Password: "correct horse"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+	link, err := service.IssueMigrationLink(ctx, room.ID, creator.ID)
+	if err != nil {
+		t.Fatalf("issue migration link: %v", err)
+	}
+
+	membership, err := service.Join(ctx, room.ID, guest.ID, JoinInput{MigrationID: link.MigrationID})
+	if err != nil {
+		t.Fatalf("join with migration link: %v", err)
+	}
+	if membership.Role != RoleParticipant {
+		t.Fatalf("expected participant role, got %q", membership.Role)
+	}
+}
+
 func TestKickedMemberCannotRejoin(t *testing.T) {
 	ctx := context.Background()
 	db := openRoomsTestDB(t)
@@ -77,6 +103,43 @@ func TestKickedMemberCannotRejoin(t *testing.T) {
 	}
 	if _, err := service.Join(ctx, room.ID, guest.ID, JoinInput{}); err == nil {
 		t.Fatal("kicked member rejoined")
+	}
+}
+
+func TestIssueMigrationLinkStoresOnlyHashedBearerSecret(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	creator := namedUser(t, ctx, authService, "creator-token", "Ada")
+	service := NewService(db)
+
+	room, err := service.Create(ctx, creator.ID, CreateInput{Title: "Private"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+	link, err := service.IssueMigrationLink(ctx, room.ID, creator.ID)
+	if err != nil {
+		t.Fatalf("issue migration link: %v", err)
+	}
+
+	if link.MigrationID == "" {
+		t.Fatal("expected migration id")
+	}
+	if link.RoomID != room.ID {
+		t.Fatalf("room id = %q, want %q", link.RoomID, room.ID)
+	}
+	if link.ExpiresAt == "" {
+		t.Fatal("expected expiration")
+	}
+	var storedHash string
+	if err := db.QueryRowContext(ctx, `select migration_id_hash from room_migration_links where room_id = ?`, room.ID).Scan(&storedHash); err != nil {
+		t.Fatalf("read stored migration link: %v", err)
+	}
+	if storedHash == link.MigrationID {
+		t.Fatal("stored raw migration id")
+	}
+	if !service.validMigrationLinkForTest(ctx, room.ID, link.MigrationID) {
+		t.Fatal("issued migration link did not validate")
 	}
 }
 

@@ -14,7 +14,7 @@ func TestMigrateCreatesSeedTables(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	for _, table := range []string{"users", "rooms", "room_members", "slide_files", "room_slides"} {
+	for _, table := range []string{"users", "rooms", "room_members", "slide_files", "room_slides", "room_migration_links"} {
 		t.Run(table, func(t *testing.T) {
 			var name string
 			err := db.QueryRowContext(ctx, "select name from sqlite_master where type = 'table' and name = ?", table).Scan(&name)

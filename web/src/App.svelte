@@ -33,6 +33,7 @@
   let createPassword = $state('');
   let joinRoomId = $state('');
   let joinPassword = $state('');
+  let joinMigrationId = $state('');
   let loading = $state(true);
   let busy = $state(false);
   let errorMessage = $state('');
@@ -46,6 +47,10 @@
     const roomParam = new URL(window.location.href).searchParams.get('room');
     if (roomParam) {
       joinRoomId = roomParam;
+    }
+    const migrationParam = new URL(window.location.href).searchParams.get('migration');
+    if (migrationParam) {
+      joinMigrationId = migrationParam;
     }
   });
 
@@ -134,10 +139,11 @@
 
   async function submitJoinRoom() {
     await run(async () => {
-      room = await joinRoom(joinRoomId, joinPassword);
+      room = await joinRoom(joinRoomId, joinPassword, joinMigrationId);
       await openRealtime(room.room.id);
       updateRoomURL(room.room.id);
       joinPassword = '';
+      joinMigrationId = '';
       notice = `Joined ${room.room.title}.`;
     });
   }
@@ -162,6 +168,7 @@
   function updateRoomURL(roomId: string) {
     const url = new URL(window.location.href);
     url.searchParams.set('room', roomId);
+    url.searchParams.delete('migration');
     window.history.replaceState({}, '', url);
   }
 

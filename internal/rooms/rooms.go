@@ -4,8 +4,10 @@ package rooms
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -68,7 +70,8 @@ type CreateInput struct {
 
 // JoinInput is the room join payload.
 type JoinInput struct {
-	Password string
+	Password    string
+	MigrationID string
 }
 
 // SettingsInput is a partial room settings update.
@@ -80,6 +83,13 @@ type SettingsInput struct {
 	AllowParticipantMarkdown *bool
 	SharedNavigationEnabled  *bool
 	RaiseHandMode            *string
+}
+
+// MigrationLink is a one-time-visible bearer secret for a future room migration.
+type MigrationLink struct {
+	RoomID      string `json:"roomId"`
+	MigrationID string `json:"migrationId"`
+	ExpiresAt   string `json:"expiresAt"`
 }
 
 // Create creates a room and makes the creator a moderator.
@@ -134,6 +144,63 @@ func (s *Service) Create(ctx context.Context, creatorUserID string, input Create
 	return Room{ID: id, Title: title, HasPassword: passwordHash != ""}, nil
 }
 
+// IssueMigrationLink creates a time-limited room migration bearer secret.
+func (s *Service) IssueMigrationLink(ctx context.Context, roomID string, requesterUserID string) (MigrationLink, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return MigrationLink{}, fmt.Errorf("begin issue migration link: %w", err)
+	}
+	defer rollback(tx)
+	role, err := memberRole(ctx, tx, roomID, requesterUserID)
+	if err != nil {
+		return MigrationLink{}, err
+	}
+	if role != RoleMod {
+		return MigrationLink{}, ErrNotModerator
+	}
+	if _, err := tx.ExecContext(ctx, `delete from room_migration_links where expires_at <= ?`, nowText()); err != nil {
+		return MigrationLink{}, fmt.Errorf("delete expired migration links: %w", err)
+	}
+	migrationID, err := randomToken(32)
+	if err != nil {
+		return MigrationLink{}, err
+	}
+	now := time.Now().UTC()
+	expiresAt := now.Add(24 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(
+		ctx,
+		`insert into room_migration_links (migration_id_hash, room_id, created_by_user_id, expires_at, created_at)
+		 values (?, ?, ?, ?, ?)`,
+		hashBearerSecret(migrationID),
+		roomID,
+		requesterUserID,
+		expiresAt,
+		now.Format(time.RFC3339Nano),
+	); err != nil {
+		return MigrationLink{}, fmt.Errorf("insert migration link: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return MigrationLink{}, fmt.Errorf("commit migration link: %w", err)
+	}
+	return MigrationLink{RoomID: roomID, MigrationID: migrationID, ExpiresAt: expiresAt}, nil
+}
+
+func (s *Service) validMigrationLinkForTest(ctx context.Context, roomID string, migrationID string) bool {
+	return s.validMigrationLink(ctx, roomID, migrationID)
+}
+
+func (s *Service) validMigrationLink(ctx context.Context, roomID string, migrationID string) bool {
+	var exists int
+	err := s.db.QueryRowContext(
+		ctx,
+		`select 1 from room_migration_links where room_id = ? and migration_id_hash = ? and expires_at > ?`,
+		roomID,
+		hashBearerSecret(migrationID),
+		nowText(),
+	).Scan(&exists)
+	return err == nil && exists == 1
+}
+
 // Join joins or rejoins a room.
 func (s *Service) Join(ctx context.Context, roomID string, userID string, input JoinInput) (Membership, error) {
 	if err := s.requireDisplayName(ctx, userID); err != nil {
@@ -148,7 +215,9 @@ func (s *Service) Join(ctx context.Context, roomID string, userID string, input 
 		return Membership{}, fmt.Errorf("read room password: %w", err)
 	}
 	if passwordHash.Valid && bcrypt.CompareHashAndPassword([]byte(passwordHash.String), []byte(input.Password)) != nil {
-		return Membership{}, ErrInvalidPassword
+		if strings.TrimSpace(input.MigrationID) == "" || !s.validMigrationLink(ctx, roomID, input.MigrationID) {
+			return Membership{}, ErrInvalidPassword
+		}
 	}
 
 	var existing Membership
@@ -403,7 +472,7 @@ func (s *Service) Kick(ctx context.Context, roomID string, userID string) error 
 	return tx.Commit()
 }
 
-// MarkKickedForTest records a kicked member. Realtime mod controls replace this in the next milestone.
+// MarkKickedForTest records a kicked member for join-path tests.
 func (s *Service) MarkKickedForTest(ctx context.Context, roomID string, userID string) error {
 	_, err := s.db.ExecContext(ctx, `update room_members set kicked_at = ? where room_id = ? and user_id = ?`, nowText(), roomID, userID)
 	return err
@@ -452,6 +521,11 @@ func randomToken(byteCount int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(bytes), nil
 }
 
+func hashBearerSecret(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
 func nowText() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }
@@ -471,6 +545,7 @@ var (
 	ErrInvalidReorder       = errors.New("invalid member order")
 	ErrLastMod              = errors.New("cannot remove the last moderator")
 	ErrInvalidRaiseHandMode = errors.New("invalid raise hand mode")
+	ErrNotModerator         = errors.New("not a room moderator")
 )
 
 func memberRole(ctx context.Context, tx *sql.Tx, roomID string, userID string) (string, error) {

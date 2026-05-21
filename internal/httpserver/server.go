@@ -105,6 +105,8 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.postSlide)(w, r)
 	case r.Method == http.MethodPatch && roomPathValue(r.URL.Path, "/settings") != "":
 		s.withUser(s.patchRoomSettings)(w, withRoomID(r, roomPathValue(r.URL.Path, "/settings")))
+	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/migration-link") != "":
+		s.withUser(s.postMigrationLink)(w, withRoomID(r, roomPathValue(r.URL.Path, "/migration-link")))
 	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/slide") != "":
 		s.withUser(s.postRoomSlide)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide")))
 	case r.Method == http.MethodPatch && roomPathValue(r.URL.Path, "/slide") != "":
@@ -276,7 +278,8 @@ func (s *appServer) getRoom(w http.ResponseWriter, r *http.Request, user auth.Us
 
 func (s *appServer) joinRoom(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var input struct {
-		Password string `json:"password"`
+		Password    string `json:"password"`
+		MigrationID string `json:"migrationId"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -287,7 +290,7 @@ func (s *appServer) joinRoom(w http.ResponseWriter, r *http.Request, user auth.U
 		writeProblem(w, http.StatusTooManyRequests, "Too Many Requests", "Too many room password attempts.")
 		return
 	}
-	if _, err := s.rooms.Join(r.Context(), roomID, user.ID, rooms.JoinInput{Password: input.Password}); err != nil {
+	if _, err := s.rooms.Join(r.Context(), roomID, user.ID, rooms.JoinInput{Password: input.Password, MigrationID: input.MigrationID}); err != nil {
 		if errors.Is(err, rooms.ErrInvalidPassword) {
 			s.joinLimiter.recordFailure(limitKey)
 		}
@@ -374,6 +377,20 @@ func (s *appServer) postWSTicket(w http.ResponseWriter, r *http.Request, user au
 	}
 	s.wsLimiter.recordFailure(limitKey)
 	writeJSON(w, http.StatusOK, ticket)
+}
+
+func (s *appServer) postMigrationLink(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	link, err := s.rooms.IssueMigrationLink(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, link)
 }
 
 func (s *appServer) getSlideStatus(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -625,6 +642,8 @@ func writeRoomError(w http.ResponseWriter, err error) {
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, rooms.ErrInvalidRaiseHandMode):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
+	case errors.Is(err, rooms.ErrNotModerator):
+		writeProblem(w, http.StatusForbidden, "Forbidden", "Only room moderators can create migration links.")
 	case errors.Is(err, rooms.ErrNotFound), errors.Is(err, rooms.ErrNotMember):
 		writeProblem(w, http.StatusNotFound, "Not Found", "Room was not found.")
 	case errors.Is(err, rooms.ErrKicked):
