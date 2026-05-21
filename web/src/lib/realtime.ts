@@ -62,6 +62,21 @@ export type RealtimeEvent = {
   payload?: RoomSnapshot;
 };
 
+type RoomSnapshotWire = Omit<RoomSnapshot, 'participants' | 'observers' | 'hands'> & {
+  participants?: SnapshotMember[] | null;
+  observers?: SnapshotMember[] | null;
+  hands?: RoomSnapshot['hands'] | null;
+};
+
+export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot {
+  return {
+    ...snapshot,
+    participants: snapshot.participants ?? [],
+    observers: snapshot.observers ?? [],
+    hands: snapshot.hands ?? []
+  };
+}
+
 export type RealtimeCommand =
   | {
       type: 'people.reorder';
@@ -178,7 +193,11 @@ export async function connectRealtime(
       }
     };
     nextSocket.onmessage = (message) => {
-      onEvent(JSON.parse(message.data) as RealtimeEvent);
+      const event = JSON.parse(message.data) as RealtimeEvent;
+      if (event.type === 'room.snapshot' && event.payload) {
+        event.payload = normalizeRoomSnapshot(event.payload);
+      }
+      onEvent(event);
     };
   }
 

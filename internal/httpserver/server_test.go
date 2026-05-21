@@ -61,6 +61,12 @@ func TestSecurityHeadersAreApplied(t *testing.T) {
 			t.Fatalf("Content-Security-Policy = %q, missing %q", csp, want)
 		}
 	}
+	if got := response.Header().Get("Permissions-Policy"); got != "camera=(), microphone=(), geolocation=()" {
+		t.Fatalf("Permissions-Policy = %q, want valid camera/microphone/geolocation policy", got)
+	}
+	if strings.Contains(response.Header().Get("Permissions-Policy"), "browsing-topics") {
+		t.Fatalf("Permissions-Policy must not include browsing-topics: %q", response.Header().Get("Permissions-Policy"))
+	}
 }
 
 func TestUnknownAPIRouteReturnsProblemJSON(t *testing.T) {
@@ -309,6 +315,11 @@ func TestRoomSnapshotEndpointReturnsInitialLiveState(t *testing.T) {
 	}
 	if len(snapshot.Participants) != 1 || snapshot.Participants[0].DisplayName != "Ada" {
 		t.Fatalf("participants = %+v, want creator participant", snapshot.Participants)
+	}
+	for _, field := range []string{`"observers":[]`, `"hands":[]`} {
+		if !bytes.Contains(response.Body.Bytes(), []byte(field)) {
+			t.Fatalf("snapshot response missing %s: %s", field, response.Body.String())
+		}
 	}
 }
 

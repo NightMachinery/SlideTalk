@@ -97,7 +97,7 @@ The room-link copy control uses `navigator.clipboard` when the browser allows it
 
 ## Security Headers And Limits
 
-The Go server adds security headers to responses, including `nosniff`, `no-referrer`, and a Content Security Policy that allows same-origin app assets, blob workers for PDF rendering, and WebSocket connections. Caddy can add stricter outer headers if your deployment requires them.
+The Go server adds security headers to responses, including `nosniff`, `no-referrer`, a valid Permissions Policy, and a Content Security Policy that allows same-origin app assets, blob workers for PDF rendering, and WebSocket connections. The generated Caddy block replaces stale `Permissions-Policy` values so older `browsing-topics` entries do not trigger browser console warnings.
 
 JSON request bodies are capped by the server. PDF uploads are capped by `SLIDETALK_SLIDE_MAX_BYTES`, which defaults to 200 MiB. Admin-token submissions, invalid room-password attempts, and WebSocket ticket creation are rate-limited.
 

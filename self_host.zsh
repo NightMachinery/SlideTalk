@@ -186,6 +186,10 @@ write_caddyfile() {
 		cat >> "$tmp_file" <<EOF
 $CADDY_BEGIN
 ${scheme}://${host} {
+	header {
+		-Permissions-Policy
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
 	encode zstd gzip
 	handle /api/ws* {
 		reverse_proxy ${GO_ADDR}
@@ -212,6 +216,10 @@ EOF
 		cat >> "$tmp_file" <<EOF
 $CADDY_BEGIN
 ${scheme}://${host} {
+	header {
+		-Permissions-Policy
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
 	encode zstd gzip
 	handle /api/ws* {
 		reverse_proxy ${GO_ADDR}

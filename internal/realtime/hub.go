@@ -609,7 +609,7 @@ func (h *Hub) listHands(ctx context.Context, roomID string) ([]SnapshotHand, err
 		return nil, fmt.Errorf("list hands: %w", err)
 	}
 	defer rows.Close()
-	var hands []SnapshotHand
+	hands := []SnapshotHand{}
 	for rows.Next() {
 		var hand SnapshotHand
 		if err := rows.Scan(&hand.UserID, &hand.DisplayName, &hand.RaisedAt); err != nil {

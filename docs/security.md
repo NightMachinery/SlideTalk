@@ -51,6 +51,7 @@ SlideTalk sets security headers on HTTP responses:
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: no-referrer`
 - A Content Security Policy for same-origin assets, blob workers for PDF rendering, and same-origin WebSocket connections.
+- A Permissions Policy that disables camera, microphone, and geolocation browser features.
 
 HTTPS is recommended. Plain HTTP deployments remain usable for intranets, but browser clipboard APIs may be blocked; the UI shows a selected room-link field when automatic copy fails.
 

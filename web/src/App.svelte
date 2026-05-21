@@ -17,7 +17,7 @@
     type User
   } from './lib/api';
   import { copyText } from './lib/clipboard';
-  import { connectRealtime, type RealtimeConnection, type RealtimeEvent, type RoomSnapshot } from './lib/realtime';
+  import { connectRealtime, normalizeRoomSnapshot, type RealtimeConnection, type RealtimeEvent, type RoomSnapshot } from './lib/realtime';
   import { roomIdFromInput } from './lib/roomLink';
   import Roundtable from './lib/room/Roundtable.svelte';
 
@@ -186,7 +186,7 @@
     realtime = null;
     snapshot = null;
     room = details;
-    snapshot = await getRoomSnapshot(details.room.id);
+    snapshot = normalizeRoomSnapshot(await getRoomSnapshot(details.room.id));
     updateRoomURL(details.room.id);
     notice = message;
     try {

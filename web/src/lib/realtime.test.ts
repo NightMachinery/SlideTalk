@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { connectRealtime, realtimeURL } from './realtime';
+import { connectRealtime, normalizeRoomSnapshot, realtimeURL } from './realtime';
 
 class FakeWebSocket extends EventTarget {
   static sockets: FakeWebSocket[] = [];
@@ -100,5 +100,28 @@ describe('connectRealtime', () => {
     FakeWebSocket.sockets[0].open();
     expect(connection.send({ type: 'turn.next' })).toBe(true);
     expect(FakeWebSocket.sockets[0].sent).toHaveLength(1);
+  });
+});
+
+describe('normalizeRoomSnapshot', () => {
+  it('converts null snapshot collections to empty arrays', () => {
+    const snapshot = normalizeRoomSnapshot({
+      room: { id: 'room-one', title: 'Live', hasPassword: false, noSlideMode: false, allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
+      caller: { userId: 'user-one', role: 'mod', isAdmin: false },
+      participants: null,
+      observers: null,
+      currentTurn: { currentSpeakerUserId: '', nextSpeakerUserId: '' },
+      timer: { state: 'stopped', durationSeconds: 0, startedAt: null, serverNow: '2026-05-22T00:00:00Z' },
+      hands: null,
+      slide: null,
+      markdown: '',
+      markdownUpdatedByUserId: '',
+      markdownUpdatedByName: '',
+      markdownUpdatedAt: ''
+    });
+
+    expect(snapshot.participants).toEqual([]);
+    expect(snapshot.observers).toEqual([]);
+    expect(snapshot.hands).toEqual([]);
   });
 });
