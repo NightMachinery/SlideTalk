@@ -117,6 +117,7 @@ export type RealtimeConnection = {
 };
 
 type WebSocketLike = {
+  readyState: number;
   onopen: ((event: Event) => void) | null;
   onclose: ((event: CloseEvent) => void) | null;
   onerror: ((event: Event) => void) | null;
@@ -199,7 +200,7 @@ export async function connectRealtime(
 
   return {
     send(command) {
-      if (!socket) return;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
       const requestId = crypto.randomUUID();
       socket.send(JSON.stringify({ ...command, requestId }));
     },

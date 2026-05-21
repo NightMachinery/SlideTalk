@@ -3,7 +3,11 @@ import { connectRealtime, realtimeURL } from './realtime';
 
 class FakeWebSocket extends EventTarget {
   static sockets: FakeWebSocket[] = [];
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
   readonly url: string;
+  readyState = FakeWebSocket.CONNECTING;
   sent: string[] = [];
 
   onopen: ((event: Event) => void) | null = null;
@@ -22,14 +26,17 @@ class FakeWebSocket extends EventTarget {
   }
 
   close() {
+    this.readyState = FakeWebSocket.CLOSED;
     this.onclose?.(new CloseEvent('close'));
   }
 
   open() {
+    this.readyState = FakeWebSocket.OPEN;
     this.onopen?.(new Event('open'));
   }
 
   drop() {
+    this.readyState = FakeWebSocket.CLOSED;
     this.onclose?.(new CloseEvent('close'));
   }
 }
@@ -72,5 +79,26 @@ describe('connectRealtime', () => {
     FakeWebSocket.sockets[1].open();
     expect(statuses).toEqual(['connected', 'disconnected', 'connecting', 'connected']);
     vi.useRealTimers();
+  });
+
+  it('does not send commands until the socket is open', async () => {
+    FakeWebSocket.sockets = [];
+
+    const connection = await connectRealtime(
+      'room-one',
+      () => {},
+      () => {},
+      {
+        createTicket: async () => ({ ticket: 'ticket', expiresAt: new Date().toISOString() }),
+        WebSocketClass: FakeWebSocket
+      }
+    );
+
+    connection.send({ type: 'turn.next' });
+    expect(FakeWebSocket.sockets[0].sent).toHaveLength(0);
+
+    FakeWebSocket.sockets[0].open();
+    connection.send({ type: 'turn.next' });
+    expect(FakeWebSocket.sockets[0].sent).toHaveLength(1);
   });
 });
