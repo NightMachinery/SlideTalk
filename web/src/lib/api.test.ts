@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRoom, getRoomSnapshot } from './api';
+import { createAudioDownloadLink, createRoom, getRoomSnapshot, updateRoomAudio } from './api';
 
 describe('getRoomSnapshot', () => {
   afterEach(() => {
@@ -63,6 +63,42 @@ describe('createRoom', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/rooms', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ title: 'Listening', password: '', roomMode: 'audio' })
+    }));
+  });
+});
+
+describe('audio API helpers', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it('creates tokenized audio download links', async () => {
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ url: '/api/rooms/room-one/audio/track-one?downloadToken=secret' }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const link = await createAudioDownloadLink('room-one', 'track-one');
+
+    expect(link.url).toContain('downloadToken=');
+    expect(fetchMock).toHaveBeenCalledWith('/api/rooms/room-one/audio/track-one/download-link', expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ Authorization: 'Bearer token-one' })
+    }));
+  });
+
+  it('patches audio display metadata', async () => {
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await updateRoomAudio('room-one', 'track-one', { title: 'New title', uploaderDisplayName: 'Guest' });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/rooms/room-one/audio/track-one', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ title: 'New title', uploaderDisplayName: 'Guest' })
     }));
   });
 });

@@ -54,9 +54,15 @@ export type RoomSnapshot = {
       id: string;
       sha256: string;
       originalName: string;
+      title: string;
+      metadataTitle: string;
       mimeType: string;
       sizeBytes: number;
+      durationSeconds: number;
+      hasCover: boolean;
       uploadedByUserId: string;
+      uploadedByName: string;
+      uploaderDisplayName: string;
       displayOrder: number;
       missing: boolean;
     }[];
@@ -83,11 +89,16 @@ export type RealtimeEvent = {
   payload?: RoomSnapshot;
 };
 
-type RoomSnapshotWire = Omit<RoomSnapshot, 'participants' | 'observers' | 'hands'> & {
+type RoomSnapshotWireAudio = Partial<Omit<RoomSnapshot['audio'], 'tracks'>> & {
+  tracks?: (Omit<RoomSnapshot['audio']['tracks'][number], 'title' | 'metadataTitle' | 'durationSeconds' | 'hasCover' | 'uploadedByName' | 'uploaderDisplayName'> &
+    Partial<Pick<RoomSnapshot['audio']['tracks'][number], 'title' | 'metadataTitle' | 'durationSeconds' | 'hasCover' | 'uploadedByName' | 'uploaderDisplayName'>>)[];
+};
+
+type RoomSnapshotWire = Omit<RoomSnapshot, 'participants' | 'observers' | 'hands' | 'audio'> & {
   participants?: SnapshotMember[] | null;
   observers?: SnapshotMember[] | null;
   hands?: RoomSnapshot['hands'] | null;
-  audio?: Partial<RoomSnapshot['audio']> | null;
+  audio?: RoomSnapshotWireAudio | null;
 };
 
 export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot {
@@ -103,7 +114,15 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
     observers: snapshot.observers ?? [],
     hands: snapshot.hands ?? [],
     audio: {
-      tracks: snapshot.audio?.tracks ?? [],
+      tracks: (snapshot.audio?.tracks ?? []).map((track) => ({
+        ...track,
+        title: track.title || track.originalName || 'Untitled audio',
+        metadataTitle: track.metadataTitle ?? '',
+        durationSeconds: track.durationSeconds ?? 0,
+        hasCover: track.hasCover ?? false,
+        uploadedByName: track.uploadedByName ?? '',
+        uploaderDisplayName: track.uploaderDisplayName ?? ''
+      })),
       currentTrackId: snapshot.audio?.currentTrackId ?? '',
       state: snapshot.audio?.state ?? 'paused',
       positionSeconds: snapshot.audio?.positionSeconds ?? 0,

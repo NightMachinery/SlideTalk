@@ -204,20 +204,53 @@ export function audioFileRequest(roomId: string, trackId: string): { url: string
   };
 }
 
+export function audioCoverRequest(roomId: string, trackId: string): { url: string; headers: Record<string, string> } {
+  return {
+    url: `/api/rooms/${encodeURIComponent(roomId)}/audio/${encodeURIComponent(trackId)}/cover`,
+    headers: { Authorization: `Bearer ${getAuthToken()}` }
+  };
+}
+
+export async function createAudioDownloadLink(roomId: string, trackId: string): Promise<{ url: string }> {
+  return api(`/api/rooms/${encodeURIComponent(roomId)}/audio/${encodeURIComponent(trackId)}/download-link`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  });
+}
+
+export async function updateRoomAudio(
+  roomId: string,
+  trackId: string,
+  input: { title?: string; uploaderDisplayName?: string }
+): Promise<void> {
+  return apiVoid(`/api/rooms/${encodeURIComponent(roomId)}/audio/${encodeURIComponent(trackId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input)
+  });
+}
+
 export function uploadRoomAudio(
   input: {
     roomId: string;
     sha256: string;
     originalName: string;
     file: File;
+    metadataTitle?: string;
+    durationSeconds?: number;
+    cover?: Blob;
+    coverMIMEType?: string;
   },
   onProgress: (percent: number) => void
 ): Promise<{
   id: string;
   sha256: string;
   originalName: string;
+  title: string;
+  metadataTitle: string;
   mimeType: string;
   sizeBytes: number;
+  durationSeconds: number;
+  hasCover: boolean;
   uploadedByUserId: string;
   alreadyUploaded: boolean;
   missing: boolean;
@@ -225,6 +258,9 @@ export function uploadRoomAudio(
   const form = new FormData();
   form.set('sha256', input.sha256);
   form.set('originalName', input.originalName);
+  if (input.metadataTitle) form.set('metadataTitle', input.metadataTitle);
+  if (input.durationSeconds && input.durationSeconds > 0) form.set('durationSeconds', String(Math.round(input.durationSeconds)));
+  if (input.cover) form.set('cover', input.cover, 'cover');
   form.set('file', input.file, input.originalName);
 
   return new Promise((resolve, reject) => {

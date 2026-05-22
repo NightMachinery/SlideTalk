@@ -168,4 +168,38 @@ describe('normalizeRoomSnapshot', () => {
 
     expect(snapshot.slide?.mimeType).toBe('image/png');
   });
+
+  it('defaults new audio metadata during normalization', () => {
+    const snapshot = normalizeRoomSnapshot({
+      room: { id: 'room-one', title: 'Live', hasPassword: false, roomMode: 'audio', allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
+      caller: { userId: 'user-one', role: 'mod', isAdmin: false },
+      participants: [],
+      observers: [],
+      currentTurn: { currentSpeakerUserId: '', nextSpeakerUserId: '' },
+      timer: { state: 'stopped', durationSeconds: 0, startedAt: null, serverNow: '2026-05-22T00:00:00Z' },
+      hands: [],
+      slide: null,
+      audio: {
+        tracks: [{
+          id: 'track-one',
+          sha256: 'a'.repeat(64),
+          originalName: 'song.mp3',
+          mimeType: 'audio/mpeg',
+          sizeBytes: 12,
+          uploadedByUserId: 'user-one',
+          displayOrder: 0,
+          missing: false
+        }],
+        currentTrackId: 'track-one'
+      },
+      markdown: '',
+      markdownUpdatedByUserId: '',
+      markdownUpdatedByName: '',
+      markdownUpdatedAt: ''
+    });
+
+    expect(snapshot.audio.tracks[0].title).toBe('song.mp3');
+    expect(snapshot.audio.tracks[0].durationSeconds).toBe(0);
+    expect(snapshot.audio.tracks[0].hasCover).toBe(false);
+  });
 });

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ArrowDown from '@lucide/svelte/icons/arrow-down';
+  import ArrowUp from '@lucide/svelte/icons/arrow-up';
   import ChevronLeft from '@lucide/svelte/icons/chevron-left';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import ChevronsLeft from '@lucide/svelte/icons/chevrons-left';
@@ -10,6 +12,8 @@
   import Hand from '@lucide/svelte/icons/hand';
   import Link2 from '@lucide/svelte/icons/link-2';
   import LogOut from '@lucide/svelte/icons/log-out';
+  import Download from '@lucide/svelte/icons/download';
+  import Pencil from '@lucide/svelte/icons/pencil';
   import Mic from '@lucide/svelte/icons/mic';
   import Music from '@lucide/svelte/icons/music';
   import Pause from '@lucide/svelte/icons/pause';
@@ -23,7 +27,9 @@
   import Upload from '@lucide/svelte/icons/upload';
   import UserRound from '@lucide/svelte/icons/user-round';
   import UsersRound from '@lucide/svelte/icons/users-round';
-  import { audioFileRequest, createMigrationLink, getSlideStatus, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
+  import { audioCoverRequest, audioFileRequest, createAudioDownloadLink, createMigrationLink, getSlideStatus, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomAudio, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
+  import { audioSubtype, fileNameWithoutExtension, gcAudioCache, getCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
+  import { readAudioUploadMetadata } from '../audioMetadata';
   import { copyText } from '../clipboard';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { parseMarkdown } from './markdown';
@@ -134,16 +140,38 @@
   let settingsMessage = $state('');
   let settingsError = $state('');
   let migrationFallbackText = $state('');
-  let audioFile = $state<File | null>(null);
+  let audioFiles = $state<File[]>([]);
   let audioElement = $state<HTMLAudioElement | null>(null);
   let audioObjectUrl = $state('');
   let activeAudioObjectUrl = '';
+  let activeAudioTrackId = '';
   let audioBusy = $state(false);
   let audioProgress = $state(0);
+  let audioUploadIndex = $state(0);
   let audioMessage = $state('');
   let audioError = $state('');
   let audioBlocked = $state(false);
   let audioPositionDraft = $state(0);
+  let audioSeeking = $state(false);
+  let audioDuration = $state(0);
+  let audioBufferedPercent = $state(0);
+  let audioDownloadProgress = $state<Record<string, number>>({});
+  let audioDownloadBusy = $state<Record<string, boolean>>({});
+  let audioDownloaded = $state<Record<string, boolean>>({});
+  let audioCoverUrls = $state<Record<string, string>>({});
+  let activeAudioCoverObjectUrl = '';
+  let editingAudioTrackId = $state('');
+  let audioTitleDraft = $state('');
+  let audioUploaderDraft = $state('');
+  let confirmDialog = $state<{
+    open: boolean;
+    accent: 'danger' | 'warning';
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void | Promise<void>;
+  }>({ open: false, accent: 'danger', title: '', message: '', confirmLabel: 'Confirm', onConfirm: () => {} });
+  let pendingConfirmResolve: ((confirmed: boolean) => void) | null = null;
 
   const isMod = $derived(snapshot.caller.role === 'mod');
   const canManageSlides = $derived(isMod);
@@ -203,6 +231,7 @@
     const interval = window.setInterval(() => {
       nowMs = Date.now();
     }, 1000);
+    void gcAudioCache().catch(() => {});
     const resize = () => {
       stageResizeTick += 1;
     };
@@ -296,35 +325,43 @@
         activeAudioObjectUrl = '';
         audioObjectUrl = '';
       }
+      activeAudioTrackId = '';
       audioError = '';
       return;
     }
 
     let cancelled = false;
-    let nextUrl = '';
+    let nextBlobUrl = '';
     audioError = '';
-    void loadAudio().catch((error) => {
+    activeAudioTrackId = trackID;
+    audioBufferedPercent = 0;
+    void loadAudioSource().catch((error) => {
       if (!cancelled) {
         audioError = error instanceof Error ? error.message : 'Could not load audio.';
       }
     });
 
-    async function loadAudio() {
-      const request = audioFileRequest(snapshot.room.id, trackID);
-      const response = await fetch(request.url, { headers: request.headers });
-      if (!response.ok) throw new Error('Could not load audio.');
-      const blob = await response.blob();
-      nextUrl = URL.createObjectURL(blob);
-      if (!cancelled) {
-        if (activeAudioObjectUrl) URL.revokeObjectURL(activeAudioObjectUrl);
-        activeAudioObjectUrl = nextUrl;
-        audioObjectUrl = nextUrl;
+    async function loadAudioSource() {
+      const track = snapshot.audio.tracks.find((item) => item.id === trackID);
+      if (!track) return;
+      const cached = await getCachedAudio(track.sha256);
+      if (cancelled || activeAudioTrackId !== trackID) return;
+      if (cached) {
+        audioDownloaded = { ...audioDownloaded, [track.sha256]: true };
+        nextBlobUrl = URL.createObjectURL(cached.blob);
+        setAudioSource(trackID, nextBlobUrl, true);
+        return;
       }
+
+      const link = await createAudioDownloadLink(snapshot.room.id, trackID);
+      if (cancelled || activeAudioTrackId !== trackID) return;
+      setAudioSource(trackID, link.url, false);
+      void downloadAndCacheAudio(track, link.url);
     }
 
     return () => {
       cancelled = true;
-      if (nextUrl && nextUrl !== activeAudioObjectUrl) URL.revokeObjectURL(nextUrl);
+      if (nextBlobUrl && nextBlobUrl !== activeAudioObjectUrl) URL.revokeObjectURL(nextBlobUrl);
     };
   });
 
@@ -334,7 +371,7 @@
     if (Number.isFinite(desired) && Math.abs(audioElement.currentTime - desired) > 2) {
       audioElement.currentTime = desired;
     }
-    audioPositionDraft = Math.floor(audioElement.currentTime || desired);
+    if (!audioSeeking) audioPositionDraft = Math.floor(audioElement.currentTime || desired);
     if (snapshot.audio.state === 'playing') {
       void audioElement.play().then(() => {
         audioBlocked = false;
@@ -344,6 +381,32 @@
     } else if (!audioElement.paused) {
       audioElement.pause();
     }
+  });
+
+  $effect(() => {
+    const track = currentAudioTrack;
+    if (!track?.hasCover || !canSeeAudio) {
+      if (activeAudioCoverObjectUrl) URL.revokeObjectURL(activeAudioCoverObjectUrl);
+      activeAudioCoverObjectUrl = '';
+      return;
+    }
+    let cancelled = false;
+    const request = audioCoverRequest(snapshot.room.id, track.id);
+    void fetch(request.url, { headers: request.headers })
+      .then((response) => {
+        if (!response.ok) throw new Error('cover');
+        return response.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        if (activeAudioCoverObjectUrl) URL.revokeObjectURL(activeAudioCoverObjectUrl);
+        activeAudioCoverObjectUrl = URL.createObjectURL(blob);
+        audioCoverUrls = { ...audioCoverUrls, [track.id]: activeAudioCoverObjectUrl };
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   });
 
   $effect(() => {
@@ -433,7 +496,15 @@
     send({ type: 'people.setRole', payload: { userId, role } });
   }
 
-  function kick(userId: string) {
+  async function kick(userId: string) {
+    const member = [...snapshot.participants, ...snapshot.observers].find((item) => item.userId === userId);
+    const confirmed = await confirmAction({
+      accent: 'danger',
+      title: 'Kick member?',
+      message: `Kick ${member?.displayName || userId} from this room?`,
+      confirmLabel: 'Kick'
+    });
+    if (!confirmed) return;
     send({ type: 'people.kick', payload: { userId } });
   }
 
@@ -610,35 +681,151 @@
     }
   }
 
+  function setAudioSource(trackId: string, url: string, objectUrl: boolean) {
+    if (trackId !== activeAudioTrackId) {
+      if (objectUrl) URL.revokeObjectURL(url);
+      return;
+    }
+    const previousTime = audioElement?.currentTime ?? estimatedAudioSeconds;
+    const wasPlaying = snapshot.audio.state === 'playing' && !audioElement?.paused;
+    if (activeAudioObjectUrl && activeAudioObjectUrl !== url) URL.revokeObjectURL(activeAudioObjectUrl);
+    activeAudioObjectUrl = objectUrl ? url : '';
+    audioObjectUrl = url;
+    queueMicrotask(() => {
+      if (!audioElement || activeAudioTrackId !== trackId) return;
+      if (Number.isFinite(previousTime) && previousTime > 0) {
+        try {
+          audioElement.currentTime = previousTime;
+        } catch {
+          // Some streams do not accept seeking until metadata is loaded.
+        }
+      }
+      if (wasPlaying || snapshot.audio.state === 'playing') {
+        void audioElement.play().catch(() => {
+          audioBlocked = true;
+        });
+      }
+    });
+  }
+
+  async function downloadAndCacheAudio(track: RoomSnapshot['audio']['tracks'][number], url: string) {
+    if (audioDownloadBusy[track.sha256]) return;
+    audioDownloadBusy = { ...audioDownloadBusy, [track.sha256]: true };
+    audioDownloadProgress = { ...audioDownloadProgress, [track.sha256]: 0 };
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Could not download audio.');
+      const total = Number(response.headers.get('Content-Length') ?? track.sizeBytes);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        const blob = await response.blob();
+        await cacheDownloadedTrack(track, blob);
+        return;
+      }
+      const chunks: Uint8Array[] = [];
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        chunks.push(value);
+        loaded += value.byteLength;
+        if (total > 0) audioDownloadProgress = { ...audioDownloadProgress, [track.sha256]: Math.min(100, Math.round((loaded / total) * 100)) };
+      }
+      await cacheDownloadedTrack(track, new Blob(chunks, { type: track.mimeType }));
+    } catch (error) {
+      if (activeAudioTrackId === track.id) audioError = error instanceof Error ? error.message : 'Could not cache audio.';
+    } finally {
+      audioDownloadBusy = { ...audioDownloadBusy, [track.sha256]: false };
+    }
+  }
+
+  async function cacheDownloadedTrack(track: RoomSnapshot['audio']['tracks'][number], blob: Blob) {
+    await putCachedAudio({
+      sha256: track.sha256,
+      blob,
+      mimeType: track.mimeType,
+      originalName: track.originalName,
+      sizeBytes: track.sizeBytes
+    });
+    audioDownloaded = { ...audioDownloaded, [track.sha256]: true };
+    audioDownloadProgress = { ...audioDownloadProgress, [track.sha256]: 100 };
+    if (activeAudioTrackId !== track.id) return;
+    const cachedURL = URL.createObjectURL(blob);
+    setAudioSource(track.id, cachedURL, true);
+  }
+
+  function confirmAction(input: Omit<typeof confirmDialog, 'open' | 'onConfirm'>): Promise<boolean> {
+    return new Promise((resolve) => {
+      pendingConfirmResolve = resolve;
+      confirmDialog = {
+        ...input,
+        open: true,
+        onConfirm: () => {
+          confirmDialog = { ...confirmDialog, open: false };
+          pendingConfirmResolve = null;
+          resolve(true);
+        }
+      };
+    });
+  }
+
+  function cancelConfirm() {
+    confirmDialog = { ...confirmDialog, open: false };
+    pendingConfirmResolve?.(false);
+    pendingConfirmResolve = null;
+  }
+
   async function submitAudioUpload() {
-    if (!audioFile || audioBusy) return;
-    if (!safeBrowserAudio(audioFile) && !window.confirm('This audio type may not play in every browser. Upload it anyway?')) {
-      return;
-    }
-    if (snapshot.caller.isAdmin && audioFile.size > 50 * 1024 * 1024 && !window.confirm('This audio file exceeds the participant upload limit. Upload as site admin?')) {
-      return;
-    }
+    if (audioFiles.length === 0 || audioBusy) return;
     audioBusy = true;
     audioProgress = 0;
-    audioMessage = 'Hashing audio...';
+    audioUploadIndex = 0;
+    audioMessage = 'Preparing audio...';
     audioError = '';
     try {
-      const sha256 = await sha256File(audioFile);
-      audioMessage = 'Uploading audio...';
-      await uploadRoomAudio(
-        {
-          roomId: snapshot.room.id,
-          sha256,
-          originalName: audioFile.name,
-          file: audioFile
-        },
-        (percent) => {
-          audioProgress = percent;
+      for (const [index, file] of audioFiles.entries()) {
+        audioUploadIndex = index + 1;
+        if (!safeBrowserAudio(file)) {
+          const confirmed = await confirmAction({
+            accent: 'warning',
+            title: 'Upload this audio type?',
+            message: `${file.name} may not play in every browser.`,
+            confirmLabel: 'Upload anyway'
+          });
+          if (!confirmed) continue;
         }
-      );
+        if (snapshot.caller.isAdmin && file.size > 50 * 1024 * 1024) {
+          const confirmed = await confirmAction({
+            accent: 'warning',
+            title: 'Upload as site admin?',
+            message: `${file.name} exceeds the participant upload limit.`,
+            confirmLabel: 'Upload'
+          });
+          if (!confirmed) continue;
+        }
+        audioProgress = 0;
+        audioMessage = `Hashing ${index + 1} / ${audioFiles.length}...`;
+        const [sha256, metadata] = await Promise.all([sha256File(file), readAudioUploadMetadata(file)]);
+        audioMessage = `Uploading ${index + 1} / ${audioFiles.length}...`;
+        await uploadRoomAudio(
+          {
+            roomId: snapshot.room.id,
+            sha256,
+            originalName: file.name,
+            file,
+            metadataTitle: metadata.metadataTitle,
+            durationSeconds: metadata.durationSeconds,
+            cover: metadata.cover
+          },
+          (percent) => {
+            audioProgress = percent;
+          }
+        );
+      }
       audioProgress = 100;
-      audioMessage = 'Audio uploaded.';
-      audioFile = null;
+      audioMessage = audioFiles.length === 1 ? 'Audio uploaded.' : 'Audio files uploaded.';
+      audioFiles = [];
     } catch (error) {
       audioError = error instanceof Error ? error.message : 'Audio upload failed.';
       audioMessage = '';
@@ -648,6 +835,14 @@
   }
 
   async function deleteAudioTrack(trackId: string) {
+    const track = snapshot.audio.tracks.find((item) => item.id === trackId);
+    const confirmed = await confirmAction({
+      accent: 'danger',
+      title: 'Remove audio?',
+      message: `Remove ${trackDisplayTitle(track)} from this room?`,
+      confirmLabel: 'Remove'
+    });
+    if (!confirmed) return;
     audioError = '';
     audioMessage = '';
     try {
@@ -658,24 +853,30 @@
     }
   }
 
-  function downloadAudio(event: MouseEvent, trackId: string, originalName: string) {
+  async function downloadAudio(event: MouseEvent, trackId: string, originalName: string) {
     event.preventDefault();
-    const request = audioFileRequest(snapshot.room.id, trackId);
-    void fetch(request.url, { headers: request.headers })
-      .then((response) => response.blob())
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = originalName;
-        link.click();
-        URL.revokeObjectURL(url);
-      });
+    const track = snapshot.audio.tracks.find((item) => item.id === trackId);
+    if (!track) return;
+    const cached = await getCachedAudio(track.sha256);
+    const link = document.createElement('a');
+    if (cached) {
+      const url = URL.createObjectURL(cached.blob);
+      link.href = url;
+      link.download = originalName;
+      link.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+    const tokenLink = await createAudioDownloadLink(snapshot.room.id, trackId);
+    link.href = tokenLink.url;
+    link.download = originalName;
+    link.click();
   }
 
   function playAudio(trackId = snapshot.audio.currentTrackId || currentAudioTrack?.id || '') {
     if (!trackId || !canControlAudio) return;
-    send({ type: 'audio.play', payload: { trackId, positionSeconds: Math.max(0, Math.floor(audioElement?.currentTime ?? snapshot.audio.positionSeconds)) } });
+    const positionSeconds = trackId === snapshot.audio.currentTrackId ? Math.max(0, Math.floor(audioElement?.currentTime ?? snapshot.audio.positionSeconds)) : 0;
+    send({ type: 'audio.play', payload: { trackId, positionSeconds } });
   }
 
   function pauseAudio() {
@@ -706,6 +907,38 @@
   function setAudioMode(mode: RoomSnapshot['audio']['playbackMode']) {
     if (!isMod) return;
     send({ type: 'audio.mode', payload: { mode } });
+  }
+
+  function toggleTrackFromCard(event: Event, track: RoomSnapshot['audio']['tracks'][number]) {
+    const target = event.target as Element | null;
+    if (target?.closest('button,a,input,form')) return;
+    if (!canControlAudio) return;
+    if (track.id === snapshot.audio.currentTrackId && snapshot.audio.state === 'playing') {
+      pauseAudio();
+    } else {
+      playAudio(track.id);
+    }
+  }
+
+  function startRenameAudio(track: RoomSnapshot['audio']['tracks'][number]) {
+    editingAudioTrackId = track.id;
+    audioTitleDraft = trackDisplayTitle(track);
+    audioUploaderDraft = trackUploaderName(track);
+  }
+
+  async function saveAudioMetadata(track: RoomSnapshot['audio']['tracks'][number]) {
+    audioError = '';
+    audioMessage = '';
+    try {
+      await updateRoomAudio(snapshot.room.id, track.id, {
+        title: audioTitleDraft,
+        ...(isMod ? { uploaderDisplayName: audioUploaderDraft } : {})
+      });
+      editingAudioTrackId = '';
+      audioMessage = 'Audio details updated.';
+    } catch (error) {
+      audioError = error instanceof Error ? error.message : 'Audio update failed.';
+    }
   }
 
   async function saveSlideExpiration() {
@@ -796,6 +1029,24 @@
     if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
     if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
     return `${bytes} B`;
+  }
+
+  function updateAudioTiming() {
+    if (!audioElement) return;
+    if (!audioSeeking) audioPositionDraft = Math.floor(audioElement.currentTime || 0);
+    audioDuration = Math.floor(audioElement.duration || currentAudioTrack?.durationSeconds || estimatedAudioSeconds || 0);
+    updateAudioBuffer();
+  }
+
+  function updateAudioBuffer() {
+    if (!audioElement) return;
+    const duration = audioElement.duration || currentAudioTrack?.durationSeconds || 0;
+    if (!duration || audioElement.buffered.length === 0) {
+      audioBufferedPercent = 0;
+      return;
+    }
+    const end = audioElement.buffered.end(audioElement.buffered.length - 1);
+    audioBufferedPercent = Math.min(100, Math.round((end / duration) * 100));
   }
 
   function safeBrowserAudio(file: File) {
@@ -914,17 +1165,27 @@
             bind:this={audioElement}
             src={audioObjectUrl}
             onended={() => send({ type: 'audio.ended' })}
-            ontimeupdate={() => {
-              audioPositionDraft = Math.floor(audioElement?.currentTime ?? 0);
-            }}
+            ontimeupdate={updateAudioTiming}
+            onprogress={updateAudioBuffer}
+            onloadedmetadata={updateAudioTiming}
           ></audio>
           <div class="audio-stage-art">
-            <Music size={48} />
+            {#if currentAudioTrack?.hasCover && audioCoverUrls[currentAudioTrack.id]}
+              <img src={audioCoverUrls[currentAudioTrack.id]} alt="" />
+            {:else}
+              <Music size={48} />
+            {/if}
           </div>
           <div class="audio-stage-copy">
             <p class="kicker">Audio mode</p>
-            <h3>{currentAudioTrack?.originalName ?? 'No audio selected'}</h3>
-            <p>{currentAudioTrack ? `${formatBytes(currentAudioTrack.sizeBytes)} ${currentAudioTrack.mimeType}` : 'Upload a track below to start listening.'}</p>
+            <h3>{trackDisplayTitle(currentAudioTrack)}</h3>
+            <p>
+              {#if currentAudioTrack}
+                {trackUploaderName(currentAudioTrack) ? `${trackUploaderName(currentAudioTrack)} · ` : ''}{formatBytes(currentAudioTrack.sizeBytes)} · {audioSubtype(currentAudioTrack.mimeType)}
+              {:else}
+                Upload a track below to start listening.
+              {/if}
+            </p>
           </div>
           <div class="audio-stage-controls">
             <button type="button" disabled={!canControlAudio || !currentAudioTrack} onclick={() => snapshot.audio.state === 'playing' ? pauseAudio() : playAudio()}>
@@ -934,19 +1195,23 @@
                 <Play size={18} /> Play
               {/if}
             </button>
-            <label>
-              Seek
+            <label class="seek-control">
               <input
                 type="range"
                 min="0"
-                max={Math.max(Math.floor(audioElement?.duration || estimatedAudioSeconds || 1), 1)}
+                max={Math.max(Math.floor(audioDuration || currentAudioTrack?.durationSeconds || estimatedAudioSeconds || 1), 1)}
                 value={audioPositionDraft || estimatedAudioSeconds}
                 disabled={!canControlAudio || !currentAudioTrack}
+                onpointerdown={() => (audioSeeking = true)}
                 oninput={(event) => (audioPositionDraft = Number(event.currentTarget.value))}
-                onchange={(event) => seekAudio(Number(event.currentTarget.value))}
+                onchange={(event) => {
+                  audioSeeking = false;
+                  seekAudio(Number(event.currentTarget.value));
+                }}
               />
+              <span class="seek-buffer" style:--buffer={`${audioBufferedPercent}%`}></span>
             </label>
-            <span>{formatDuration(audioPositionDraft || estimatedAudioSeconds)}</span>
+            <span class="audio-time">{formatDuration(audioPositionDraft || estimatedAudioSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
           </div>
           {#if audioBlocked}
             <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
@@ -962,24 +1227,52 @@
             {/if}
             <div class="audio-track-list">
               {#each snapshot.audio.tracks as track, index (track.id)}
-                <article class={['audio-track', track.id === snapshot.audio.currentTrackId && 'current-audio-track']}>
-                  <button type="button" disabled={!canControlAudio} onclick={() => selectAudio(track.id)}>
-                    {track.originalName}
-                  </button>
-                  <span>{formatBytes(track.sizeBytes)} · {track.mimeType}</span>
+                <div
+                  class={["audio-track", track.id === snapshot.audio.currentTrackId && 'current-audio-track']}
+                  role="button"
+                  tabindex="0"
+                  onclick={(event) => toggleTrackFromCard(event, track)}
+                  onkeydown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      toggleTrackFromCard(event, track);
+                    }
+                  }}
+                >
+                  <div class="audio-track-main">
+                    <strong>{trackDisplayTitle(track)}</strong>
+                    <span>{trackUploaderName(track) ? `${trackUploaderName(track)} · ` : ''}{formatBytes(track.sizeBytes)} · {audioSubtype(track.mimeType)}</span>
+                    {#if audioDownloadBusy[track.sha256] || audioDownloadProgress[track.sha256] > 0}
+                      <progress max="100" value={audioDownloadProgress[track.sha256] ?? 0}>{audioDownloadProgress[track.sha256] ?? 0}%</progress>
+                    {/if}
+                  </div>
                   <div class="settings-actions">
                     {#if isMod}
-                      <button type="button" disabled={index === 0} onclick={() => moveAudioTrack(index, -1)}>Up</button>
-                      <button type="button" disabled={index === snapshot.audio.tracks.length - 1} onclick={() => moveAudioTrack(index, 1)}>Down</button>
+                      <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={index === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(index, -1); }}><ArrowUp size={16} /></button>
+                      <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={index === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(index, 1); }}><ArrowDown size={16} /></button>
                     {/if}
-                    <a class="download-link" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => downloadAudio(event, track.id, track.originalName)}>Download</a>
                     {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
-                      <button class="danger-button" type="button" onclick={() => deleteAudioTrack(track.id)}>
-                        <Trash2 size={16} /> Remove
+                      <button class="icon-button" type="button" title="Rename" aria-label="Rename" onclick={(event) => { event.stopPropagation(); startRenameAudio(track); }}><Pencil size={16} /></button>
+                    {/if}
+                    <a class="download-link icon-button" title="Download" aria-label="Download" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => { event.stopPropagation(); downloadAudio(event, track.id, track.originalName); }}><Download size={16} /></a>
+                    {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
+                      <button class="danger-button icon-button" title="Remove" aria-label="Remove" type="button" onclick={(event) => { event.stopPropagation(); deleteAudioTrack(track.id); }}>
+                        <Trash2 size={16} />
                       </button>
                     {/if}
                   </div>
-                </article>
+                  {#if editingAudioTrackId === track.id}
+                    <form class="audio-edit-form" onsubmit={(event) => { event.preventDefault(); saveAudioMetadata(track); }}>
+                      <input aria-label="Audio title" bind:value={audioTitleDraft} maxlength="200" />
+                      {#if isMod}
+                        <input aria-label="Uploader name" bind:value={audioUploaderDraft} maxlength="80" />
+                      {/if}
+                      <button type="button" onclick={() => (audioTitleDraft = fileNameWithoutExtension(track.originalName))}>Name</button>
+                      <button type="button" onclick={() => (audioTitleDraft = track.metadataTitle || fileNameWithoutExtension(track.originalName))}>Title</button>
+                      <button type="submit">Save</button>
+                    </form>
+                  {/if}
+                </div>
               {/each}
             </div>
             {#if canUploadAudio}
@@ -989,16 +1282,17 @@
                   <input
                     type="file"
                     accept="audio/*"
+                    multiple
                     disabled={audioBusy}
                     onchange={(event) => {
-                      audioFile = event.currentTarget.files?.[0] ?? null;
+                      audioFiles = Array.from(event.currentTarget.files ?? []);
                       audioMessage = '';
                       audioError = '';
                     }}
                   />
                 </label>
-                <button type="submit" disabled={audioBusy || !audioFile}>
-                  <Upload size={16} /> {audioBusy ? 'Working' : 'Upload audio'}
+                <button type="submit" disabled={audioBusy || audioFiles.length === 0}>
+                  <Upload size={16} /> {audioBusy ? `Working ${audioUploadIndex}/${audioFiles.length}` : 'Upload audio'}
                 </button>
                 {#if audioBusy || audioProgress > 0}
                   <progress max="100" value={audioProgress}>{audioProgress}%</progress>
@@ -1188,8 +1482,8 @@
               </div>
               {#if isMod}
                 <div class="member-actions">
-                  <button type="button" onclick={() => moveMember(snapshot.participants, index, -1)} disabled={index === 0}>Up</button>
-                  <button type="button" onclick={() => moveMember(snapshot.participants, index, 1)} disabled={index === snapshot.participants.length - 1}>Down</button>
+                  <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveMember(snapshot.participants, index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
+                  <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveMember(snapshot.participants, index, 1)} disabled={index === snapshot.participants.length - 1}><ArrowDown size={16} /></button>
                   {#if member.role !== 'mod'}
                     <button type="button" onclick={() => setRole(member.userId, 'mod')}>
                       <Shield size={15} /> Mod
@@ -1197,8 +1491,8 @@
                   {/if}
                   <button type="button" onclick={() => setCurrent(member.userId)}>Speak</button>
                   <button type="button" onclick={() => setRole(member.userId, 'observer')}>Observe</button>
-                  <button class="danger-button" type="button" onclick={() => kick(member.userId)}>
-                    <LogOut size={15} /> Kick
+                  <button class="danger-button icon-button" type="button" title="Kick" aria-label="Kick" onclick={() => kick(member.userId)}>
+                    <LogOut size={15} />
                   </button>
                 </div>
               {/if}
@@ -1227,10 +1521,10 @@
               </div>
               {#if isMod}
                 <div class="member-actions">
-                  <button type="button" onclick={() => moveObserver(index, -1)} disabled={index === 0}>Up</button>
-                  <button type="button" onclick={() => moveObserver(index, 1)} disabled={index === snapshot.observers.length - 1}>Down</button>
+                  <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveObserver(index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
+                  <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveObserver(index, 1)} disabled={index === snapshot.observers.length - 1}><ArrowDown size={16} /></button>
                   <button type="button" onclick={() => setRole(member.userId, 'participant')}>Talk</button>
-                  <button class="danger-button" type="button" onclick={() => kick(member.userId)}>Kick</button>
+                  <button class="danger-button icon-button" type="button" title="Kick" aria-label="Kick" onclick={() => kick(member.userId)}><LogOut size={15} /></button>
                 </div>
               {/if}
             </article>
@@ -1329,9 +1623,17 @@
         </button>
         {#if !panelState.audio}
           <div class="audio-panel" aria-label="Audio">
+            <audio
+              bind:this={audioElement}
+              src={audioObjectUrl}
+              onended={() => send({ type: 'audio.ended' })}
+              ontimeupdate={updateAudioTiming}
+              onprogress={updateAudioBuffer}
+              onloadedmetadata={updateAudioTiming}
+            ></audio>
             <div class="audio-now">
-              <strong>{currentAudioTrack?.originalName ?? 'No audio selected'}</strong>
-              <span>{snapshot.audio.state} · {snapshot.audio.playbackMode}</span>
+              <strong>{trackDisplayTitle(currentAudioTrack)}</strong>
+              <span>{currentAudioTrack ? `${trackUploaderName(currentAudioTrack) ? `${trackUploaderName(currentAudioTrack)} · ` : ''}${formatBytes(currentAudioTrack.sizeBytes)} · ${audioSubtype(currentAudioTrack.mimeType)}` : `${snapshot.audio.state} · ${snapshot.audio.playbackMode}`}</span>
               <div class="settings-actions">
                 <button type="button" disabled={!canControlAudio || !currentAudioTrack} onclick={() => snapshot.audio.state === 'playing' ? pauseAudio() : playAudio()}>
                   {#if snapshot.audio.state === 'playing'}
@@ -1355,24 +1657,52 @@
             {/if}
             <div class="audio-track-list">
               {#each snapshot.audio.tracks as track, index (track.id)}
-                <article class={['audio-track', track.id === snapshot.audio.currentTrackId && 'current-audio-track']}>
-                  <button type="button" disabled={!canControlAudio} onclick={() => selectAudio(track.id)}>
-                    {track.originalName}
-                  </button>
-                  <span>{formatBytes(track.sizeBytes)} · {track.mimeType}</span>
+                <div
+                  class={["audio-track", track.id === snapshot.audio.currentTrackId && 'current-audio-track']}
+                  role="button"
+                  tabindex="0"
+                  onclick={(event) => toggleTrackFromCard(event, track)}
+                  onkeydown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      toggleTrackFromCard(event, track);
+                    }
+                  }}
+                >
+                  <div class="audio-track-main">
+                    <strong>{trackDisplayTitle(track)}</strong>
+                    <span>{trackUploaderName(track) ? `${trackUploaderName(track)} · ` : ''}{formatBytes(track.sizeBytes)} · {audioSubtype(track.mimeType)}</span>
+                    {#if audioDownloadBusy[track.sha256] || audioDownloadProgress[track.sha256] > 0}
+                      <progress max="100" value={audioDownloadProgress[track.sha256] ?? 0}>{audioDownloadProgress[track.sha256] ?? 0}%</progress>
+                    {/if}
+                  </div>
                   <div class="settings-actions">
                     {#if isMod}
-                      <button type="button" disabled={index === 0} onclick={() => moveAudioTrack(index, -1)}>Up</button>
-                      <button type="button" disabled={index === snapshot.audio.tracks.length - 1} onclick={() => moveAudioTrack(index, 1)}>Down</button>
+                      <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={index === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(index, -1); }}><ArrowUp size={16} /></button>
+                      <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={index === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(index, 1); }}><ArrowDown size={16} /></button>
                     {/if}
-                    <a class="download-link" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => downloadAudio(event, track.id, track.originalName)}>Download</a>
                     {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
-                      <button class="danger-button" type="button" onclick={() => deleteAudioTrack(track.id)}>
-                        <Trash2 size={16} /> Remove
+                      <button class="icon-button" type="button" title="Rename" aria-label="Rename" onclick={(event) => { event.stopPropagation(); startRenameAudio(track); }}><Pencil size={16} /></button>
+                    {/if}
+                    <a class="download-link icon-button" title="Download" aria-label="Download" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => { event.stopPropagation(); downloadAudio(event, track.id, track.originalName); }}><Download size={16} /></a>
+                    {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
+                      <button class="danger-button icon-button" title="Remove" aria-label="Remove" type="button" onclick={(event) => { event.stopPropagation(); deleteAudioTrack(track.id); }}>
+                        <Trash2 size={16} />
                       </button>
                     {/if}
                   </div>
-                </article>
+                  {#if editingAudioTrackId === track.id}
+                    <form class="audio-edit-form" onsubmit={(event) => { event.preventDefault(); saveAudioMetadata(track); }}>
+                      <input aria-label="Audio title" bind:value={audioTitleDraft} maxlength="200" />
+                      {#if isMod}
+                        <input aria-label="Uploader name" bind:value={audioUploaderDraft} maxlength="80" />
+                      {/if}
+                      <button type="button" onclick={() => (audioTitleDraft = fileNameWithoutExtension(track.originalName))}>Name</button>
+                      <button type="button" onclick={() => (audioTitleDraft = track.metadataTitle || fileNameWithoutExtension(track.originalName))}>Title</button>
+                      <button type="submit">Save</button>
+                    </form>
+                  {/if}
+                </div>
               {/each}
             </div>
             {#if canUploadAudio}
@@ -1382,16 +1712,17 @@
                   <input
                     type="file"
                     accept="audio/*"
+                    multiple
                     disabled={audioBusy}
                     onchange={(event) => {
-                      audioFile = event.currentTarget.files?.[0] ?? null;
+                      audioFiles = Array.from(event.currentTarget.files ?? []);
                       audioMessage = '';
                       audioError = '';
                     }}
                   />
                 </label>
-                <button type="submit" disabled={audioBusy || !audioFile}>
-                  <Upload size={16} /> {audioBusy ? 'Working' : 'Upload audio'}
+                <button type="submit" disabled={audioBusy || audioFiles.length === 0}>
+                  <Upload size={16} /> {audioBusy ? `Working ${audioUploadIndex}/${audioFiles.length}` : 'Upload audio'}
                 </button>
                 {#if audioBusy || audioProgress > 0}
                   <progress max="100" value={audioProgress}>{audioProgress}%</progress>
@@ -1561,3 +1892,18 @@
     </aside>
   {/if}
 </section>
+
+{#if confirmDialog.open}
+  <div class={['confirm-backdrop', `confirm-${confirmDialog.accent}`]} role="presentation" onclick={cancelConfirm}>
+    <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" tabindex="-1" onmousedown={(event) => event.stopPropagation()}>
+      <h2 id="confirm-title">{confirmDialog.title}</h2>
+      <p>{confirmDialog.message}</p>
+      <div class="settings-actions">
+        <button type="button" onclick={cancelConfirm}>Cancel</button>
+        <button class={['danger-button', confirmDialog.accent === 'warning' && 'warning-button']} type="button" onclick={() => confirmDialog.onConfirm()}>
+          {confirmDialog.confirmLabel}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
