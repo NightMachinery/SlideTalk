@@ -4,7 +4,7 @@ SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking or
 
 SlideTalk is not a video conferencing system, a public event platform, or an account-management service. It assumes a small trusted group and an operator who controls the host.
 
-This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, a compact start flow with inline display-name editing, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, manual-by-default hand raising for participants and moderators, PDF and image slide storage with expiration cleanup, shared slide viewing, no-slide markdown mode, synchronized room audio with audio-only mode, admin membership controls, moderator room settings, observer self-rejoin, immediate removed-room handling for kicked clients, room migration links, slide/audio replacement and removal, and no-Docker self-hosting with Caddy and tmux.
+This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, a compact start flow with inline display-name editing, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, a compact shared timer row with end-of-timer feedback, manual-by-default hand raising for participants and moderators, PDF and image slide storage with expiration cleanup, shared slide viewing, no-slide markdown mode, synchronized room audio with audio-only mode, admin membership controls, moderator room settings, observer self-rejoin, immediate removed-room handling for kicked clients, room migration links, slide/audio replacement and removal, global toast notifications, and no-Docker self-hosting with Caddy and tmux.
 
 ## Requirements
 
@@ -141,13 +141,14 @@ Room links opened by browsers without a saved display name show a focused name g
 
 ## Room Shortcuts
 
-Active rooms use a room-first workspace: the slide or markdown stage takes most of the viewport, the top chrome is reduced to the timer row, and room controls live in a collapsible side rail. The starting page profile, create-room, and join-room controls are hidden while a room is open.
+Active rooms use a room-first workspace: the slide, markdown, or audio stage takes most of the viewport, the top chrome is reduced to a compact timer row with icon-only timer, copy-link, and hand controls, and room controls live in a collapsible side rail. The starting page profile, create-room, and join-room controls are hidden while a room is open.
 
 Keyboard shortcuts are ignored while typing in form fields. Press `?` in a room to open the shortcuts panel and change local key bindings. Defaults:
 
 - `b`: previous speaker, moderators only
 - `n`: next speaker, moderators only
-- `t`: start or stop timer, moderators only
+- `p`: start or pause timer, moderators only
+- `t`: reset and start timer, moderators only
 - `[`: previous slide, moderators only
 - `]`: next slide, moderators only
 - `?`: show or hide shortcut configuration
