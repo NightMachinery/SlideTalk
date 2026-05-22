@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { CirclePlus, DoorOpen, KeyRound, PanelsTopLeft, ShieldCheck, UserRound } from '@lucide/svelte';
+  import CirclePlus from '@lucide/svelte/icons/circle-plus';
+  import DoorOpen from '@lucide/svelte/icons/door-open';
+  import KeyRound from '@lucide/svelte/icons/key-round';
+  import PanelsTopLeft from '@lucide/svelte/icons/panels-top-left';
+  import ShieldCheck from '@lucide/svelte/icons/shield-check';
+  import UserRound from '@lucide/svelte/icons/user-round';
   import {
     createRoom,
     demoteAdmin,
@@ -267,21 +272,48 @@
   />
 </svelte:head>
 
-<main class="app-shell">
-  <nav class="topbar" aria-label="Primary navigation">
-    <a class="brand" href="/" aria-label="SlideTalk home">
-      <PanelsTopLeft size={22} strokeWidth={2.2} />
-      <span>SlideTalk</span>
-    </a>
-    <div class="topbar-actions" aria-label="Profile status">
-      <span class:admin={user?.isAdmin} class="status-dot" aria-hidden="true"></span>
-      <span>{user?.isAdmin ? 'Site admin' : user?.displayName || 'Local identity'}</span>
-    </div>
-  </nav>
-
+<main class:active-room={snapshot} class="app-shell">
   {#if loading}
+    <nav class="topbar" aria-label="Primary navigation">
+      <a class="brand" href="/" aria-label="SlideTalk home">
+        <PanelsTopLeft size={22} strokeWidth={2.2} />
+        <span>SlideTalk</span>
+      </a>
+      <div class="topbar-actions" aria-label="Profile status">
+        <span class:admin={user?.isAdmin} class="status-dot" aria-hidden="true"></span>
+        <span>{user?.isAdmin ? 'Site admin' : user?.displayName || 'Local identity'}</span>
+      </div>
+    </nav>
     <section class="loading-panel" aria-live="polite">Loading local identity...</section>
+  {:else if snapshot}
+    {#if errorMessage}
+      <p class="feedback error room-feedback" role="alert">{errorMessage}</p>
+    {/if}
+    {#if notice}
+      <p class="feedback notice room-feedback" role="status">{notice}</p>
+    {/if}
+    <Roundtable
+      {snapshot}
+      status={connectionStatus}
+      send={(command) => {
+        const sent = realtime?.send(command) ?? false;
+        if (!sent) {
+          errorMessage = 'Live connection is still connecting. Try again in a moment.';
+        }
+      }}
+    />
   {:else}
+    <nav class="topbar" aria-label="Primary navigation">
+      <a class="brand" href="/" aria-label="SlideTalk home">
+        <PanelsTopLeft size={22} strokeWidth={2.2} />
+        <span>SlideTalk</span>
+      </a>
+      <div class="topbar-actions" aria-label="Profile status">
+        <span class:admin={user?.isAdmin} class="status-dot" aria-hidden="true"></span>
+        <span>{user?.isAdmin ? 'Site admin' : user?.displayName || 'Local identity'}</span>
+      </div>
+    </nav>
+
     <section class="workspace" aria-labelledby="workspace-title">
       <div class="intro">
         <p class="kicker">Room control</p>
@@ -396,18 +428,7 @@
       <p class="feedback notice" role="status">Save a display name before creating or joining rooms.</p>
     {/if}
 
-    {#if snapshot}
-      <Roundtable
-        {snapshot}
-        status={connectionStatus}
-        send={(command) => {
-          const sent = realtime?.send(command) ?? false;
-          if (!sent) {
-            errorMessage = 'Live connection is still connecting. Try again in a moment.';
-          }
-        }}
-      />
-    {:else if room}
+    {#if room}
       <section class="room-summary" aria-label="Joined room">
         <div>
           <div class="panel-title">

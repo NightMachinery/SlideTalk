@@ -120,6 +120,19 @@ Room participants fetch an initial room snapshot from `/api/rooms/{roomId}/snaps
 
 Room moderators can create 24-hour migration links from room settings. A migration ID is a bearer secret that is shown once to the issuing browser, lets the holder join that room even when it has a password, and is stored in SQLite only as a SHA-256 hash.
 
+## Room Shortcuts
+
+Active rooms use a room-first workspace: the slide or markdown stage takes most of the viewport, and moderator controls live in collapsible panels beside it. The starting page profile, create-room, and join-room controls are hidden while a room is open.
+
+Keyboard shortcuts are ignored while typing in form fields. Press `?` in a room to open the shortcuts panel and change local key bindings. Defaults:
+
+- `b`: previous speaker, moderators only
+- `n`: next speaker, moderators only
+- `t`: start or stop timer, moderators only
+- `[`: previous slide, moderators only
+- `]`: next slide, moderators only
+- `?`: show or hide shortcut configuration
+
 Security notes live in [docs/security.md](docs/security.md).
 
 ## Planning

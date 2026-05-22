@@ -1,12 +1,41 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ChevronLeft, ChevronRight, Eye, FileText, FileWarning, Hand, Link2, LogOut, Mic, RotateCcw, Save, Settings, Shield, Timer, Trash2, Upload, UserRound, UsersRound } from '@lucide/svelte';
+  import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import Eye from '@lucide/svelte/icons/eye';
+  import FileText from '@lucide/svelte/icons/file-text';
+  import FileWarning from '@lucide/svelte/icons/file-warning';
+  import Hand from '@lucide/svelte/icons/hand';
+  import Link2 from '@lucide/svelte/icons/link-2';
+  import LogOut from '@lucide/svelte/icons/log-out';
+  import Mic from '@lucide/svelte/icons/mic';
+  import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+  import Save from '@lucide/svelte/icons/save';
+  import Settings from '@lucide/svelte/icons/settings';
+  import Shield from '@lucide/svelte/icons/shield';
+  import Timer from '@lucide/svelte/icons/timer';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
+  import Upload from '@lucide/svelte/icons/upload';
+  import UserRound from '@lucide/svelte/icons/user-round';
+  import UsersRound from '@lucide/svelte/icons/users-round';
   import { createMigrationLink, getSlideStatus, removeRoomSlide, slideFileRequest, updateRoomSettings, updateRoomSlideExpiration, uploadRoomSlide } from '../api';
   import { copyText } from '../clipboard';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { parseMarkdown } from './markdown';
   import { pageFromSharedNavigation } from './slides';
-  import { shouldIgnoreShortcut } from './shortcuts';
+  import {
+    defaultShortcutBindings,
+    formatKey,
+    loadShortcutConfig,
+    resetShortcutBinding,
+    resolveShortcutAction,
+    saveShortcutConfig,
+    setShortcutBinding,
+    shortcutLabels,
+    shouldIgnoreShortcut,
+    type RebindableShortcutAction,
+    type ShortcutConfig
+  } from './shortcuts';
 
   type PDFDocumentLike = {
     numPages: number;
@@ -18,6 +47,17 @@
     }>;
   };
 
+  type PanelState = {
+    participants: boolean;
+    observers: boolean;
+    slides: boolean;
+    settings: boolean;
+    shortcuts: boolean;
+  };
+
+  const panelStorageKey = 'slidetalk.roomPanels.v1';
+  const shortcutActions: RebindableShortcutAction[] = ['previousSpeaker', 'nextSpeaker', 'toggleTimer', 'previousSlide', 'nextSlide'];
+
   let {
     snapshot,
     status,
@@ -28,8 +68,17 @@
     send: (command: RealtimeCommand) => void;
   } = $props();
 
-  let participantsCollapsed = $state(false);
-  let observersCollapsed = $state(false);
+  let panelState = $state<PanelState>({
+    participants: true,
+    observers: true,
+    slides: true,
+    settings: true,
+    shortcuts: true
+  });
+  let shortcutConfig = $state<ShortcutConfig>(loadShortcutConfig(null));
+  let shortcutDrafts = $state<Record<RebindableShortcutAction, string>>({ ...defaultShortcutBindings });
+  let shortcutMessage = $state('');
+  let preferencesReady = $state(false);
   let timerDurationSeconds = $state(300);
   let nowMs = $state(Date.now());
   let slideFile = $state<File | null>(null);
@@ -82,10 +131,24 @@
   const timerLabel = $derived(formatDuration(remainingSeconds));
 
   onMount(() => {
+    panelState = loadPanelState();
+    shortcutConfig = loadShortcutConfig();
+    shortcutDrafts = { ...shortcutConfig.bindings };
+    preferencesReady = true;
     const interval = window.setInterval(() => {
       nowMs = Date.now();
     }, 1000);
     return () => window.clearInterval(interval);
+  });
+
+  $effect(() => {
+    if (!preferencesReady) return;
+    savePanelState(panelState);
+  });
+
+  $effect(() => {
+    if (!preferencesReady) return;
+    saveShortcutConfig(shortcutConfig);
   });
 
   $effect(() => {
@@ -399,31 +462,51 @@
     }
   }
 
+  function togglePanel(panel: keyof PanelState) {
+    panelState = {
+      ...panelState,
+      [panel]: !panelState[panel]
+    };
+  }
+
+  function updateShortcut(action: RebindableShortcutAction, value: string) {
+    const result = setShortcutBinding(shortcutConfig, action, value);
+    shortcutMessage = result.error;
+    shortcutConfig = result.config;
+    if (!result.error) {
+      shortcutDrafts = { ...result.config.bindings };
+    }
+  }
+
+  function resetShortcut(action: RebindableShortcutAction) {
+    shortcutMessage = '';
+    shortcutConfig = resetShortcutBinding(shortcutConfig, action);
+    shortcutDrafts = { ...shortcutConfig.bindings };
+  }
+
+  function setShortcutBoolean(name: 'enabled' | 'modShortcutsEnabled', value: boolean) {
+    shortcutMessage = '';
+    shortcutConfig = {
+      ...shortcutConfig,
+      [name]: value
+    };
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     if (shouldIgnoreShortcut(event)) return;
+    const action = resolveShortcutAction(event, shortcutConfig);
+    if (!action) return;
+    event.preventDefault();
+    if (action === 'toggleHelp') {
+      panelState = { ...panelState, shortcuts: !panelState.shortcuts };
+      return;
+    }
     if (!isMod) return;
-    if (event.key === 'b') {
-      event.preventDefault();
-      previousTurn();
-    }
-    if (event.key === 'n') {
-      event.preventDefault();
-      nextTurn();
-    }
-    if (event.key === 't') {
-      event.preventDefault();
-      toggleTimer();
-    }
-    if (event.key === '[') {
-      if (!modShareNavigation) return;
-      event.preventDefault();
-      navigateSlide(-1);
-    }
-    if (event.key === ']') {
-      if (!modShareNavigation) return;
-      event.preventDefault();
-      navigateSlide(1);
-    }
+    if (action === 'previousSpeaker') previousTurn();
+    if (action === 'nextSpeaker') nextTurn();
+    if (action === 'toggleTimer') toggleTimer();
+    if (action === 'previousSlide') navigateSlide(-1);
+    if (action === 'nextSlide') navigateSlide(1);
   }
 
   function formatDuration(seconds: number) {
@@ -446,11 +529,40 @@
     return Math.max(pdfDocument?.numPages ?? snapshot.room.slidePage ?? 1, 1);
   }
 
+  function loadPanelState(): PanelState {
+    const fallback: PanelState = {
+      participants: true,
+      observers: true,
+      slides: true,
+      settings: true,
+      shortcuts: true
+    };
+    try {
+      const raw = localStorage.getItem(panelStorageKey);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw) as Partial<PanelState>;
+      return {
+        participants: typeof parsed.participants === 'boolean' ? parsed.participants : fallback.participants,
+        observers: typeof parsed.observers === 'boolean' ? parsed.observers : fallback.observers,
+        slides: typeof parsed.slides === 'boolean' ? parsed.slides : fallback.slides,
+        settings: typeof parsed.settings === 'boolean' ? parsed.settings : fallback.settings,
+        shortcuts: typeof parsed.shortcuts === 'boolean' ? parsed.shortcuts : fallback.shortcuts
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  function savePanelState(state: PanelState) {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(panelStorageKey, JSON.stringify(state));
+  }
+
   async function renderPDFPage(document: PDFDocumentLike, canvas: HTMLCanvasElement, page: number) {
     const pdfPage = await document.getPage(page);
     const containerWidth = canvas.parentElement?.clientWidth ?? 800;
     const baseViewport = pdfPage.getViewport({ scale: 1 });
-    const scale = Math.min(containerWidth / baseViewport.width, 1.8);
+    const scale = Math.min(containerWidth / baseViewport.width, 3);
     const viewport = pdfPage.getViewport({ scale });
     const context = canvas.getContext('2d');
     if (!context) return;
@@ -467,87 +579,92 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <section class="roundtable" aria-label="Live roundtable">
-  <div class="room-board">
-    <div class="room-board-header">
+  <div class="room-stage">
+    <header class="room-board-header">
       <div>
         <p class="kicker">Live room</p>
         <h2>{snapshot.room.title}</h2>
         <p class="next-speaker">Up next: {nextSpeaker?.displayName ?? 'No one queued'}</p>
       </div>
-      <span class={['connection-pill', status]}>{status}</span>
-    </div>
+      <div class="room-header-actions">
+        <button class="shortcut-help-button" type="button" onclick={() => togglePanel('shortcuts')} aria-expanded={!panelState.shortcuts}>
+          ? Shortcuts
+        </button>
+        <span class={['connection-pill', status]}>{status}</span>
+      </div>
+    </header>
 
-    <div class="workspace-console" class:no-slide-mode={snapshot.room.noSlideMode}>
-      <section class="document-panel" aria-label={snapshot.room.noSlideMode ? 'Shared markdown' : 'Slides'}>
-        {#if snapshot.room.noSlideMode}
-          <div class="markdown-panel">
-            <div class="document-toolbar">
-              <div>
-                <p class="kicker">Markdown mode</p>
-                <h3>Shared notes</h3>
-                {#if snapshot.markdownUpdatedAt}
-                  <p>Last edited by {snapshot.markdownUpdatedByName || snapshot.markdownUpdatedByUserId} at {new Date(snapshot.markdownUpdatedAt).toLocaleString()}</p>
-                {/if}
-              </div>
-              {#if isMod}
-                <label class="toggle-field">
-                  <input
-                    type="checkbox"
-                    checked={snapshot.room.allowParticipantMarkdown}
-                    onchange={(event) => setRoomBooleanSetting('allowParticipantMarkdown', event.currentTarget.checked)}
-                  />
-                  Participant edits
-                </label>
+    <section class="document-panel" aria-label={snapshot.room.noSlideMode ? 'Shared markdown' : 'Slides'}>
+      {#if snapshot.room.noSlideMode}
+        <div class="markdown-panel">
+          <div class="document-toolbar">
+            <div>
+              <p class="kicker">Markdown mode</p>
+              <h3>Shared notes</h3>
+              {#if snapshot.markdownUpdatedAt}
+                <p>Last edited by {snapshot.markdownUpdatedByName || snapshot.markdownUpdatedByUserId} at {new Date(snapshot.markdownUpdatedAt).toLocaleString()}</p>
               {/if}
             </div>
-            <div class="markdown-preview">
-              {#if markdownBlocks.length === 0}
-                <p>No shared notes yet.</p>
-              {:else}
-                {#each markdownBlocks as block, index (`${block.kind}-${index}-${block.text}`)}
-                  {#if block.kind === 'h1'}
-                    <h1>{block.text}</h1>
-                  {:else if block.kind === 'h2'}
-                    <h2>{block.text}</h2>
-                  {:else}
-                    <p>{block.text}</p>
-                  {/if}
-                {/each}
-              {/if}
-            </div>
-            {#if markdownEditorVisible}
-              <form class="markdown-editor" onsubmit={(event) => { event.preventDefault(); submitMarkdown(); }}>
-                <textarea bind:value={markdownDraft} maxlength={65536} rows="8" aria-label="Shared markdown"></textarea>
-                <button type="submit">
-                  <Save size={16} /> Save notes
-                </button>
-                {#if markdownMessage}
-                  <p>{markdownMessage}</p>
-                {/if}
-              </form>
+            {#if isMod}
+              <label class="toggle-field">
+                <input
+                  type="checkbox"
+                  checked={snapshot.room.allowParticipantMarkdown}
+                  onchange={(event) => setRoomBooleanSetting('allowParticipantMarkdown', event.currentTarget.checked)}
+                />
+                Participant edits
+              </label>
             {/if}
           </div>
-        {:else}
-          <div class="pdf-panel">
-            <div class="document-toolbar">
-              <div>
-                <p class="kicker">Slide deck</p>
-                <h3>{snapshot.slide?.originalName ?? 'No PDF attached'}</h3>
-                {#if snapshot.slide?.missing}
-                  <p class="missing">File was deleted manually.</p>
-                {:else if snapshot.slide}
-                  <p>Page {localPage} of {totalPageCount()}</p>
+          <div class="markdown-preview">
+            {#if markdownBlocks.length === 0}
+              <p>No shared notes yet.</p>
+            {:else}
+              {#each markdownBlocks as block, index (`${block.kind}-${index}-${block.text}`)}
+                {#if block.kind === 'h1'}
+                  <h1>{block.text}</h1>
+                {:else if block.kind === 'h2'}
+                  <h2>{block.text}</h2>
+                {:else}
+                  <p>{block.text}</p>
                 {/if}
-              </div>
-              <div class="slide-controls">
-                <button type="button" onclick={() => navigateSlide(-1)} disabled={localPage <= 1 || !snapshot.slide || snapshot.slide.missing}>
-                  <ChevronLeft size={16} /> Page
-                </button>
-                <button type="button" onclick={() => navigateSlide(1)} disabled={localPage >= totalPageCount() || !snapshot.slide || snapshot.slide.missing}>
-                  Page <ChevronRight size={16} />
-                </button>
-              </div>
+              {/each}
+            {/if}
+          </div>
+          {#if markdownEditorVisible}
+            <form class="markdown-editor" onsubmit={(event) => { event.preventDefault(); submitMarkdown(); }}>
+              <textarea bind:value={markdownDraft} maxlength={65536} rows="8" aria-label="Shared markdown"></textarea>
+              <button type="submit">
+                <Save size={16} /> Save notes
+              </button>
+              {#if markdownMessage}
+                <p>{markdownMessage}</p>
+              {/if}
+            </form>
+          {/if}
+        </div>
+      {:else}
+        <div class="pdf-panel">
+          <div class="document-toolbar">
+            <div>
+              <p class="kicker">Slide deck</p>
+              <h3>{snapshot.slide?.originalName ?? 'No PDF attached'}</h3>
+              {#if snapshot.slide?.missing}
+                <p class="missing">File was deleted manually.</p>
+              {:else if snapshot.slide}
+                <p>Page {localPage} of {totalPageCount()}</p>
+              {/if}
             </div>
+            <div class="slide-controls">
+              <button type="button" onclick={() => navigateSlide(-1)} disabled={localPage <= 1 || !snapshot.slide || snapshot.slide.missing}>
+                <ChevronLeft size={16} /> Page
+              </button>
+              <button type="button" onclick={() => navigateSlide(1)} disabled={localPage >= totalPageCount() || !snapshot.slide || snapshot.slide.missing}>
+                Page <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+          <div class="stage-toggles">
             {#if isMod}
               <label class="toggle-field">
                 <input
@@ -562,30 +679,230 @@
               <input type="checkbox" bind:checked={followSharedNavigation} />
               Follow moderator navigation
             </label>
-            {#if snapshot.slide && !snapshot.slide.missing}
-              <div class="pdf-canvas-wrap">
-                <canvas bind:this={slideCanvas}></canvas>
-              </div>
-            {:else}
-              <div class="empty-document">
-                <FileText size={34} />
-                <p>{snapshot.slide?.missing ? 'The attached slide file is missing.' : 'Upload a PDF to show slides here.'}</p>
-              </div>
-            {/if}
-            {#if pdfError}
-              <p class="upload-error" role="alert">{pdfError}</p>
-            {/if}
           </div>
-        {/if}
-      </section>
-
-      <aside class="room-rail">
-        {#if isMod}
-          <section class="settings-panel" aria-label="Room settings">
-            <div class="panel-title">
-              <Settings size={18} />
-              <h3>Room settings</h3>
+          {#if snapshot.slide && !snapshot.slide.missing}
+            <div class="pdf-canvas-wrap">
+              <canvas bind:this={slideCanvas}></canvas>
             </div>
+          {:else}
+            <div class="empty-document">
+              <FileText size={34} />
+              <p>{snapshot.slide?.missing ? 'The attached slide file is missing.' : 'Upload a PDF to show slides here.'}</p>
+            </div>
+          {/if}
+          {#if pdfError}
+            <p class="upload-error" role="alert">{pdfError}</p>
+          {/if}
+        </div>
+      {/if}
+    </section>
+  </div>
+
+  <aside class="room-rail">
+    <div class="turn-console" aria-label="Turn controls">
+      <div class="current-speaker-card">
+        <Mic size={24} />
+        <div>
+          <span>Current speaker</span>
+          <strong>{currentSpeaker?.displayName ?? 'No active speaker'}</strong>
+        </div>
+      </div>
+      <div class="timer-card">
+        <Timer size={22} />
+        <div>
+          <span>{snapshot.timer.state === 'running' ? 'Timer running' : 'Timer stopped'}</span>
+          <strong>{timerLabel}</strong>
+        </div>
+      </div>
+      {#if isMod}
+        <div class="moderator-controls" aria-label="Moderator turn controls">
+          <button type="button" title="Previous speaker" onclick={previousTurn}>
+            <ChevronLeft size={17} /> Previous
+          </button>
+          <button type="button" title="Next speaker" onclick={nextTurn}>
+            <ChevronRight size={17} /> Next
+          </button>
+          <label class="compact-field">
+            Timer
+            <input type="number" min="1" max="86400" bind:value={timerDurationSeconds} />
+          </label>
+          <button type="button" onclick={toggleTimer}>{snapshot.timer.state === 'running' ? 'Stop' : 'Start'}</button>
+          <button type="button" title="Reset timer" onclick={resetTimer}>
+            <RotateCcw size={16} /> Reset
+          </button>
+        </div>
+      {:else if canUseHands}
+        <button class="hand-toggle" type="button" onclick={toggleHand}>
+          <Hand size={17} /> {callerHand ? 'Lower hand' : 'Raise hand'}
+        </button>
+      {/if}
+    </div>
+
+    {#if snapshot.hands.length > 0}
+      <div class="hand-queue" aria-label="Raised hands">
+        <div>
+          <Hand size={18} />
+          <strong>Raised hands</strong>
+        </div>
+        {#each snapshot.hands as hand (hand.userId)}
+          <span>
+            {hand.displayName}
+            {#if isMod}
+              <button type="button" onclick={() => lowerHand(hand.userId)}>Lower</button>
+            {/if}
+          </span>
+        {/each}
+      </div>
+    {/if}
+
+    <section class="rail-panel">
+      <button class="list-toggle" type="button" onclick={() => togglePanel('participants')} aria-expanded={!panelState.participants}>
+        <UsersRound size={19} />
+        <span>Participants</span>
+        <strong>{snapshot.participants.length}</strong>
+      </button>
+      {#if !panelState.participants}
+        <div class="member-list">
+          {#each snapshot.participants as member, index (member.userId)}
+            <article class={['member-row', member.userId === snapshot.currentTurn.currentSpeakerUserId && 'current-speaker-row']}>
+              <div class="member-identity">
+                {#if member.userId === snapshot.currentTurn.currentSpeakerUserId}
+                  <Mic size={18} />
+                {:else}
+                  <UserRound size={18} />
+                {/if}
+                <div>
+                  <h3>{member.displayName}</h3>
+                  <p>{member.role}</p>
+                </div>
+              </div>
+              {#if isMod}
+                <div class="member-actions">
+                  <button type="button" onclick={() => moveMember(snapshot.participants, index, -1)} disabled={index === 0}>Up</button>
+                  <button type="button" onclick={() => moveMember(snapshot.participants, index, 1)} disabled={index === snapshot.participants.length - 1}>Down</button>
+                  {#if member.role !== 'mod'}
+                    <button type="button" onclick={() => setRole(member.userId, 'mod')}>
+                      <Shield size={15} /> Mod
+                    </button>
+                  {/if}
+                  <button type="button" onclick={() => setCurrent(member.userId)}>Speak</button>
+                  <button type="button" onclick={() => setRole(member.userId, 'observer')}>Observe</button>
+                  <button class="danger-button" type="button" onclick={() => kick(member.userId)}>
+                    <LogOut size={15} /> Kick
+                  </button>
+                </div>
+              {/if}
+            </article>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <section class="rail-panel">
+      <button class="list-toggle" type="button" onclick={() => togglePanel('observers')} aria-expanded={!panelState.observers}>
+        <Eye size={19} />
+        <span>Observers</span>
+        <strong>{snapshot.observers.length}</strong>
+      </button>
+      {#if !panelState.observers}
+        <div class="member-list compact">
+          {#each snapshot.observers as member, index (member.userId)}
+            <article class="member-row observer-row">
+              <div class="member-identity">
+                <Eye size={18} />
+                <div>
+                  <h3>{member.displayName}</h3>
+                  <p>observer</p>
+                </div>
+              </div>
+              {#if isMod}
+                <div class="member-actions">
+                  <button type="button" onclick={() => moveObserver(index, -1)} disabled={index === 0}>Up</button>
+                  <button type="button" onclick={() => moveObserver(index, 1)} disabled={index === snapshot.observers.length - 1}>Down</button>
+                  <button type="button" onclick={() => setRole(member.userId, 'participant')}>Talk</button>
+                  <button class="danger-button" type="button" onclick={() => kick(member.userId)}>Kick</button>
+                </div>
+              {/if}
+            </article>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <section class="rail-panel">
+      <button class="list-toggle" type="button" onclick={() => togglePanel('slides')} aria-expanded={!panelState.slides}>
+        {#if snapshot.slide?.missing}
+          <FileWarning size={19} />
+        {:else}
+          <Upload size={19} />
+        {/if}
+        <span>Slides</span>
+        <strong>{snapshot.slide ? '1' : '0'}</strong>
+      </button>
+      {#if !panelState.slides}
+        <div class="slide-panel" aria-label="Slides">
+          {#if snapshot.slide}
+            <p class={['slide-state', snapshot.slide.missing && 'missing']}>
+              {snapshot.slide.missing ? 'File was deleted manually' : snapshot.slide.originalName}
+            </p>
+            <p class="slide-expiry">Expires {new Date(snapshot.slide.expiresAt).toLocaleDateString()}</p>
+          {:else}
+            <p class="slide-state">No slide deck attached</p>
+          {/if}
+          {#if canManageSlides}
+            <form class="slide-upload" onsubmit={(event) => { event.preventDefault(); submitSlideUpload(); }}>
+              <label>
+                PDF
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  disabled={slideBusy}
+                  onchange={(event) => {
+                    slideFile = event.currentTarget.files?.[0] ?? null;
+                    slideMessage = '';
+                    slideError = '';
+                  }}
+                />
+              </label>
+              <label>
+                Expiration
+                <input type="datetime-local" bind:value={slideExpiresAt} disabled={slideBusy} />
+              </label>
+              <div class="settings-actions">
+                <button type="submit" disabled={slideBusy || !slideFile}>
+                  <Upload size={16} /> {slideBusy ? 'Working' : 'Replace PDF'}
+                </button>
+                {#if canChangeSlideExpiration}
+                  <button type="button" disabled={slideBusy || !snapshot.slide} onclick={saveSlideExpiration}>Save expiration</button>
+                {/if}
+                <button class="danger-button" type="button" disabled={slideBusy || !snapshot.slide} onclick={submitRemoveSlide}>
+                  <Trash2 size={16} /> {slideConfirmRemove ? 'Confirm remove' : 'Remove'}
+                </button>
+              </div>
+              {#if slideBusy || slideProgress > 0}
+                <progress max="100" value={slideProgress}>{slideProgress}%</progress>
+              {/if}
+              {#if slideMessage}
+                <p class="upload-message">{slideMessage}</p>
+              {/if}
+              {#if slideError}
+                <p class="upload-error" role="alert">{slideError}</p>
+              {/if}
+            </form>
+          {/if}
+        </div>
+      {/if}
+    </section>
+
+    {#if isMod}
+      <section class="rail-panel">
+        <button class="list-toggle" type="button" onclick={() => togglePanel('settings')} aria-expanded={!panelState.settings}>
+          <Settings size={19} />
+          <span>Room settings</span>
+          <strong>{snapshot.room.raiseHandMode}</strong>
+        </button>
+        {#if !panelState.settings}
+          <div class="settings-panel" aria-label="Room settings">
             <form class="settings-form" onsubmit={(event) => { event.preventDefault(); saveRoomTitle(); }}>
               <label>
                 Room title
@@ -654,199 +971,65 @@
             {#if settingsError}
               <p class="upload-error" role="alert">{settingsError}</p>
             {/if}
-          </section>
-        {/if}
-
-        <div class="turn-console" aria-label="Turn controls">
-      <div class="current-speaker-card">
-        <Mic size={24} />
-        <div>
-          <span>Current speaker</span>
-          <strong>{currentSpeaker?.displayName ?? 'No active speaker'}</strong>
-        </div>
-      </div>
-      <div class="timer-card">
-        <Timer size={22} />
-        <div>
-          <span>{snapshot.timer.state === 'running' ? 'Timer running' : 'Timer stopped'}</span>
-          <strong>{timerLabel}</strong>
-        </div>
-      </div>
-      {#if isMod}
-        <div class="moderator-controls" aria-label="Moderator turn controls">
-          <button type="button" title="Previous speaker" onclick={previousTurn}>
-            <ChevronLeft size={17} /> Previous
-          </button>
-          <button type="button" title="Next speaker" onclick={nextTurn}>
-            <ChevronRight size={17} /> Next
-          </button>
-          <label class="compact-field">
-            Timer
-            <input type="number" min="1" max="86400" bind:value={timerDurationSeconds} />
-          </label>
-          <button type="button" onclick={toggleTimer}>{snapshot.timer.state === 'running' ? 'Stop' : 'Start'}</button>
-          <button type="button" title="Reset timer" onclick={resetTimer}>
-            <RotateCcw size={16} /> Reset
-          </button>
-        </div>
-      {:else if canUseHands}
-        <button class="hand-toggle" type="button" onclick={toggleHand}>
-          <Hand size={17} /> {callerHand ? 'Lower hand' : 'Raise hand'}
-        </button>
-      {/if}
-        </div>
-
-    {#if snapshot.hands.length > 0}
-      <div class="hand-queue" aria-label="Raised hands">
-        <div>
-          <Hand size={18} />
-          <strong>Raised hands</strong>
-        </div>
-        {#each snapshot.hands as hand (hand.userId)}
-          <span>
-            {hand.displayName}
-            {#if isMod}
-              <button type="button" onclick={() => lowerHand(hand.userId)}>Lower</button>
-            {/if}
-          </span>
-        {/each}
-      </div>
-    {/if}
-
-    <div class="speaker-ledger">
-      <button class="list-toggle" type="button" onclick={() => (participantsCollapsed = !participantsCollapsed)}>
-        <UsersRound size={19} />
-        <span>Participants</span>
-        <strong>{snapshot.participants.length}</strong>
-      </button>
-      {#if !participantsCollapsed}
-        <div class="member-list">
-          {#each snapshot.participants as member, index (member.userId)}
-            <article class={['member-row', member.userId === snapshot.currentTurn.currentSpeakerUserId && 'current-speaker-row']}>
-              <div class="member-identity">
-                {#if member.userId === snapshot.currentTurn.currentSpeakerUserId}
-                  <Mic size={18} />
-                {:else}
-                  <UserRound size={18} />
-                {/if}
-                <div>
-                  <h3>{member.displayName}</h3>
-                  <p>{member.role}</p>
-                </div>
-              </div>
-              {#if isMod}
-                <div class="member-actions">
-                  <button type="button" onclick={() => moveMember(snapshot.participants, index, -1)} disabled={index === 0}>Up</button>
-                  <button type="button" onclick={() => moveMember(snapshot.participants, index, 1)} disabled={index === snapshot.participants.length - 1}>Down</button>
-                  {#if member.role !== 'mod'}
-                    <button type="button" onclick={() => setRole(member.userId, 'mod')}>
-                      <Shield size={15} /> Mod
-                    </button>
-                  {/if}
-                  <button type="button" onclick={() => setCurrent(member.userId)}>Speak</button>
-                  <button type="button" onclick={() => setRole(member.userId, 'observer')}>Observe</button>
-                  <button class="danger-button" type="button" onclick={() => kick(member.userId)}>
-                    <LogOut size={15} /> Kick
-                  </button>
-                </div>
-              {/if}
-            </article>
-          {/each}
-        </div>
-      {/if}
-    </div>
-      </aside>
-    </div>
-  </div>
-
-  <aside class="observer-panel">
-    <div class="slide-panel" aria-label="Slides">
-      <div class="panel-title">
-        {#if snapshot.slide?.missing}
-          <FileWarning size={19} />
-        {:else}
-          <Upload size={19} />
-        {/if}
-        <h2>Slides</h2>
-      </div>
-      {#if snapshot.slide}
-        <p class={['slide-state', snapshot.slide.missing && 'missing']}>
-          {snapshot.slide.missing ? 'File was deleted manually' : snapshot.slide.originalName}
-        </p>
-        <p class="slide-expiry">Expires {new Date(snapshot.slide.expiresAt).toLocaleDateString()}</p>
-      {:else}
-        <p class="slide-state">No slide deck attached</p>
-      {/if}
-      {#if canManageSlides}
-        <form class="slide-upload" onsubmit={(event) => { event.preventDefault(); submitSlideUpload(); }}>
-          <label>
-            PDF
-            <input
-              type="file"
-              accept="application/pdf,.pdf"
-              disabled={slideBusy}
-              onchange={(event) => {
-                slideFile = event.currentTarget.files?.[0] ?? null;
-                slideMessage = '';
-                slideError = '';
-              }}
-            />
-          </label>
-          <label>
-            Expiration
-            <input type="datetime-local" bind:value={slideExpiresAt} disabled={slideBusy} />
-          </label>
-          <div class="settings-actions">
-            <button type="submit" disabled={slideBusy || !slideFile}>
-              <Upload size={16} /> {slideBusy ? 'Working' : 'Replace PDF'}
-            </button>
-            {#if canChangeSlideExpiration}
-              <button type="button" disabled={slideBusy || !snapshot.slide} onclick={saveSlideExpiration}>Save expiration</button>
-            {/if}
-            <button class="danger-button" type="button" disabled={slideBusy || !snapshot.slide} onclick={submitRemoveSlide}>
-              <Trash2 size={16} /> {slideConfirmRemove ? 'Confirm remove' : 'Remove'}
-            </button>
           </div>
-          {#if slideBusy || slideProgress > 0}
-            <progress max="100" value={slideProgress}>{slideProgress}%</progress>
-          {/if}
-          {#if slideMessage}
-            <p class="upload-message">{slideMessage}</p>
-          {/if}
-          {#if slideError}
-            <p class="upload-error" role="alert">{slideError}</p>
-          {/if}
-        </form>
-      {/if}
-    </div>
-
-    <button class="list-toggle" type="button" onclick={() => (observersCollapsed = !observersCollapsed)}>
-      <Eye size={19} />
-      <span>Observers</span>
-      <strong>{snapshot.observers.length}</strong>
-    </button>
-    {#if !observersCollapsed}
-      <div class="member-list compact">
-        {#each snapshot.observers as member, index (member.userId)}
-          <article class="member-row observer-row">
-            <div class="member-identity">
-              <Eye size={18} />
-              <div>
-                <h3>{member.displayName}</h3>
-                <p>observer</p>
-              </div>
-            </div>
-            {#if isMod}
-              <div class="member-actions">
-                <button type="button" onclick={() => moveObserver(index, -1)} disabled={index === 0}>Up</button>
-                <button type="button" onclick={() => moveObserver(index, 1)} disabled={index === snapshot.observers.length - 1}>Down</button>
-                <button type="button" onclick={() => setRole(member.userId, 'participant')}>Talk</button>
-                <button class="danger-button" type="button" onclick={() => kick(member.userId)}>Kick</button>
-              </div>
-            {/if}
-          </article>
-        {/each}
-      </div>
+        {/if}
+      </section>
     {/if}
+
+    <section class="rail-panel">
+      <button class="list-toggle" type="button" onclick={() => togglePanel('shortcuts')} aria-expanded={!panelState.shortcuts}>
+        <FileText size={19} />
+        <span>Shortcuts</span>
+        <strong>?</strong>
+      </button>
+      {#if !panelState.shortcuts}
+        <div class="shortcut-panel" aria-label="Keyboard shortcuts">
+          <label class="toggle-field">
+            <input
+              type="checkbox"
+              checked={shortcutConfig.enabled}
+              onchange={(event) => setShortcutBoolean('enabled', event.currentTarget.checked)}
+            />
+            Enable shortcuts
+          </label>
+          <label class="toggle-field">
+            <input
+              type="checkbox"
+              checked={shortcutConfig.modShortcutsEnabled}
+              onchange={(event) => setShortcutBoolean('modShortcutsEnabled', event.currentTarget.checked)}
+            />
+            Enable moderator shortcuts
+          </label>
+          {#each shortcutActions as action (action)}
+            <div class="shortcut-row">
+              <label>
+                {shortcutLabels[action]}
+                <input
+                  value={shortcutDrafts[action]}
+                  maxlength="16"
+                  autocapitalize="off"
+                  autocomplete="off"
+                  oninput={(event) => (shortcutDrafts = { ...shortcutDrafts, [action]: event.currentTarget.value })}
+                  onblur={(event) => updateShortcut(action, event.currentTarget.value)}
+                  onkeydown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      updateShortcut(action, event.currentTarget.value);
+                    }
+                  }}
+                />
+              </label>
+              <button type="button" onclick={() => resetShortcut(action)}>Reset</button>
+            </div>
+          {/each}
+          <div class="settings-actions">
+            <span class="shortcut-fixed"><kbd>?</kbd> opens this panel</span>
+          </div>
+          {#if shortcutMessage}
+            <p class="upload-error" role="alert">{shortcutMessage}</p>
+          {/if}
+        </div>
+      {/if}
+    </section>
   </aside>
 </section>
