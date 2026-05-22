@@ -620,6 +620,26 @@
     send({ type: 'hand.raise' });
   }
 
+  function raisedHandFor(userId: string) {
+    return snapshot.hands.find((hand) => hand.userId === userId);
+  }
+
+  function canLowerHandFor(userId: string) {
+    return isMod || userId === snapshot.caller.userId;
+  }
+
+  function participantStatus(member: SnapshotMember) {
+    if (member.userId === snapshot.currentTurn.currentSpeakerUserId) return 'Speaking now';
+    if (member.userId === snapshot.currentTurn.nextSpeakerUserId) return 'Up next';
+    if (raisedHandFor(member.userId)) return 'Hand raised';
+    return 'In speaker list';
+  }
+
+  function observerStatus(member: SnapshotMember) {
+    if (member.userId === snapshot.caller.userId) return 'You are observing';
+    return 'Watching';
+  }
+
   function lowerHand(userId: string) {
     send({ type: 'hand.lower', payload: { userId } });
   }
@@ -1136,25 +1156,34 @@
   {/if}
   <div class="room-stage">
     <div class="timer-row" aria-label="Room timer">
-      <div class="timer-row-value">
-        <Timer size={18} />
-        <strong>{timerLabel}</strong>
-      </div>
-      {#if isMod}
-        <div class="timer-row-controls" aria-label="Moderator timer controls">
-          <label class="compact-field">
-            Timer
-            <input type="number" min="1" max="86400" bind:value={timerDurationSeconds} />
-          </label>
-          <button type="button" onclick={toggleTimer}>{snapshot.timer.state === 'running' ? 'Stop' : 'Start'}</button>
-          <button type="button" title="Reset timer" onclick={resetTimer}>
-            <RotateCcw size={16} /> Reset
-          </button>
+      <div class="timer-row-main">
+        <div class="timer-row-value">
+          <Timer size={18} />
+          <strong>{timerLabel}</strong>
         </div>
-      {:else if canUseHands}
-        <button class="hand-toggle compact-hand" type="button" onclick={toggleHand}>
-          <Hand size={17} /> {callerHand ? 'Lower hand' : 'Raise hand'}
-        </button>
+        <div class="timer-speakers" aria-label="Turn summary">
+          <span><strong>Now</strong> {currentSpeaker?.displayName || 'No speaker'}</span>
+          <span><strong>Next</strong> {nextSpeaker?.displayName || 'No one queued'}</span>
+        </div>
+      </div>
+      {#if isMod || canUseHands}
+        <div class="timer-row-controls" aria-label="Timer and hand controls">
+          {#if isMod}
+            <label class="compact-field">
+              Timer
+              <input type="number" min="1" max="86400" bind:value={timerDurationSeconds} />
+            </label>
+            <button type="button" onclick={toggleTimer}>{snapshot.timer.state === 'running' ? 'Stop' : 'Start'}</button>
+            <button type="button" title="Reset timer" onclick={resetTimer}>
+              <RotateCcw size={16} /> Reset
+            </button>
+          {/if}
+          {#if canUseHands}
+            <button class="hand-toggle compact-hand" type="button" onclick={toggleHand}>
+              <Hand size={17} /> {callerHand ? 'Lower hand' : 'Raise hand'}
+            </button>
+          {/if}
+        </div>
       {/if}
     </div>
 
@@ -1477,16 +1506,31 @@
                 {/if}
                 <div>
                   <h3>{member.displayName}</h3>
-                  <p>{member.role}</p>
+                  <p>{participantStatus(member)}</p>
                 </div>
+                {#if raisedHandFor(member.userId)}
+                  {#if canLowerHandFor(member.userId)}
+                    <button class="hand-row-button" type="button" title={`Lower ${member.displayName}'s hand`} aria-label={`Lower ${member.displayName}'s hand`} onclick={() => lowerHand(member.userId)}>
+                      <Hand size={15} />
+                    </button>
+                  {:else}
+                    <span class="hand-row-indicator" title={`${member.displayName} has a raised hand`} aria-label={`${member.displayName} has a raised hand`}>
+                      <Hand size={15} />
+                    </span>
+                  {/if}
+                {/if}
               </div>
               {#if isMod}
                 <div class="member-actions">
                   <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveMember(snapshot.participants, index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
                   <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveMember(snapshot.participants, index, 1)} disabled={index === snapshot.participants.length - 1}><ArrowDown size={16} /></button>
-                  {#if member.role !== 'mod'}
+                  {#if member.role === 'mod'}
+                    <button type="button" onclick={() => setRole(member.userId, 'participant')}>
+                      <Shield size={15} /> Demote
+                    </button>
+                  {:else}
                     <button type="button" onclick={() => setRole(member.userId, 'mod')}>
-                      <Shield size={15} /> Mod
+                      <Shield size={15} /> Promote
                     </button>
                   {/if}
                   <button type="button" onclick={() => setCurrent(member.userId)}>Speak</button>
@@ -1516,15 +1560,19 @@
                 <Eye size={18} />
                 <div>
                   <h3>{member.displayName}</h3>
-                  <p>observer</p>
+                  <p>{observerStatus(member)}</p>
                 </div>
               </div>
-              {#if isMod}
+              {#if isMod || member.userId === snapshot.caller.userId}
                 <div class="member-actions">
-                  <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveObserver(index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
-                  <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveObserver(index, 1)} disabled={index === snapshot.observers.length - 1}><ArrowDown size={16} /></button>
-                  <button type="button" onclick={() => setRole(member.userId, 'participant')}>Talk</button>
-                  <button class="danger-button icon-button" type="button" title="Kick" aria-label="Kick" onclick={() => kick(member.userId)}><LogOut size={15} /></button>
+                  {#if isMod}
+                    <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveObserver(index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
+                    <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveObserver(index, 1)} disabled={index === snapshot.observers.length - 1}><ArrowDown size={16} /></button>
+                  {/if}
+                  <button type="button" onclick={() => setRole(member.userId, 'participant')}>Rejoin</button>
+                  {#if isMod}
+                    <button class="danger-button icon-button" type="button" title="Kick" aria-label="Kick" onclick={() => kick(member.userId)}><LogOut size={15} /></button>
+                  {/if}
                 </div>
               {/if}
             </article>

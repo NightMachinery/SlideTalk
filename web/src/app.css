@@ -1001,12 +1001,12 @@ h2 {
 
 .member-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
   align-items: start;
   border: 1px solid oklch(84% 0.018 245);
   border-radius: 8px;
-  padding: 14px;
+  padding: 12px;
   background: oklch(98% 0.006 235);
 }
 
@@ -1054,15 +1054,43 @@ h2 {
 }
 
 .member-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+  width: 100%;
+  justify-content: stretch;
 }
 
 .member-actions button {
-  min-width: 58px;
+  min-width: 0;
   min-height: 34px;
   padding: 0 10px;
   font-size: 0.82rem;
+}
+
+.member-actions .icon-button {
+  width: auto;
+}
+
+.hand-row-button,
+.hand-row-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-height: 30px;
+  border-radius: 8px;
+  padding: 0;
+  color: oklch(28% 0.07 190);
+  background: oklch(89% 0.075 180);
+}
+
+.hand-row-button:hover:not(:disabled) {
+  background: oklch(84% 0.09 180);
+}
+
+.hand-row-indicator {
+  background: oklch(92% 0.036 190);
 }
 
 .danger-button {
@@ -1120,14 +1148,22 @@ code {
 .timer-row {
   display: flex;
   min-width: 0;
-  min-height: 42px;
+  min-height: 48px;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   border: 1px solid oklch(82% 0.025 245);
   border-radius: 8px;
-  padding: 5px 8px;
+  padding: 7px 9px;
   background: oklch(99% 0.006 235 / 0.92);
+}
+
+.timer-row-main {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 16px;
 }
 
 .timer-row-value,
@@ -1141,8 +1177,32 @@ code {
 
 .timer-row-value strong {
   color: oklch(18% 0.018 245);
-  font-size: clamp(1.25rem, 2.4vw, 1.8rem);
+  font-size: 1.52rem;
   line-height: 1;
+}
+
+.timer-speakers {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, auto));
+  gap: 6px 12px;
+}
+
+.timer-speakers span {
+  overflow: hidden;
+  color: oklch(30% 0.024 245);
+  font-size: 0.82rem;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timer-speakers strong {
+  margin-right: 4px;
+  color: oklch(48% 0.07 195);
+  font-size: 0.72rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .timer-row-controls {
@@ -1692,10 +1752,22 @@ kbd {
 
   .timer-row {
     align-items: flex-start;
-    flex-direction: column;
+    flex-wrap: wrap;
+  }
+
+  .timer-row-main {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .timer-speakers {
+    flex: 1;
+    grid-template-columns: 1fr;
   }
 
   .timer-row-controls {
+    width: 100%;
     justify-content: flex-start;
   }
 
