@@ -4,7 +4,7 @@ SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking or
 
 SlideTalk is not a video conferencing system, a public event platform, or an account-management service. It assumes a small trusted group and an operator who controls the host.
 
-This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, a compact start flow with inline display-name editing, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, PDF and image slide storage with expiration cleanup, shared slide viewing, no-slide markdown mode, synchronized room audio with audio-only mode, admin membership controls, moderator room settings, room migration links, slide/audio replacement and removal, and no-Docker self-hosting with Caddy and tmux.
+This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, a compact start flow with inline display-name editing, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, manual-by-default hand raising for participants and moderators, PDF and image slide storage with expiration cleanup, shared slide viewing, no-slide markdown mode, synchronized room audio with audio-only mode, admin membership controls, moderator room settings, observer self-rejoin, immediate removed-room handling for kicked clients, room migration links, slide/audio replacement and removal, and no-Docker self-hosting with Caddy and tmux.
 
 ## Requirements
 
