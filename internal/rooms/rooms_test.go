@@ -29,6 +29,27 @@ func TestCreateRoomMakesCreatorModerator(t *testing.T) {
 	}
 }
 
+func TestCreateRoomDefaultsHandRaiseModeToManual(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	user := namedUser(t, ctx, authService, "creator-token", "Ada")
+	service := NewService(db)
+
+	room, err := service.Create(ctx, user.ID, CreateInput{Title: "Weekly roundtable"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+
+	var mode string
+	if err := db.QueryRowContext(ctx, `select raise_hand_mode from rooms where id = ?`, room.ID).Scan(&mode); err != nil {
+		t.Fatalf("read raise hand mode: %v", err)
+	}
+	if mode != "manual" {
+		t.Fatalf("raise hand mode = %q, want manual", mode)
+	}
+}
+
 func TestPasswordRoomRequiresCorrectPassword(t *testing.T) {
 	ctx := context.Background()
 	db := openRoomsTestDB(t)

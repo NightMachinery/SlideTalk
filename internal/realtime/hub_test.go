@@ -122,6 +122,50 @@ func TestNonModCommandForbiddenAndLastModProtected(t *testing.T) {
 	}
 }
 
+func TestObserverCanRejoinSelfButCannotChangeOtherRoles(t *testing.T) {
+	hub, authService, roomService, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	observer := namedUser(t, ctx, authService, "observer", "Marie")
+	if _, err := roomService.Join(ctx, roomID, observer.ID, rooms.JoinInput{}); err != nil {
+		t.Fatalf("join observer: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandPeopleSetRole,
+		Payload: mustJSON(t, map[string]string{"userId": observer.ID, "role": rooms.RoleObserver}),
+	}); err != nil {
+		t.Fatalf("set observer: %v", err)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, observer.ID, Command{
+		Type:    CommandPeopleSetRole,
+		Payload: mustJSON(t, map[string]string{"userId": observer.ID, "role": rooms.RoleParticipant}),
+	}); err != nil {
+		t.Fatalf("observer self rejoin: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, observer.ID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Caller.Role != rooms.RoleParticipant {
+		t.Fatalf("caller role = %q, want participant", snapshot.Caller.Role)
+	}
+
+	err = hub.HandleCommand(ctx, roomID, observer.ID, Command{
+		Type:    CommandPeopleSetRole,
+		Payload: mustJSON(t, map[string]string{"userId": participantID, "role": rooms.RoleObserver}),
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("observer changed another member role: %v, want forbidden", err)
+	}
+	err = hub.HandleCommand(ctx, roomID, observer.ID, Command{
+		Type:    CommandPeopleSetRole,
+		Payload: mustJSON(t, map[string]string{"userId": observer.ID, "role": rooms.RoleMod}),
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("observer self promoted: %v, want forbidden", err)
+	}
+}
+
 func TestTurnNextPreviousSkipsObservers(t *testing.T) {
 	hub, authService, roomService, roomID, modID, participantID := setupRealtimeTest(t)
 	ctx := context.Background()
@@ -199,6 +243,23 @@ func TestQueueModePicksEarliestRaisedHandAndClearsIt(t *testing.T) {
 	}
 }
 
+func TestModeratorCanRaiseOwnHand(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandHandRaise}); err != nil {
+		t.Fatalf("mod raise hand: %v", err)
+	}
+
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snapshot.Hands) != 1 || snapshot.Hands[0].UserID != modID {
+		t.Fatalf("hands = %+v, want moderator hand", snapshot.Hands)
+	}
+}
+
 func TestManualModeDoesNotAutoPickRaisedHands(t *testing.T) {
 	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
 	ctx := context.Background()
@@ -223,6 +284,38 @@ func TestManualModeDoesNotAutoPickRaisedHands(t *testing.T) {
 	}
 	if len(snapshot.Hands) != 1 || snapshot.Hands[0].UserID != participantID {
 		t.Fatalf("manual hands = %+v, want raised hand retained", snapshot.Hands)
+	}
+}
+
+func TestKickSendsTargetedRemovalEvent(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	modClient := &Client{RoomID: roomID, UserID: modID, Send: make(chan Event, 4)}
+	participantClient := &Client{RoomID: roomID, UserID: participantID, Send: make(chan Event, 4)}
+	hub.Register(modClient)
+	hub.Register(participantClient)
+	defer hub.Unregister(modClient)
+	defer hub.Unregister(participantClient)
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandPeopleKick,
+		Payload: mustJSON(t, map[string]string{"userId": participantID}),
+	}); err != nil {
+		t.Fatalf("kick participant: %v", err)
+	}
+
+	select {
+	case event := <-participantClient.Send:
+		if event.Type != EventKicked || event.RoomID != roomID {
+			t.Fatalf("participant event = %+v, want kicked event for room", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("participant did not receive kicked event")
+	}
+	select {
+	case event := <-modClient.Send:
+		t.Fatalf("mod received unexpected targeted event: %+v", event)
+	default:
 	}
 }
 

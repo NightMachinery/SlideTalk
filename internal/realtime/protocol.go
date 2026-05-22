@@ -8,6 +8,7 @@ import (
 
 const (
 	EventSnapshot = "room.snapshot"
+	EventKicked   = "room.kicked"
 	EventError    = "error"
 
 	CommandPeopleReorder  = "people.reorder"

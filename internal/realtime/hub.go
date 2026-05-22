@@ -262,15 +262,16 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return err
 		}
 	case CommandPeopleSetRole:
-		if !isMod {
-			return ErrForbidden
-		}
 		var payload struct {
 			UserID string `json:"userId"`
 			Role   string `json:"role"`
 		}
 		if err := json.Unmarshal(command.Payload, &payload); err != nil {
 			return ErrBadCommand
+		}
+		isObserverSelfRejoin := details.Membership.Role == rooms.RoleObserver && payload.UserID == callerUserID && payload.Role == rooms.RoleParticipant
+		if !isMod && !isObserverSelfRejoin {
+			return ErrForbidden
 		}
 		if err := h.rooms.SetRole(ctx, roomID, payload.UserID, payload.Role); err != nil {
 			return err
@@ -294,6 +295,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 		if err := h.cleanMemberTurnState(ctx, roomID, payload.UserID); err != nil {
 			return err
 		}
+		h.SendToUser(roomID, payload.UserID, Event{Type: EventKicked, RoomID: roomID, Code: "removed", Message: "You've been removed from that room."})
 	case CommandTurnNext:
 		if !isMod {
 			return ErrForbidden
@@ -1075,6 +1077,24 @@ func (h *Hub) BroadcastSnapshot(ctx context.Context, roomID string, requestID st
 			continue
 		}
 		event := Event{Type: EventSnapshot, RequestID: requestID, RoomID: roomID, Version: h.Version(roomID), Payload: snapshot}
+		select {
+		case client.Send <- event:
+		default:
+		}
+	}
+}
+
+// SendToUser sends one event to connected clients for userID in roomID.
+func (h *Hub) SendToUser(roomID string, userID string, event Event) {
+	h.mu.Lock()
+	clients := make([]*Client, 0, len(h.clients))
+	for client := range h.clients {
+		if client.RoomID == roomID && client.UserID == userID {
+			clients = append(clients, client)
+		}
+	}
+	h.mu.Unlock()
+	for _, client := range clients {
 		select {
 		case client.Send <- event:
 		default:
