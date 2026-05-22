@@ -1,6 +1,6 @@
 export const shortcutStorageKey = 'slidetalk.shortcuts.v1';
 
-export type ShortcutAction = 'previousSpeaker' | 'nextSpeaker' | 'toggleTimer' | 'previousSlide' | 'nextSlide' | 'toggleHelp';
+export type ShortcutAction = 'previousSpeaker' | 'nextSpeaker' | 'toggleTimerPause' | 'resetAndStartTimer' | 'previousSlide' | 'nextSlide' | 'toggleHelp';
 export type RebindableShortcutAction = Exclude<ShortcutAction, 'toggleHelp'>;
 export type ShortcutBindings = Record<RebindableShortcutAction, string>;
 export type ShortcutConfig = {
@@ -12,7 +12,8 @@ export type ShortcutConfig = {
 export const defaultShortcutBindings: ShortcutBindings = {
   previousSpeaker: 'b',
   nextSpeaker: 'n',
-  toggleTimer: 't',
+  toggleTimerPause: 'p',
+  resetAndStartTimer: 't',
   previousSlide: '[',
   nextSlide: ']'
 };
@@ -20,7 +21,8 @@ export const defaultShortcutBindings: ShortcutBindings = {
 export const shortcutLabels: Record<ShortcutAction, string> = {
   previousSpeaker: 'Previous speaker',
   nextSpeaker: 'Next speaker',
-  toggleTimer: 'Start/stop timer',
+  toggleTimerPause: 'Start/pause timer',
+  resetAndStartTimer: 'Reset and start timer',
   previousSlide: 'Previous slide',
   nextSlide: 'Next slide',
   toggleHelp: 'Shortcuts'

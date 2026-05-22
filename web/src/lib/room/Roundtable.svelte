@@ -71,7 +71,7 @@
   };
 
   const panelStorageKey = 'slidetalk.roomPanels.v1';
-  const shortcutActions: RebindableShortcutAction[] = ['previousSpeaker', 'nextSpeaker', 'toggleTimer', 'previousSlide', 'nextSlide'];
+  const shortcutActions: RebindableShortcutAction[] = ['previousSpeaker', 'nextSpeaker', 'toggleTimerPause', 'resetAndStartTimer', 'previousSlide', 'nextSlide'];
   const roomModeOptions = [
     { value: 'slides', label: 'Slides' },
     { value: 'markdown', label: 'Markdown' },
@@ -117,6 +117,8 @@
   let shortcutDrafts = $state<Record<RebindableShortcutAction, string>>({ ...defaultShortcutBindings });
   let preferencesReady = $state(false);
   let timerDurationSeconds = $state(300);
+  let previousRemaining = $state(-1);
+  let timerEndedPulse = $state(false);
   let nowMs = $state(Date.now());
   let slideFile = $state<File | null>(null);
   let slideExpiresAt = $state(defaultExpirationInput());
@@ -266,6 +268,17 @@
 
   $effect(() => {
     roomTitleDraft = snapshot.room.title;
+  });
+
+  $effect(() => {
+    if (snapshot.timer.state === 'running' && previousRemaining > 0 && remainingSeconds === 0) {
+      playBeep();
+      timerEndedPulse = true;
+      window.setTimeout(() => {
+        timerEndedPulse = false;
+      }, 2000);
+    }
+    previousRemaining = remainingSeconds;
   });
 
   $effect(() => {
@@ -527,6 +540,31 @@
 
   function resetTimer() {
     send({ type: 'timer.reset' });
+  }
+
+  function resetAndStartTimer() {
+    send({ type: 'timer.reset' });
+    window.setTimeout(startTimer, 50);
+  }
+
+  function playBeep() {
+    try {
+      const AudioContextConstructor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextConstructor) return;
+      const context = new AudioContextConstructor();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, context.currentTime);
+      gain.gain.setValueAtTime(0.1, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.5);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.5);
+    } catch {
+      // Timer feedback is best effort; some browsers block programmatic audio.
+    }
   }
 
   function setRaiseHandMode(mode: 'off' | 'manual' | 'queue') {
@@ -1014,7 +1052,8 @@
     if (!isMod) return;
     if (action === 'previousSpeaker') previousTurn();
     if (action === 'nextSpeaker') nextTurn();
-    if (action === 'toggleTimer') toggleTimer();
+    if (action === 'toggleTimerPause') toggleTimer();
+    if (action === 'resetAndStartTimer') resetAndStartTimer();
     if (action === 'previousSlide') navigateSlide(-1);
     if (action === 'nextSlide') navigateSlide(1);
   }

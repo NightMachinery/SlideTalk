@@ -36,7 +36,8 @@ describe('shortcut configuration', () => {
 
     expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: 'b' }), config)).toBe('previousSpeaker');
     expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: 'n' }), config)).toBe('nextSpeaker');
-    expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: 't' }), config)).toBe('toggleTimer');
+    expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: 'p' }), config)).toBe('toggleTimerPause');
+    expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: 't' }), config)).toBe('resetAndStartTimer');
     expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: '[' }), config)).toBe('previousSlide');
     expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: ']' }), config)).toBe('nextSlide');
     expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: '?' }), config)).toBe('toggleHelp');
