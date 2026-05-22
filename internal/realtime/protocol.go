@@ -164,14 +164,20 @@ type SnapshotAudio struct {
 
 // SnapshotAudioTrack describes one shared audio track.
 type SnapshotAudioTrack struct {
-	ID               string `json:"id"`
-	SHA256           string `json:"sha256"`
-	OriginalName     string `json:"originalName"`
-	MIMEType         string `json:"mimeType"`
-	SizeBytes        int64  `json:"sizeBytes"`
-	UploadedByUserID string `json:"uploadedByUserId"`
-	DisplayOrder     int    `json:"displayOrder"`
-	Missing          bool   `json:"missing"`
+	ID                  string `json:"id"`
+	SHA256              string `json:"sha256"`
+	OriginalName        string `json:"originalName"`
+	Title               string `json:"title"`
+	MetadataTitle       string `json:"metadataTitle"`
+	MIMEType            string `json:"mimeType"`
+	SizeBytes           int64  `json:"sizeBytes"`
+	DurationSeconds     int    `json:"durationSeconds"`
+	HasCover            bool   `json:"hasCover"`
+	UploadedByUserID    string `json:"uploadedByUserId"`
+	UploadedByName      string `json:"uploadedByName"`
+	UploaderDisplayName string `json:"uploaderDisplayName"`
+	DisplayOrder        int    `json:"displayOrder"`
+	Missing             bool   `json:"missing"`
 }
 
 // WSTicket is a short-lived room-scoped connection token.

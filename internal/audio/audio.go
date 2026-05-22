@@ -37,12 +37,16 @@ type Service struct {
 
 // StoreInput is the room audio upload payload.
 type StoreInput struct {
-	RoomID       string
-	SHA256       string
-	OriginalName string
-	MIMEType     string
-	File         io.Reader
-	IsAdmin      bool
+	RoomID          string
+	SHA256          string
+	OriginalName    string
+	MIMEType        string
+	File            io.Reader
+	IsAdmin         bool
+	MetadataTitle   string
+	DurationSeconds int
+	Cover           io.Reader
+	CoverMIMEType   string
 }
 
 // Status describes a stored room audio track.
@@ -50,8 +54,12 @@ type Status struct {
 	ID               string `json:"id"`
 	SHA256           string `json:"sha256"`
 	OriginalName     string `json:"originalName"`
+	Title            string `json:"title"`
+	MetadataTitle    string `json:"metadataTitle"`
 	MIMEType         string `json:"mimeType"`
 	SizeBytes        int64  `json:"sizeBytes"`
+	DurationSeconds  int    `json:"durationSeconds"`
+	HasCover         bool   `json:"hasCover"`
 	UploadedByUserID string `json:"uploadedByUserId"`
 	AlreadyUploaded  bool   `json:"alreadyUploaded"`
 	Missing          bool   `json:"missing"`
@@ -68,14 +76,20 @@ type RoomFile struct {
 
 // Track is public room playlist metadata.
 type Track struct {
-	ID               string `json:"id"`
-	SHA256           string `json:"sha256"`
-	OriginalName     string `json:"originalName"`
-	MIMEType         string `json:"mimeType"`
-	SizeBytes        int64  `json:"sizeBytes"`
-	UploadedByUserID string `json:"uploadedByUserId"`
-	DisplayOrder     int    `json:"displayOrder"`
-	Missing          bool   `json:"missing"`
+	ID                  string `json:"id"`
+	SHA256              string `json:"sha256"`
+	OriginalName        string `json:"originalName"`
+	Title               string `json:"title"`
+	MetadataTitle       string `json:"metadataTitle"`
+	MIMEType            string `json:"mimeType"`
+	SizeBytes           int64  `json:"sizeBytes"`
+	DurationSeconds     int    `json:"durationSeconds"`
+	HasCover            bool   `json:"hasCover"`
+	UploadedByUserID    string `json:"uploadedByUserId"`
+	UploadedByName      string `json:"uploadedByName"`
+	UploaderDisplayName string `json:"uploaderDisplayName"`
+	DisplayOrder        int    `json:"displayOrder"`
+	Missing             bool   `json:"missing"`
 }
 
 var (
@@ -88,6 +102,8 @@ var (
 	ErrNoRoomAudio           = errors.New("room has no audio track")
 	ErrInsufficientFreeSpace = errors.New("upload would leave too little free disk space")
 	ErrNotTrackUploaderOrMod = errors.New("only the uploader or a moderator can remove this audio track")
+	ErrInvalidDownloadToken  = errors.New("invalid audio download token")
+	ErrInvalidTrackMetadata  = errors.New("audio metadata is invalid")
 )
 
 // NewService creates the audio directory and returns a service.
@@ -130,6 +146,13 @@ func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (S
 		return Status{}, ErrMissingFile
 	}
 	path := s.pathFor(sha, media.ext)
+	metadataTitle := trimLimit(input.MetadataTitle, 200)
+	durationSeconds := input.DurationSeconds
+	if durationSeconds < 0 || durationSeconds > 7*24*60*60 {
+		return Status{}, ErrInvalidTrackMetadata
+	}
+	coverPath := ""
+	coverMIME := ""
 	sizeBytes := int64(0)
 	if status.AlreadyUploaded {
 		hash, written, _, err := hashUpload(input.File, io.Discard, s.limitFor(input.IsAdmin))
@@ -141,7 +164,7 @@ func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (S
 		}
 		sizeBytes = written
 		var existingPath string
-		if err := s.db.QueryRowContext(ctx, `select size_bytes, stored_path from audio_files where sha256 = ?`, sha).Scan(&sizeBytes, &existingPath); err != nil {
+		if err := s.db.QueryRowContext(ctx, `select size_bytes, stored_path, metadata_title, duration_seconds, cover_path, cover_mime_type from audio_files where sha256 = ?`, sha).Scan(&sizeBytes, &existingPath, &metadataTitle, &durationSeconds, &coverPath, &coverMIME); err != nil {
 			return Status{}, fmt.Errorf("read existing audio size: %w", err)
 		}
 		path = existingPath
@@ -159,6 +182,14 @@ func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (S
 			return Status{}, ErrUnsupportedFile
 		}
 		sizeBytes = written
+		if input.Cover != nil {
+			var err error
+			coverPath, coverMIME, err = s.writeCover(sha, input.CoverMIMEType, input.Cover)
+			if err != nil {
+				_ = os.Remove(path)
+				return Status{}, err
+			}
+		}
 	}
 
 	trackID, err := randomID()
@@ -171,22 +202,24 @@ func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (S
 		return Status{}, fmt.Errorf("begin audio store: %w", err)
 	}
 	defer rollback(tx)
-	if _, err := tx.ExecContext(ctx, `insert into audio_files (sha256, ext, size_bytes, mime_type, stored_path, uploaded_by_user_id, created_at, missing_at)
-		values (?, ?, ?, ?, ?, ?, ?, null)
-		on conflict(sha256) do update set missing_at = null`, sha, media.ext, sizeBytes, media.mime, path, userID, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into audio_files (sha256, ext, size_bytes, mime_type, stored_path, metadata_title, duration_seconds, cover_path, cover_mime_type, uploaded_by_user_id, created_at, missing_at)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null)
+		on conflict(sha256) do update set missing_at = null`, sha, media.ext, sizeBytes, media.mime, path, metadataTitle, durationSeconds, coverPath, coverMIME, userID, now); err != nil {
 		return Status{}, fmt.Errorf("upsert audio file: %w", err)
 	}
 	var nextOrder int
 	if err := tx.QueryRowContext(ctx, `select coalesce(max(display_order) + 1, 0) from room_audio_tracks where room_id = ?`, input.RoomID).Scan(&nextOrder); err != nil {
 		return Status{}, fmt.Errorf("next audio order: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `insert into room_audio_tracks (id, room_id, sha256, original_name, display_order, uploaded_by_user_id, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)`, trackID, input.RoomID, sha, strings.TrimSpace(input.OriginalName), nextOrder, userID, now, now); err != nil {
+	originalName := strings.TrimSpace(input.OriginalName)
+	title := titleFromMetadata(originalName, metadataTitle)
+	if _, err := tx.ExecContext(ctx, `insert into room_audio_tracks (id, room_id, sha256, original_name, title, uploader_display_name, display_order, uploaded_by_user_id, created_at, updated_at) values (?, ?, ?, ?, ?, '', ?, ?, ?, ?)`, trackID, input.RoomID, sha, originalName, title, nextOrder, userID, now, now); err != nil {
 		return Status{}, fmt.Errorf("insert room audio track: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Status{}, fmt.Errorf("commit audio store: %w", err)
 	}
-	return Status{ID: trackID, SHA256: sha, OriginalName: strings.TrimSpace(input.OriginalName), MIMEType: media.mime, SizeBytes: sizeBytes, UploadedByUserID: userID, AlreadyUploaded: status.AlreadyUploaded}, nil
+	return Status{ID: trackID, SHA256: sha, OriginalName: originalName, Title: title, MetadataTitle: metadataTitle, MIMEType: media.mime, SizeBytes: sizeBytes, DurationSeconds: durationSeconds, HasCover: coverPath != "", UploadedByUserID: userID, AlreadyUploaded: status.AlreadyUploaded}, nil
 }
 
 // CurrentRoomFile returns the requested room audio track.
@@ -215,10 +248,98 @@ func (s *Service) CurrentRoomFile(ctx context.Context, roomID string, trackID st
 	return file, nil
 }
 
+// CurrentRoomFileByToken returns the requested file when token is valid for the track.
+func (s *Service) CurrentRoomFileByToken(ctx context.Context, roomID string, trackID string, token string) (RoomFile, error) {
+	tokenHash := hashToken(strings.TrimSpace(token))
+	if tokenHash == "" {
+		return RoomFile{}, ErrInvalidDownloadToken
+	}
+	var found string
+	err := s.db.QueryRowContext(ctx, `select token_hash from audio_download_tokens where token_hash = ? and room_id = ? and track_id = ?`, tokenHash, roomID, trackID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RoomFile{}, ErrInvalidDownloadToken
+	}
+	if err != nil {
+		return RoomFile{}, fmt.Errorf("read audio download token: %w", err)
+	}
+	return s.CurrentRoomFile(ctx, roomID, trackID)
+}
+
+// IssueDownloadToken creates a durable bearer token for one room audio track.
+func (s *Service) IssueDownloadToken(ctx context.Context, roomID string, trackID string, createdByUserID string) (string, error) {
+	if _, err := s.CurrentRoomFile(ctx, roomID, trackID); err != nil {
+		return "", err
+	}
+	token, err := randomSecret(32)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.ExecContext(ctx, `insert into audio_download_tokens (token_hash, room_id, track_id, created_by_user_id, created_at) values (?, ?, ?, ?, ?)`, hashToken(token), roomID, trackID, createdByUserID, nowText()); err != nil {
+		return "", fmt.Errorf("insert audio download token: %w", err)
+	}
+	return token, nil
+}
+
+// CoverFile returns cover art for a stored room audio track.
+func (s *Service) CoverFile(ctx context.Context, roomID string, trackID string) (RoomFile, error) {
+	var file RoomFile
+	err := s.db.QueryRowContext(ctx, `select rat.id, rat.sha256, rat.original_name, af.cover_path, af.cover_mime_type
+		from room_audio_tracks rat join audio_files af on af.sha256 = rat.sha256
+		where rat.room_id = ? and rat.id = ? and af.cover_path <> ''`, roomID, trackID).Scan(&file.ID, &file.SHA256, &file.OriginalName, &file.StoredPath, &file.MIMEType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RoomFile{}, ErrNoRoomAudio
+	}
+	if err != nil {
+		return RoomFile{}, fmt.Errorf("read audio cover: %w", err)
+	}
+	if _, err := os.Stat(file.StoredPath); errors.Is(err, os.ErrNotExist) {
+		return RoomFile{}, ErrMissingFile
+	} else if err != nil {
+		return RoomFile{}, fmt.Errorf("stat audio cover: %w", err)
+	}
+	return file, nil
+}
+
+// UpdateTrackMetadata edits user-visible room audio metadata.
+func (s *Service) UpdateTrackMetadata(ctx context.Context, roomID string, trackID string, userID string, isMod bool, title *string, uploaderDisplayName *string) error {
+	var uploader string
+	err := s.db.QueryRowContext(ctx, `select uploaded_by_user_id from room_audio_tracks where room_id = ? and id = ?`, roomID, trackID).Scan(&uploader)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNoRoomAudio
+	}
+	if err != nil {
+		return fmt.Errorf("read audio track metadata: %w", err)
+	}
+	if !isMod && uploader != userID {
+		return ErrNotTrackUploaderOrMod
+	}
+	if uploaderDisplayName != nil && !isMod {
+		return ErrNotTrackUploaderOrMod
+	}
+	now := nowText()
+	if title != nil {
+		clean := trimLimit(*title, 200)
+		if clean == "" {
+			return ErrInvalidTrackMetadata
+		}
+		if _, err := s.db.ExecContext(ctx, `update room_audio_tracks set title = ?, updated_at = ? where room_id = ? and id = ?`, clean, now, roomID, trackID); err != nil {
+			return fmt.Errorf("update audio title: %w", err)
+		}
+	}
+	if uploaderDisplayName != nil {
+		clean := trimLimit(*uploaderDisplayName, 80)
+		if _, err := s.db.ExecContext(ctx, `update room_audio_tracks set uploader_display_name = ?, updated_at = ? where room_id = ? and id = ?`, clean, now, roomID, trackID); err != nil {
+			return fmt.Errorf("update audio uploader display: %w", err)
+		}
+	}
+	return nil
+}
+
 // ListTracks returns the room audio playlist in display order.
 func (s *Service) ListTracks(ctx context.Context, roomID string) ([]Track, error) {
-	rows, err := s.db.QueryContext(ctx, `select rat.id, rat.sha256, rat.original_name, af.mime_type, af.size_bytes, rat.uploaded_by_user_id, rat.display_order, af.stored_path, af.missing_at
+	rows, err := s.db.QueryContext(ctx, `select rat.id, rat.sha256, rat.original_name, rat.title, af.metadata_title, af.mime_type, af.size_bytes, af.duration_seconds, af.cover_path, rat.uploaded_by_user_id, u.display_name, rat.uploader_display_name, rat.display_order, af.stored_path, af.missing_at
 		from room_audio_tracks rat join audio_files af on af.sha256 = rat.sha256
+		left join users u on u.id = rat.uploaded_by_user_id
 		where rat.room_id = ?
 		order by rat.display_order asc, rat.created_at asc`, roomID)
 	if err != nil {
@@ -229,10 +350,12 @@ func (s *Service) ListTracks(ctx context.Context, roomID string) ([]Track, error
 	for rows.Next() {
 		var track Track
 		var storedPath string
+		var coverPath string
 		var missingAt sql.NullString
-		if err := rows.Scan(&track.ID, &track.SHA256, &track.OriginalName, &track.MIMEType, &track.SizeBytes, &track.UploadedByUserID, &track.DisplayOrder, &storedPath, &missingAt); err != nil {
+		if err := rows.Scan(&track.ID, &track.SHA256, &track.OriginalName, &track.Title, &track.MetadataTitle, &track.MIMEType, &track.SizeBytes, &track.DurationSeconds, &coverPath, &track.UploadedByUserID, &track.UploadedByName, &track.UploaderDisplayName, &track.DisplayOrder, &storedPath, &missingAt); err != nil {
 			return nil, fmt.Errorf("scan audio track: %w", err)
 		}
+		track.HasCover = coverPath != ""
 		if _, err := os.Stat(storedPath); errors.Is(err, os.ErrNotExist) {
 			track.Missing = true
 			if !missingAt.Valid {
@@ -301,6 +424,9 @@ func (s *Service) RemoveTrack(ctx context.Context, roomID string, trackID string
 	if !isMod && uploader != userID {
 		return ErrNotTrackUploaderOrMod
 	}
+	if _, err := s.db.ExecContext(ctx, `delete from audio_download_tokens where room_id = ? and track_id = ?`, roomID, trackID); err != nil {
+		return fmt.Errorf("delete audio download tokens: %w", err)
+	}
 	if _, err := s.db.ExecContext(ctx, `delete from room_audio_tracks where room_id = ? and id = ?`, roomID, trackID); err != nil {
 		return fmt.Errorf("delete audio track: %w", err)
 	}
@@ -313,6 +439,9 @@ func (s *Service) RemoveTrack(ctx context.Context, roomID string, trackID string
 // Cleanup deletes audio tracks for rooms older than gcAfter and removes orphaned files.
 func (s *Service) Cleanup(ctx context.Context, at time.Time, gcAfter time.Duration) error {
 	cutoff := at.UTC().Add(-gcAfter).Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `delete from audio_download_tokens where room_id in (select id from rooms where created_at <= ?)`, cutoff); err != nil {
+		return fmt.Errorf("delete expired audio download tokens: %w", err)
+	}
 	if _, err := s.db.ExecContext(ctx, `delete from room_audio_tracks where room_id in (select id from rooms where created_at <= ?)`, cutoff); err != nil {
 		return fmt.Errorf("delete expired room audio tracks: %w", err)
 	}
@@ -339,6 +468,12 @@ func (s *Service) Cleanup(ctx context.Context, at time.Time, gcAfter time.Durati
 	for _, item := range candidates {
 		if err := os.Remove(item.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("delete audio file: %w", err)
+		}
+		coverPath := ""
+		if err := s.db.QueryRowContext(ctx, `select cover_path from audio_files where sha256 = ?`, item.sha).Scan(&coverPath); err == nil && coverPath != "" {
+			if err := os.Remove(coverPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("delete audio cover: %w", err)
+			}
 		}
 		if _, err := s.db.ExecContext(ctx, `delete from audio_files where sha256 = ?`, item.sha); err != nil {
 			return fmt.Errorf("delete audio file row: %w", err)
@@ -409,6 +544,47 @@ func (s *Service) writeFile(sha string, ext string, reader io.Reader, maxBytes i
 		return "", 0, "", fmt.Errorf("store audio: %w", err)
 	}
 	return hash, written, detected, nil
+}
+
+func (s *Service) writeCover(sha string, mimeType string, reader io.Reader) (string, string, error) {
+	mime := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	ext := "bin"
+	switch mime {
+	case "image/jpeg", "image/jpg":
+		mime = "image/jpeg"
+		ext = "jpg"
+	case "image/png":
+		ext = "png"
+	case "image/webp":
+		ext = "webp"
+	default:
+		return "", "", ErrInvalidTrackMetadata
+	}
+	path := filepath.Join(s.audioDir, sha+".cover."+ext)
+	tmp, err := os.CreateTemp(s.audioDir, sha+".cover.*.tmp")
+	if err != nil {
+		return "", "", fmt.Errorf("create temp audio cover: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+	}()
+	limited := &limitReader{reader: reader, remaining: 2<<20 + 1}
+	written, err := io.Copy(tmp, limited)
+	if err != nil {
+		return "", "", fmt.Errorf("read audio cover: %w", err)
+	}
+	if written > 2<<20 {
+		return "", "", ErrInvalidTrackMetadata
+	}
+	if err := tmp.Close(); err != nil {
+		return "", "", fmt.Errorf("close temp audio cover: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return "", "", fmt.Errorf("store audio cover: %w", err)
+	}
+	return path, mime, nil
 }
 
 func hashUpload(reader io.Reader, writer io.Writer, maxBytes int64) (string, int64, string, error) {
@@ -500,8 +676,47 @@ func validSHA256(value string) bool {
 	return err == nil
 }
 
+func titleFromMetadata(originalName string, metadataTitle string) string {
+	if clean := trimLimit(metadataTitle, 200); clean != "" {
+		return clean
+	}
+	name := strings.TrimSpace(originalName)
+	ext := filepath.Ext(name)
+	if ext != "" {
+		name = strings.TrimSuffix(name, ext)
+	}
+	if clean := trimLimit(name, 200); clean != "" {
+		return clean
+	}
+	return "Untitled audio"
+}
+
+func trimLimit(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		value = string(runes[:maxRunes])
+	}
+	return strings.TrimSpace(value)
+}
+
+func hashToken(rawToken string) string {
+	if rawToken == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(rawToken))
+	return hex.EncodeToString(sum[:])
+}
+
 func randomID() (string, error) {
+	return randomSecret(12)
+}
+
+func randomSecret(byteCount int) (string, error) {
 	bytes := make([]byte, 12)
+	if byteCount > 0 {
+		bytes = make([]byte, byteCount)
+	}
 	if _, err := rand.Read(bytes); err != nil {
 		return "", fmt.Errorf("random id: %w", err)
 	}

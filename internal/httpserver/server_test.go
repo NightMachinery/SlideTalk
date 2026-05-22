@@ -560,6 +560,69 @@ func TestAudioDownloadRequiresAudienceAccessForParticipants(t *testing.T) {
 	serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/audio/"+status.ID, "", "participant"), http.StatusOK)
 }
 
+func TestAudioDownloadTokenAllowsExternalDownloadWithoutAuth(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	content := testWAVBytes()
+	body, contentType := audioUploadBody(t, roomID, "track.wav", content, sha256HexTest(content))
+	request := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	upload := serveJSON(t, server, request, http.StatusCreated)
+	var status audio.Status
+	if err := json.Unmarshal(upload.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode audio status: %v", err)
+	}
+
+	linkResponse := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio/"+status.ID+"/download-link", `{}`, "admin"), http.StatusCreated)
+	var link struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(linkResponse.Body.Bytes(), &link); err != nil {
+		t.Fatalf("decode download link: %v", err)
+	}
+	if strings.Contains(link.URL, "admin") || strings.Contains(link.URL, "user") {
+		t.Fatalf("download URL leaks auth-ish identifier: %s", link.URL)
+	}
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, link.URL, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("token download status = %d body = %s", response.Code, response.Body.String())
+	}
+	if !bytes.Equal(response.Body.Bytes(), content) {
+		t.Fatalf("token download mismatch")
+	}
+
+	serveJSON(t, server, apiRequest(http.MethodDelete, "/api/rooms/"+roomID+"/audio/"+status.ID, "", "admin"), http.StatusNoContent)
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, link.URL, nil))
+	if response.Code != http.StatusForbidden && response.Code != http.StatusNotFound {
+		t.Fatalf("removed token status = %d, want forbidden or not found", response.Code)
+	}
+}
+
+func TestAudioMetadataPatchAllowsModUploaderNameAndUploaderTitle(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	content := testWAVBytes()
+	body, contentType := audioUploadBody(t, roomID, "track.wav", content, sha256HexTest(content))
+	request := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	upload := serveJSON(t, server, request, http.StatusCreated)
+	var status audio.Status
+	if err := json.Unmarshal(upload.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode audio status: %v", err)
+	}
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/audio/"+status.ID, `{"title":"Renamed","uploaderDisplayName":"Guest Singer"}`, "admin"), http.StatusNoContent)
+	snapshot := serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/snapshot", "", "admin"), http.StatusOK)
+	if !bytes.Contains(snapshot.Body.Bytes(), []byte(`"title":"Renamed"`)) || !bytes.Contains(snapshot.Body.Bytes(), []byte(`"uploaderDisplayName":"Guest Singer"`)) {
+		t.Fatalf("snapshot missing patched metadata: %s", snapshot.Body.String())
+	}
+}
+
 func newAPITestServer(t *testing.T) http.Handler {
 	t.Helper()
 	return newAPITestServerWithDataDir(t, t.TempDir())

@@ -94,6 +94,10 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			size_bytes integer not null,
 			mime_type text not null,
 			stored_path text not null,
+			metadata_title text not null default '',
+			duration_seconds integer not null default 0,
+			cover_path text not null default '',
+			cover_mime_type text not null default '',
 			uploaded_by_user_id text not null,
 			created_at text not null,
 			missing_at text,
@@ -104,6 +108,8 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			room_id text not null,
 			sha256 text not null,
 			original_name text not null,
+			title text not null default '',
+			uploader_display_name text not null default '',
 			display_order integer not null,
 			uploaded_by_user_id text not null,
 			created_at text not null,
@@ -113,6 +119,17 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			foreign key(uploaded_by_user_id) references users(id)
 		)`,
 		`create index if not exists idx_room_audio_tracks_room_id on room_audio_tracks (room_id, display_order)`,
+		`create table if not exists audio_download_tokens (
+			token_hash text primary key,
+			room_id text not null,
+			track_id text not null,
+			created_by_user_id text not null,
+			created_at text not null,
+			foreign key(room_id) references rooms(id),
+			foreign key(track_id) references room_audio_tracks(id),
+			foreign key(created_by_user_id) references users(id)
+		)`,
+		`create index if not exists idx_audio_download_tokens_track on audio_download_tokens (room_id, track_id)`,
 		`create table if not exists room_migration_links (
 			migration_id_hash text primary key,
 			room_id text not null,
@@ -156,6 +173,35 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		if !slices.Contains(roomColumns, column) {
 			if _, err := db.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migrate add %s: %w", column, err)
+			}
+		}
+	}
+	if err := addMissingColumns(ctx, db, "audio_files", map[string]string{
+		"metadata_title":   `alter table audio_files add column metadata_title text not null default ''`,
+		"duration_seconds": `alter table audio_files add column duration_seconds integer not null default 0`,
+		"cover_path":       `alter table audio_files add column cover_path text not null default ''`,
+		"cover_mime_type":  `alter table audio_files add column cover_mime_type text not null default ''`,
+	}); err != nil {
+		return err
+	}
+	if err := addMissingColumns(ctx, db, "room_audio_tracks", map[string]string{
+		"title":                 `alter table room_audio_tracks add column title text not null default ''`,
+		"uploader_display_name": `alter table room_audio_tracks add column uploader_display_name text not null default ''`,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func addMissingColumns(ctx context.Context, db *sql.DB, table string, alterStatements map[string]string) error {
+	existing, err := columns(ctx, db, table)
+	if err != nil {
+		return err
+	}
+	for column, statement := range alterStatements {
+		if !slices.Contains(existing, column) {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migrate add %s.%s: %w", table, column, err)
 			}
 		}
 	}

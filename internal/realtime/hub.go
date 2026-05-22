@@ -808,8 +808,9 @@ func (h *Hub) roomSlide(ctx context.Context, roomID string) (*SnapshotSlide, err
 }
 
 func (h *Hub) listAudioTracks(ctx context.Context, roomID string) ([]SnapshotAudioTrack, error) {
-	rows, err := h.db.QueryContext(ctx, `select rat.id, rat.sha256, rat.original_name, af.mime_type, af.size_bytes, rat.uploaded_by_user_id, rat.display_order, af.stored_path, af.missing_at
+	rows, err := h.db.QueryContext(ctx, `select rat.id, rat.sha256, rat.original_name, rat.title, af.metadata_title, af.mime_type, af.size_bytes, af.duration_seconds, af.cover_path, rat.uploaded_by_user_id, u.display_name, rat.uploader_display_name, rat.display_order, af.stored_path, af.missing_at
 		from room_audio_tracks rat join audio_files af on af.sha256 = rat.sha256
+		left join users u on u.id = rat.uploaded_by_user_id
 		where rat.room_id = ?
 		order by rat.display_order asc, rat.created_at asc`, roomID)
 	if err != nil {
@@ -820,10 +821,12 @@ func (h *Hub) listAudioTracks(ctx context.Context, roomID string) ([]SnapshotAud
 	for rows.Next() {
 		var track SnapshotAudioTrack
 		var storedPath string
+		var coverPath string
 		var missingAt sql.NullString
-		if err := rows.Scan(&track.ID, &track.SHA256, &track.OriginalName, &track.MIMEType, &track.SizeBytes, &track.UploadedByUserID, &track.DisplayOrder, &storedPath, &missingAt); err != nil {
+		if err := rows.Scan(&track.ID, &track.SHA256, &track.OriginalName, &track.Title, &track.MetadataTitle, &track.MIMEType, &track.SizeBytes, &track.DurationSeconds, &coverPath, &track.UploadedByUserID, &track.UploadedByName, &track.UploaderDisplayName, &track.DisplayOrder, &storedPath, &missingAt); err != nil {
 			return nil, fmt.Errorf("scan snapshot audio: %w", err)
 		}
+		track.HasCover = coverPath != ""
 		if _, err := os.Stat(storedPath); errors.Is(err, os.ErrNotExist) {
 			track.Missing = true
 			if !missingAt.Valid {

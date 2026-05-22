@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -121,12 +122,25 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.getRoomSlideFile)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide/file")))
 	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/audio") != "":
 		s.withUser(s.postRoomAudio)(w, withRoomID(r, roomPathValue(r.URL.Path, "/audio")))
+	case r.Method == http.MethodPost && roomAudioSuffixPathOK(r.URL.Path, "/download-link"):
+		roomID, trackID := splitRoomAudioSuffixPath(r.URL.Path, "/download-link")
+		s.withUser(s.postRoomAudioDownloadLink)(w, withTrackID(withRoomID(r, roomID), trackID))
+	case r.Method == http.MethodPatch && roomAudioPathOK(r.URL.Path):
+		roomID, trackID := splitRoomAudioPath(r.URL.Path)
+		s.withUser(s.patchRoomAudio)(w, withTrackID(withRoomID(r, roomID), trackID))
+	case r.Method == http.MethodGet && roomAudioSuffixPathOK(r.URL.Path, "/cover"):
+		roomID, trackID := splitRoomAudioSuffixPath(r.URL.Path, "/cover")
+		s.withUser(s.getRoomAudioCover)(w, withTrackID(withRoomID(r, roomID), trackID))
 	case r.Method == http.MethodDelete && roomAudioPathOK(r.URL.Path):
 		roomID, trackID := splitRoomAudioPath(r.URL.Path)
 		s.withUser(s.deleteRoomAudio)(w, withTrackID(withRoomID(r, roomID), trackID))
 	case r.Method == http.MethodGet && roomAudioPathOK(r.URL.Path):
 		roomID, trackID := splitRoomAudioPath(r.URL.Path)
-		s.withUser(s.getRoomAudioFile)(w, withTrackID(withRoomID(r, roomID), trackID))
+		if r.URL.Query().Get("downloadToken") != "" {
+			s.getRoomAudioFileWithToken(w, withTrackID(withRoomID(r, roomID), trackID))
+		} else {
+			s.withUser(s.getRoomAudioFile)(w, withTrackID(withRoomID(r, roomID), trackID))
+		}
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "/snapshot") != "":
 		s.withUser(s.getRoomSnapshot)(w, withRoomID(r, roomPathValue(r.URL.Path, "/snapshot")))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "") != "":
@@ -666,6 +680,118 @@ func (s *appServer) getRoomAudioFile(w http.ResponseWriter, r *http.Request, use
 		writeAudioError(w, err)
 		return
 	}
+	serveAudioFile(w, r, file, true)
+}
+
+func (s *appServer) getRoomAudioFileWithToken(w http.ResponseWriter, r *http.Request) {
+	if s.audio == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	file, err := s.audio.CurrentRoomFileByToken(r.Context(), roomIDFromContext(r.Context()), trackIDFromContext(r.Context()), r.URL.Query().Get("downloadToken"))
+	if err != nil {
+		writeAudioError(w, err)
+		return
+	}
+	serveAudioFile(w, r, file, true)
+}
+
+func (s *appServer) postRoomAudioDownloadLink(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.audio == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	if details.Membership.Role != rooms.RoleMod {
+		snapshot, err := s.hub.Snapshot(r.Context(), roomID, user.ID)
+		if err != nil {
+			writeRoomError(w, err)
+			return
+		}
+		if !snapshot.Room.AllowAudienceAudioAccess {
+			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio downloads are not enabled for this room.")
+			return
+		}
+	}
+	trackID := trackIDFromContext(r.Context())
+	token, err := s.audio.IssueDownloadToken(r.Context(), roomID, trackID, user.ID)
+	if err != nil {
+		writeAudioError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{
+		"url": "/api/rooms/" + roomID + "/audio/" + trackID + "?downloadToken=" + token,
+	})
+}
+
+func (s *appServer) getRoomAudioCover(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.audio == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	if details.Membership.Role != rooms.RoleMod {
+		snapshot, err := s.hub.Snapshot(r.Context(), roomID, user.ID)
+		if err != nil {
+			writeRoomError(w, err)
+			return
+		}
+		if !snapshot.Room.AllowAudienceAudioAccess {
+			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio cover access is not enabled for this room.")
+			return
+		}
+	}
+	file, err := s.audio.CoverFile(r.Context(), roomID, trackIDFromContext(r.Context()))
+	if err != nil {
+		writeAudioError(w, err)
+		return
+	}
+	serveAudioFile(w, r, file, false)
+}
+
+func (s *appServer) patchRoomAudio(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.audio == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	var input struct {
+		Title               *string `json:"title"`
+		UploaderDisplayName *string `json:"uploaderDisplayName"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.Title == nil && input.UploaderDisplayName == nil {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "No audio metadata fields were provided.")
+		return
+	}
+	if err := s.audio.UpdateTrackMetadata(r.Context(), roomID, trackIDFromContext(r.Context()), user.ID, details.Membership.Role == rooms.RoleMod, input.Title, input.UploaderDisplayName); err != nil {
+		writeAudioError(w, err)
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), roomID, "")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func serveAudioFile(w http.ResponseWriter, r *http.Request, file audio.RoomFile, attachment bool) {
 	handle, err := os.Open(file.StoredPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -677,7 +803,11 @@ func (s *appServer) getRoomAudioFile(w http.ResponseWriter, r *http.Request, use
 	}
 	defer handle.Close()
 	w.Header().Set("Content-Type", file.MIMEType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(file.OriginalName, `"`, "")+`"`)
+	disposition := "inline"
+	if attachment {
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Disposition", disposition+`; filename="`+strings.ReplaceAll(file.OriginalName, `"`, "")+`"`)
 	http.ServeContent(w, r, file.OriginalName, time.Time{}, handle)
 }
 
@@ -714,6 +844,8 @@ func (s *appServer) storeAudioFromMultipart(w http.ResponseWriter, r *http.Reque
 	}
 	var file io.Reader
 	mimeType := ""
+	var cover io.Reader
+	coverMIMEType := ""
 	uploadedFile, header, err := r.FormFile("file")
 	if err == nil {
 		defer uploadedFile.Close()
@@ -723,13 +855,35 @@ func (s *appServer) storeAudioFromMultipart(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, http.StatusBadRequest, "Bad Request", "Audio file field is invalid.")
 		return audio.Status{}, false
 	}
+	coverFile, coverHeader, err := r.FormFile("cover")
+	if err == nil {
+		defer coverFile.Close()
+		cover = coverFile
+		coverMIMEType = coverHeader.Header.Get("Content-Type")
+	} else if !errors.Is(err, http.ErrMissingFile) {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Audio cover field is invalid.")
+		return audio.Status{}, false
+	}
+	durationSeconds := 0
+	if rawDuration := strings.TrimSpace(r.FormValue("durationSeconds")); rawDuration != "" {
+		parsed, err := parsePositiveInt(rawDuration)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "Bad Request", "Audio duration is invalid.")
+			return audio.Status{}, false
+		}
+		durationSeconds = parsed
+	}
 	status, err := s.audio.Store(r.Context(), user.ID, audio.StoreInput{
-		RoomID:       roomID,
-		SHA256:       r.FormValue("sha256"),
-		OriginalName: r.FormValue("originalName"),
-		MIMEType:     mimeType,
-		File:         file,
-		IsAdmin:      user.IsAdmin,
+		RoomID:          roomID,
+		SHA256:          r.FormValue("sha256"),
+		OriginalName:    r.FormValue("originalName"),
+		MIMEType:        mimeType,
+		File:            file,
+		IsAdmin:         user.IsAdmin,
+		MetadataTitle:   r.FormValue("metadataTitle"),
+		DurationSeconds: durationSeconds,
+		Cover:           cover,
+		CoverMIMEType:   coverMIMEType,
 	})
 	if err != nil {
 		writeAudioError(w, err)
@@ -867,9 +1021,11 @@ func writeSlideError(w http.ResponseWriter, err error) {
 
 func writeAudioError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, audio.ErrUnsupportedFile), errors.Is(err, audio.ErrHashMismatch), errors.Is(err, audio.ErrInvalidHash), errors.Is(err, audio.ErrFileRequired), errors.Is(err, audio.ErrTooLarge), errors.Is(err, audio.ErrInsufficientFreeSpace):
+	case errors.Is(err, audio.ErrUnsupportedFile), errors.Is(err, audio.ErrHashMismatch), errors.Is(err, audio.ErrInvalidHash), errors.Is(err, audio.ErrFileRequired), errors.Is(err, audio.ErrTooLarge), errors.Is(err, audio.ErrInsufficientFreeSpace), errors.Is(err, audio.ErrInvalidTrackMetadata):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, audio.ErrNotTrackUploaderOrMod):
+		writeProblem(w, http.StatusForbidden, "Forbidden", err.Error())
+	case errors.Is(err, audio.ErrInvalidDownloadToken):
 		writeProblem(w, http.StatusForbidden, "Forbidden", err.Error())
 	case errors.Is(err, audio.ErrNoRoomAudio):
 		writeProblem(w, http.StatusNotFound, "Not Found", "Room has no audio track.")
@@ -960,6 +1116,14 @@ func bearerToken(header string) (string, bool) {
 	return token, token != ""
 }
 
+func parsePositiveInt(value string) (int, error) {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return 0, errors.New("invalid positive integer")
+	}
+	return parsed, nil
+}
+
 type problem struct {
 	Type   string `json:"type"`
 	Title  string `json:"title"`
@@ -1013,11 +1177,26 @@ func roomAudioPathOK(path string) bool {
 	return roomID != "" && trackID != ""
 }
 
+func roomAudioSuffixPathOK(path string, suffix string) bool {
+	roomID, trackID := splitRoomAudioSuffixPath(path, suffix)
+	return roomID != "" && trackID != ""
+}
+
 func splitRoomAudioPath(path string) (string, string) {
+	return splitRoomAudioSuffixPath(path, "")
+}
+
+func splitRoomAudioSuffixPath(path string, suffix string) (string, string) {
 	const prefix = "/api/rooms/"
 	const marker = "/audio/"
 	if !strings.HasPrefix(path, prefix) {
 		return "", ""
+	}
+	if suffix != "" {
+		if !strings.HasSuffix(path, suffix) {
+			return "", ""
+		}
+		path = strings.TrimSuffix(path, suffix)
 	}
 	value := strings.TrimPrefix(path, prefix)
 	parts := strings.Split(value, marker)
