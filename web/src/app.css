@@ -151,10 +151,7 @@ label {
   min-height: 100vh;
   overflow-x: hidden;
   padding: 24px;
-  background:
-    radial-gradient(circle at 8% 8%, oklch(86% 0.09 185 / 0.45), transparent 32rem),
-    radial-gradient(circle at 88% 12%, oklch(82% 0.06 35 / 0.28), transparent 28rem),
-    linear-gradient(135deg, oklch(97% 0.01 235), oklch(91% 0.022 250));
+  background: linear-gradient(135deg, oklch(97% 0.01 235), oklch(93% 0.014 250));
 }
 
 .topbar {
@@ -210,10 +207,31 @@ label {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(300px, 5fr);
-  gap: clamp(24px, 5vw, 72px);
+  grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+  gap: 28px;
   align-items: start;
-  margin-top: clamp(56px, 10vh, 116px);
+  margin-top: 42px;
+}
+
+.name-gate {
+  display: grid;
+  gap: 16px;
+  max-width: 460px;
+  margin: 72px auto 0;
+}
+
+.name-gate h1 {
+  margin-bottom: 4px;
+}
+
+.name-gate-form {
+  display: grid;
+  gap: 14px;
+  border: 1px solid oklch(82% 0.025 245);
+  border-radius: 8px;
+  padding: 18px;
+  background: oklch(99% 0.006 235 / 0.9);
+  box-shadow: 0 20px 54px oklch(38% 0.05 245 / 0.1);
 }
 
 .kicker {
@@ -231,11 +249,11 @@ p {
 }
 
 h1 {
-  max-width: 760px;
-  margin-bottom: 22px;
+  max-width: 620px;
+  margin-bottom: 14px;
   color: oklch(18% 0.018 245);
-  font-size: clamp(2.2rem, 5vw, 4.8rem);
-  line-height: 0.98;
+  font-size: 3.25rem;
+  line-height: 1.02;
   letter-spacing: 0;
 }
 
@@ -247,11 +265,11 @@ h2 {
 }
 
 .summary {
-  max-width: 680px;
+  max-width: 52ch;
   margin-bottom: 0;
   color: oklch(38% 0.028 245);
-  font-size: clamp(1.03rem, 1.4vw, 1.22rem);
-  line-height: 1.55;
+  font-size: 1.05rem;
+  line-height: 1.5;
 }
 
 .profile-panel,
@@ -268,22 +286,103 @@ h2 {
 .profile-panel,
 .command-panel {
   display: grid;
-  gap: 18px;
-  padding: 20px;
+  gap: 16px;
+  padding: 18px;
+}
+
+.profile-panel {
+  gap: 12px;
+}
+
+.profile-line {
+  display: grid;
+  gap: 12px;
+}
+
+.compact-label {
+  gap: 6px;
+}
+
+.profile-name-button {
+  display: grid;
+  min-height: 0;
+  justify-items: start;
+  border: 1px solid oklch(82% 0.025 245);
+  padding: 10px 12px;
+  background: oklch(98% 0.006 235);
+  text-align: left;
+}
+
+.profile-name-button:hover:not(:disabled) {
+  transform: none;
+  border-color: oklch(66% 0.08 190);
+  background: oklch(96% 0.018 210);
+}
+
+.profile-name-button span,
+.inline-status,
+.admin-message {
+  color: oklch(45% 0.026 245);
+  font-size: 0.82rem;
+  font-weight: 680;
+}
+
+.profile-name-button strong {
+  margin-top: 2px;
+  color: oklch(20% 0.018 245);
+  font-size: 1rem;
+}
+
+.inline-status,
+.admin-message {
+  margin: 0;
 }
 
 .admin-box {
   display: grid;
   gap: 14px;
-  border-top: 1px solid oklch(84% 0.018 245);
-  padding-top: 18px;
+}
+
+.admin-disclosure {
+  border-top: 1px solid oklch(86% 0.018 245);
+  padding-top: 4px;
+}
+
+.admin-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  color: oklch(38% 0.026 245);
+  font-size: 0.88rem;
+  font-weight: 720;
+  cursor: pointer;
+  list-style: none;
+}
+
+.admin-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-disclosure summary > span:last-child {
+  color: oklch(50% 0.024 245);
+  font-size: 0.78rem;
+}
+
+.admin-disclosure[open] {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-disclosure[open] summary {
+  border-bottom: 1px solid oklch(86% 0.018 245);
+  padding-bottom: 8px;
 }
 
 .admin-list {
   display: grid;
   gap: 12px;
-  border-top: 1px solid oklch(84% 0.018 245);
-  padding-top: 18px;
 }
 
 .admin-list p {
@@ -322,9 +421,9 @@ h2 {
 
 .control-grid {
   display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(300px, 5fr);
+  grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
   gap: 18px;
-  margin-top: 34px;
+  margin-top: 22px;
 }
 
 .command-panel {
@@ -955,9 +1054,7 @@ code {
 .app-shell.active-room {
   min-height: 100vh;
   padding: clamp(10px, 1.6vw, 22px);
-  background:
-    radial-gradient(circle at 14% 0%, oklch(90% 0.055 190 / 0.42), transparent 34rem),
-    linear-gradient(135deg, oklch(97% 0.008 235), oklch(91% 0.018 248));
+  background: linear-gradient(135deg, oklch(97% 0.008 235), oklch(91% 0.018 248));
 }
 
 .room-feedback {
@@ -1411,6 +1508,7 @@ kbd {
   }
 
   .workspace,
+  .name-gate,
   .control-grid,
   .roundtable,
   .workspace-console,
@@ -1418,6 +1516,19 @@ kbd {
   .room-summary,
   .turn-console {
     grid-template-columns: 1fr;
+  }
+
+  .workspace {
+    gap: 18px;
+    margin-top: 28px;
+  }
+
+  .name-gate {
+    margin-top: 42px;
+  }
+
+  h1 {
+    font-size: 2.35rem;
   }
 
   .member-row {

@@ -4,7 +4,7 @@ SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking or
 
 SlideTalk is not a video conferencing system, a public event platform, or an account-management service. It assumes a small trusted group and an operator who controls the host.
 
-This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, PDF and image slide storage with expiration cleanup, shared slide viewing, no-slide markdown mode, synchronized room audio with audio-only mode, admin membership controls, moderator room settings, room migration links, slide/audio replacement and removal, and no-Docker self-hosting with Caddy and tmux.
+This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, a compact start flow with inline display-name editing, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, PDF and image slide storage with expiration cleanup, shared slide viewing, no-slide markdown mode, synchronized room audio with audio-only mode, admin membership controls, moderator room settings, room migration links, slide/audio replacement and removal, and no-Docker self-hosting with Caddy and tmux.
 
 ## Requirements
 
@@ -114,7 +114,7 @@ The Go server reads these environment variables:
 - `SLIDETALK_AUDIO_FILES_GC_AFTER`: delete room audio files after room age, default `7d`
 - `SLIDETALK_MIN_FREE_SPACE`: reject retained uploads that would leave less free disk space, default `0.5GB`
 
-On startup, the server creates `~/.slidetalk/admin_token` and `~/.slidetalk/slides` if they do not already exist. Submit that token in the profile panel to promote the current browser identity to site admin.
+On startup, the server creates `~/.slidetalk/admin_token` and `~/.slidetalk/slides` if they do not already exist. Submit that token from the collapsed Admin section on the start page to promote the current browser identity to site admin.
 
 Runtime data lives under `~/.slidetalk` by default:
 
@@ -130,6 +130,8 @@ Room moderators can upload or replace the PDF, PNG, JPEG, WebP, or GIF slide fil
 The browser hashes files before upload, the server stores files by SHA-256 and validated extension, and cleanup runs hourly.
 
 Room moderators can create 24-hour migration links from room settings. A migration ID is a bearer secret that is shown once to the issuing browser, lets the holder join that room even when it has a password, and is stored in SQLite only as a SHA-256 hash.
+
+Room links opened by browsers without a saved display name show a focused name gate at the same URL. After the visitor saves a name, SlideTalk opens the linked room automatically and uses the room title as the browser tab title while the room is active.
 
 ## Room Shortcuts
 

@@ -33,9 +33,12 @@
   let realtime = $state<RealtimeConnection | null>(null);
   let connectionStatus = $state<'connecting' | 'connected' | 'disconnected'>('disconnected');
   let displayName = $state('');
+  let profileEditing = $state(false);
+  let profileStatus = $state('');
   let adminToken = $state('');
   let admins = $state<Admin[]>([]);
   let adminPanelMessage = $state('');
+  let adminMessageTimer: number | null = null;
   let confirmDemoteUserId = $state('');
   let confirmDemoteAll = $state(false);
   let createTitle = $state('');
@@ -44,27 +47,43 @@
   let joinRoomId = $state('');
   let joinPassword = $state('');
   let joinMigrationId = $state('');
+  let pendingRoomParam = $state('');
+  let pendingMigrationParam = $state('');
   let loading = $state(true);
   let busy = $state(false);
   let errorMessage = $state('');
   let notice = $state('');
   let shareFallbackText = $state('');
 
-  const needsProfile = $derived(Boolean(user && user.displayName.trim() === ''));
+  const hasDisplayName = $derived(Boolean(user?.displayName.trim()));
+  const needsProfile = $derived(Boolean(user && !hasDisplayName));
+  const hasPendingRoomGate = $derived(Boolean(!snapshot && pendingRoomParam && needsProfile));
 
-  onMount(async () => {
-    await loadProfile();
-    const roomParam = new URL(window.location.href).searchParams.get('room');
-    if (roomParam) {
-      joinRoomId = roomParam;
-    }
-    const migrationParam = new URL(window.location.href).searchParams.get('migration');
-    if (migrationParam) {
-      joinMigrationId = migrationParam;
-    }
-    if (roomParam && user && user.displayName.trim() !== '') {
-      await autoOpenRoom(roomParam, migrationParam ?? '');
-    }
+  onMount(() => {
+    document.title = 'SlideTalk';
+    void (async () => {
+      const roomParam = new URL(window.location.href).searchParams.get('room');
+      const migrationParam = new URL(window.location.href).searchParams.get('migration');
+      if (roomParam) {
+        joinRoomId = roomParam;
+        pendingRoomParam = roomParam;
+      }
+      if (migrationParam) {
+        joinMigrationId = migrationParam;
+        pendingMigrationParam = migrationParam;
+      }
+      await loadProfile();
+      if (roomParam && user && user.displayName.trim() !== '') {
+        await autoOpenRoom(roomParam, migrationParam ?? '');
+      }
+    })();
+    return () => {
+      if (adminMessageTimer !== null) {
+        window.clearTimeout(adminMessageTimer);
+        adminMessageTimer = null;
+      }
+      document.title = 'SlideTalk';
+    };
   });
 
   async function loadProfile() {
@@ -73,6 +92,7 @@
     try {
       user = await getMe();
       displayName = user.displayName;
+      profileStatus = '';
       if (user.isAdmin) {
         admins = await listAdmins();
       }
@@ -84,18 +104,78 @@
   }
 
   async function saveProfile() {
-    await run(async () => {
-      user = await updateProfile(displayName);
+    const nextName = displayName.trim();
+    if (nextName === '') return false;
+    if (nextName === user?.displayName.trim()) {
       displayName = user.displayName;
-      notice = 'Profile saved.';
+      profileEditing = false;
+      profileStatus = '';
+      return true;
+    }
+
+    busy = true;
+    errorMessage = '';
+    profileStatus = 'Saving...';
+    try {
+      user = await updateProfile(nextName);
+      displayName = user.displayName;
+      profileEditing = false;
+      profileStatus = 'Saved';
+      return true;
+    } catch (error) {
+      profileStatus = messageFrom(error);
+      return false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function saveProfileAndOpenPendingRoom() {
+    const saved = await saveProfile();
+    if (saved && pendingRoomParam) {
+      await autoOpenRoom(pendingRoomParam, pendingMigrationParam);
+    }
+  }
+
+  function editProfileName() {
+    displayName = user?.displayName ?? '';
+    profileStatus = '';
+    profileEditing = true;
+    window.setTimeout(() => {
+      document.querySelector<HTMLInputElement>('[data-profile-name]')?.focus();
+      document.querySelector<HTMLInputElement>('[data-profile-name]')?.select();
     });
+  }
+
+  function cancelProfileEdit() {
+    displayName = user?.displayName ?? '';
+    profileEditing = false;
+    profileStatus = '';
+  }
+
+  async function handleProfileKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      await saveProfile();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelProfileEdit();
+    }
+  }
+
+  async function handleNameGateKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      await saveProfileAndOpenPendingRoom();
+    }
   }
 
   async function promoteAdmin() {
     await run(async () => {
       user = await submitAdminToken(adminToken);
       adminToken = '';
-      admins = await listAdmins();
+      admins = user.isAdmin ? await listAdmins() : [];
       notice = 'Admin access enabled.';
     });
   }
@@ -103,13 +183,13 @@
   async function refreshAdmins() {
     if (!user?.isAdmin) return;
     admins = await listAdmins();
-    adminPanelMessage = 'Admin list updated.';
+    setAdminPanelMessage('Admin list updated.', true);
   }
 
   async function submitDemoteAdmin(admin: Admin) {
     if (confirmDemoteUserId !== admin.id) {
       confirmDemoteUserId = admin.id;
-      adminPanelMessage = `Confirm demoting ${admin.displayName || admin.id}.`;
+      setAdminPanelMessage(`Confirm demoting ${admin.displayName || admin.id}.`);
       return;
     }
     await run(async () => {
@@ -121,21 +201,21 @@
       } else {
         admins = [];
       }
-      adminPanelMessage = 'Admin demoted.';
+      setAdminPanelMessage('Admin demoted.');
     });
   }
 
   async function submitDemoteAll() {
     if (!confirmDemoteAll) {
       confirmDemoteAll = true;
-      adminPanelMessage = 'Confirm demoting all other admins.';
+      setAdminPanelMessage('Confirm demoting all other admins.');
       return;
     }
     await run(async () => {
       await demoteAllAdmins(false);
       confirmDemoteAll = false;
       admins = await listAdmins();
-      adminPanelMessage = 'Other admins demoted.';
+      setAdminPanelMessage('Other admins demoted.');
     });
   }
 
@@ -178,9 +258,10 @@
       }
       if (joined) {
         joinMigrationId = '';
+        pendingMigrationParam = '';
         await activateRoom(details, `Joined ${details.room.title}.`);
       } else {
-        await activateRoom(details, `Opened ${details.room.title}.`);
+        await activateRoom(details, '');
       }
     } catch (error) {
       errorMessage = messageFrom(error);
@@ -196,6 +277,9 @@
     room = details;
     snapshot = normalizeRoomSnapshot(await getRoomSnapshot(details.room.id));
     updateRoomURL(details.room.id);
+    pendingRoomParam = '';
+    pendingMigrationParam = '';
+    document.title = details.room.title || 'SlideTalk';
     notice = message;
     try {
       await openRealtime(details.room.id);
@@ -227,6 +311,22 @@
     url.searchParams.set('room', roomId);
     url.searchParams.delete('migration');
     window.history.replaceState({}, '', url);
+  }
+
+  function setAdminPanelMessage(message: string, autoHide = false) {
+    if (adminMessageTimer !== null) {
+      window.clearTimeout(adminMessageTimer);
+      adminMessageTimer = null;
+    }
+    adminPanelMessage = message;
+    if (autoHide) {
+      adminMessageTimer = window.setTimeout(() => {
+        if (adminPanelMessage === message) {
+          adminPanelMessage = '';
+        }
+        adminMessageTimer = null;
+      }, 3000);
+    }
   }
 
   function roomShareText(roomId: string) {
@@ -317,120 +417,165 @@
       </div>
     </nav>
 
-    <section class="workspace" aria-labelledby="workspace-title">
-      <div class="intro">
-        <p class="kicker">Room control</p>
-        <h1 id="workspace-title">Set your name, then open a roundtable room.</h1>
-        <p class="summary">
-          Your browser keeps a private local token. The server remembers the display name for
-          that token, so refreshes and room rejoins do not ask again.
-        </p>
-      </div>
-
-      <aside class="profile-panel" aria-label="Profile settings">
-        <div class="panel-title">
-          <UserRound size={20} />
-          <h2>Profile</h2>
-        </div>
-        <label>
-          Display name
-          <input bind:value={displayName} maxlength="80" autocomplete="name" placeholder="Ada" />
-        </label>
-        <button type="button" disabled={busy || displayName.trim() === ''} onclick={saveProfile}>
-          Save profile
-        </button>
-
-        <div class="admin-box">
-          <div class="panel-title">
-            <ShieldCheck size={20} />
-            <h2>Admin token</h2>
-          </div>
+    {#if hasPendingRoomGate}
+      <section class="name-gate" aria-labelledby="name-gate-title">
+        <p class="kicker">Join room</p>
+        <h1 id="name-gate-title">Choose a display name</h1>
+        <form class="name-gate-form" onsubmit={(event) => { event.preventDefault(); saveProfileAndOpenPendingRoom(); }}>
           <label>
-            Bootstrap token
-            <input bind:value={adminToken} autocomplete="off" placeholder="Paste token" />
+            Display name
+            <input
+              bind:value={displayName}
+              data-profile-name
+              maxlength="80"
+              autocomplete="name"
+              placeholder="Ada"
+              onkeydown={handleNameGateKeydown}
+            />
           </label>
-          <button type="button" disabled={busy || adminToken.trim() === ''} onclick={promoteAdmin}>
-            Enable admin
-          </button>
+          <button type="submit" disabled={busy || displayName.trim() === ''}>Continue</button>
+        </form>
+        {#if profileStatus}
+          <p class="inline-status" role="status">{profileStatus}</p>
+        {/if}
+      </section>
+    {:else}
+      <section class="workspace" aria-labelledby="workspace-title">
+        <div class="intro">
+          <p class="kicker">Room control</p>
+          <h1 id="workspace-title">Open a roundtable room.</h1>
+          <p class="summary">Create a room, share the link, keep the conversation moving.</p>
         </div>
 
-        {#if user?.isAdmin}
-          <div class="admin-list" aria-label="Admin membership">
+        <aside class="profile-panel" aria-label="Profile settings">
+          <div class="profile-line">
             <div class="panel-title">
-              <ShieldCheck size={20} />
-              <h2>Admins</h2>
+              <UserRound size={18} />
+              <h2>Profile</h2>
             </div>
-            <button type="button" disabled={busy} onclick={refreshAdmins}>Refresh admins</button>
-            {#each admins as admin (admin.id)}
-              <article class="admin-row">
-                <div>
-                  <strong>{admin.displayName || admin.id}</strong>
-                  <span>{new Date(admin.createdAt).toLocaleDateString()}</span>
-                </div>
-                <button class="danger-button" type="button" disabled={busy} onclick={() => submitDemoteAdmin(admin)}>
-                  {confirmDemoteUserId === admin.id ? 'Confirm demote' : 'Demote'}
-                </button>
-              </article>
-            {/each}
-            <button class="danger-button" type="button" disabled={busy || admins.length <= 1} onclick={submitDemoteAll}>
-              {confirmDemoteAll ? 'Confirm demote others' : 'Demote all others'}
-            </button>
-            {#if adminPanelMessage}
-              <p>{adminPanelMessage}</p>
+            {#if profileEditing || needsProfile}
+              <label class="compact-label">
+                Display name
+                <input
+                  bind:value={displayName}
+                  data-profile-name
+                  maxlength="80"
+                  autocomplete="name"
+                  placeholder="Ada"
+                  onblur={saveProfile}
+                  onkeydown={handleProfileKeydown}
+                />
+              </label>
+            {:else}
+              <button class="profile-name-button" type="button" onclick={editProfileName}>
+                <span>Display name</span>
+                <strong>{user?.displayName}</strong>
+              </button>
+            {/if}
+            {#if profileStatus}
+              <p class="inline-status" role="status">{profileStatus}</p>
             {/if}
           </div>
-        {/if}
-      </aside>
-    </section>
 
-    <section class="control-grid" aria-label="Room actions">
-      <form class="command-panel primary-panel" onsubmit={(event) => { event.preventDefault(); submitCreateRoom(); }}>
-        <div class="panel-title">
-          <CirclePlus size={22} />
-          <h2>Create room</h2>
-        </div>
-        <label>
-          Room title
-          <input bind:value={createTitle} placeholder="Tuesday facilitation circle" disabled={needsProfile} />
-        </label>
-        <label>
-          Optional password
-          <input bind:value={createPassword} type="password" placeholder="Leave empty for open rooms" disabled={needsProfile} />
-        </label>
-        <SelectMenu
-          label="Starting mode"
-          value={createMode}
-          disabled={needsProfile}
-          options={[
-            { value: 'slides', label: 'Slides' },
-            { value: 'markdown', label: 'Markdown' },
-            { value: 'audio', label: 'Audio' }
-          ]}
-          onChange={(value) => (createMode = value as 'slides' | 'markdown' | 'audio')}
-        />
-        <button type="submit" disabled={busy || needsProfile || createTitle.trim() === ''}>
-          Create room
-        </button>
-      </form>
+          <details class="admin-disclosure">
+            <summary>
+              <span class="panel-title">
+                <ShieldCheck size={18} />
+                <span>Admin</span>
+              </span>
+              <span>{user?.isAdmin ? 'Manage' : 'Optional'}</span>
+            </summary>
 
-      <form class="command-panel" onsubmit={(event) => { event.preventDefault(); submitJoinRoom(); }}>
-        <div class="panel-title">
-          <DoorOpen size={22} />
-          <h2>Join room</h2>
-        </div>
-        <label>
-          Room ID
-          <input bind:value={joinRoomId} placeholder="Room link or ID" disabled={needsProfile} />
-        </label>
-        <label>
-          Password
-          <input bind:value={joinPassword} type="password" placeholder="Only if required" disabled={needsProfile} />
-        </label>
-        <button type="submit" disabled={busy || needsProfile || joinRoomId.trim() === ''}>
-          Join room
-        </button>
-      </form>
-    </section>
+            {#if user?.isAdmin}
+              <div class="admin-list" aria-label="Admin membership">
+                <button type="button" disabled={busy} onclick={refreshAdmins}>Refresh admins</button>
+                {#each admins as admin (admin.id)}
+                  <article class="admin-row">
+                    <div>
+                      <strong>{admin.displayName || admin.id}</strong>
+                      <span>{new Date(admin.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <button class="danger-button" type="button" disabled={busy} onclick={() => submitDemoteAdmin(admin)}>
+                      {confirmDemoteUserId === admin.id ? 'Confirm demote' : 'Demote'}
+                    </button>
+                  </article>
+                {/each}
+                <button class="danger-button" type="button" disabled={busy || admins.length <= 1} onclick={submitDemoteAll}>
+                  {confirmDemoteAll ? 'Confirm demote others' : 'Demote all others'}
+                </button>
+              </div>
+            {:else}
+              <div class="admin-box">
+                <div class="panel-title">
+                  <ShieldCheck size={18} />
+                  <h2>Admin token</h2>
+                </div>
+                <label>
+                  Bootstrap token
+                  <input bind:value={adminToken} autocomplete="off" placeholder="Paste token" />
+                </label>
+                <button type="button" disabled={busy || adminToken.trim() === ''} onclick={promoteAdmin}>
+                  Enable admin
+                </button>
+              </div>
+            {/if}
+
+            {#if adminPanelMessage}
+              <p class="admin-message" role="status">{adminPanelMessage}</p>
+            {/if}
+          </details>
+        </aside>
+      </section>
+
+      <section class="control-grid" aria-label="Room actions">
+        <form class="command-panel primary-panel" onsubmit={(event) => { event.preventDefault(); submitCreateRoom(); }}>
+          <div class="panel-title">
+            <CirclePlus size={22} />
+            <h2>Create room</h2>
+          </div>
+          <label>
+            Room title
+            <input bind:value={createTitle} placeholder="Tuesday facilitation circle" disabled={needsProfile} />
+          </label>
+          <label>
+            Optional password
+            <input bind:value={createPassword} type="password" placeholder="Leave empty for open rooms" disabled={needsProfile} />
+          </label>
+          <SelectMenu
+            label="Starting mode"
+            value={createMode}
+            disabled={needsProfile}
+            options={[
+              { value: 'slides', label: 'Slides' },
+              { value: 'markdown', label: 'Markdown' },
+              { value: 'audio', label: 'Audio' }
+            ]}
+            onChange={(value) => (createMode = value as 'slides' | 'markdown' | 'audio')}
+          />
+          <button type="submit" disabled={busy || needsProfile || createTitle.trim() === ''}>
+            Create room
+          </button>
+        </form>
+
+        <form class="command-panel" onsubmit={(event) => { event.preventDefault(); submitJoinRoom(); }}>
+          <div class="panel-title">
+            <DoorOpen size={22} />
+            <h2>Join room</h2>
+          </div>
+          <label>
+            Room ID
+            <input bind:value={joinRoomId} placeholder="Room link or ID" disabled={needsProfile} />
+          </label>
+          <label>
+            Password
+            <input bind:value={joinPassword} type="password" placeholder="Only if required" disabled={needsProfile} />
+          </label>
+          <button type="submit" disabled={busy || needsProfile || joinRoomId.trim() === ''}>
+            Join room
+          </button>
+        </form>
+      </section>
+    {/if}
 
     {#if errorMessage}
       <p class="feedback error" role="alert">{errorMessage}</p>
@@ -438,7 +583,7 @@
     {#if notice}
       <p class="feedback notice" role="status">{notice}</p>
     {/if}
-    {#if needsProfile}
+    {#if needsProfile && !hasPendingRoomGate}
       <p class="feedback notice" role="status">Save a display name before creating or joining rooms.</p>
     {/if}
 
