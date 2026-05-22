@@ -70,6 +70,31 @@ select {
   background: oklch(99% 0.006 235);
 }
 
+input[type="file"] {
+  color: oklch(42% 0.026 245);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+input[type="file"]::file-selector-button {
+  min-height: 38px;
+  margin-right: 12px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 14px;
+  color: oklch(20% 0.018 245);
+  background: oklch(91% 0.018 245);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 720;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+input[type="file"]::file-selector-button:hover {
+  background: oklch(86% 0.024 245);
+}
+
 input:focus,
 select:focus {
   border-color: oklch(63% 0.1 190);
