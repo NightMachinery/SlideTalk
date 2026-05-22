@@ -54,6 +54,7 @@
   let errorMessage = $state('');
   let notice = $state('');
   let shareFallbackText = $state('');
+  let removedRoomMessage = $state('');
 
   const hasDisplayName = $derived(Boolean(user?.displayName.trim()));
   const needsProfile = $derived(Boolean(user && !hasDisplayName));
@@ -274,6 +275,7 @@
     realtime?.close();
     realtime = null;
     snapshot = null;
+    removedRoomMessage = '';
     room = details;
     snapshot = normalizeRoomSnapshot(await getRoomSnapshot(details.room.id));
     updateRoomURL(details.room.id);
@@ -311,6 +313,13 @@
     url.searchParams.set('room', roomId);
     url.searchParams.delete('migration');
     window.history.replaceState({}, '', url);
+  }
+
+  function clearRoomURL() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    url.searchParams.delete('migration');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   }
 
   function setAdminPanelMessage(message: string, autoHide = false) {
@@ -357,6 +366,20 @@
         if (event.type === 'room.snapshot' && event.payload) {
           snapshot = event.payload;
         }
+        if (event.type === 'room.kicked') {
+          realtime?.close();
+          realtime = null;
+          connectionStatus = 'disconnected';
+          snapshot = null;
+          room = null;
+          removedRoomMessage = event.message || "You've been removed from that room.";
+          errorMessage = '';
+          notice = '';
+          pendingRoomParam = '';
+          pendingMigrationParam = '';
+          clearRoomURL();
+          document.title = 'SlideTalk';
+        }
         if (event.type === 'error') {
           errorMessage = event.message ?? 'Realtime command failed.';
         }
@@ -388,6 +411,13 @@
       </div>
     </nav>
     <section class="loading-panel" aria-live="polite">Loading local identity...</section>
+  {:else if removedRoomMessage}
+    <section class="removed-room" aria-labelledby="removed-room-title">
+      <DoorOpen size={34} />
+      <h1 id="removed-room-title">You've been removed from that room</h1>
+      <p>{removedRoomMessage}</p>
+      <button type="button" onclick={() => (removedRoomMessage = '')}>Return home</button>
+    </section>
   {:else if snapshot}
     {#if errorMessage}
       <p class="feedback error room-feedback" role="alert">{errorMessage}</p>

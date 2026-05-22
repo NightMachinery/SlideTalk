@@ -31,6 +31,33 @@ const roomSnapshot = {
   markdownUpdatedAt: ''
 };
 
+class TestWebSocket {
+  static sockets: TestWebSocket[] = [];
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+  readyState = TestWebSocket.OPEN;
+  onopen: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+
+  constructor(readonly url: string) {
+    TestWebSocket.sockets.push(this);
+  }
+
+  send() {}
+
+  close() {
+    this.readyState = TestWebSocket.CLOSED;
+    this.onclose?.(new CloseEvent('close'));
+  }
+
+  receive(value: unknown) {
+    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(value) }));
+  }
+}
+
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
@@ -62,6 +89,7 @@ describe('App landing polish', () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     localStorage.clear();
+    TestWebSocket.sockets = [];
     window.history.replaceState({}, '', '/');
     document.title = 'SlideTalk';
   });
@@ -138,5 +166,28 @@ describe('App landing polish', () => {
     await fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(document.title).toBe('Planning Circle'));
+  });
+
+  it('shows a removed-room page immediately when the websocket sends a kick event', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch({ id: 'user-one', displayName: 'Grace', isAdmin: false }));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await waitFor(() => expect(TestWebSocket.sockets).toHaveLength(1));
+
+    TestWebSocket.sockets[0].receive({
+      type: 'room.kicked',
+      roomId: 'room-one',
+      code: 'removed',
+      message: "You've been removed from that room."
+    });
+
+    await screen.findByRole('heading', { name: "You've been removed from that room" });
+    expect(screen.queryByText('Planning Circle')).toBeNull();
+    expect(window.location.search).toBe('');
+    expect(TestWebSocket.sockets).toHaveLength(1);
   });
 });

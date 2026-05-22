@@ -80,7 +80,7 @@ export type RoomSnapshot = {
 };
 
 export type RealtimeEvent = {
-  type: 'room.snapshot' | 'error';
+  type: 'room.snapshot' | 'room.kicked' | 'error';
   requestId?: string;
   roomId?: string;
   version?: number;
