@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/NightMachinery/SlideTalk/internal/audio"
 	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/config"
 	"github.com/NightMachinery/SlideTalk/internal/httpserver"
@@ -48,20 +49,28 @@ func run() error {
 		return err
 	}
 	roomService := rooms.NewService(db)
-	slideService, err := slides.NewService(db, filepath.Join(cfg.DataDir, "slides"), cfg.SlideMaxBytes)
+	slideService, err := slides.NewServiceWithMinFree(db, filepath.Join(cfg.DataDir, "slides"), cfg.SlideMaxBytes, cfg.MinFreeSpaceBytes)
+	if err != nil {
+		return err
+	}
+	audioService, err := audio.NewService(db, filepath.Join(cfg.DataDir, "audio"), cfg.AudioMaxBytes, cfg.MinFreeSpaceBytes)
 	if err != nil {
 		return err
 	}
 	if err := slideService.Cleanup(context.Background(), time.Now().UTC()); err != nil {
 		return err
 	}
+	if err := audioService.Cleanup(context.Background(), time.Now().UTC(), cfg.AudioFilesGCAfter); err != nil {
+		return err
+	}
 	cleanupCtx, stopCleanup := context.WithCancel(context.Background())
 	defer stopCleanup()
 	go runSlideCleanup(cleanupCtx, slideService)
+	go runAudioCleanup(cleanupCtx, audioService, cfg.AudioFilesGCAfter)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: roomService, Hub: realtime.NewHub(db, authService, roomService), SlideService: slideService}),
+		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: roomService, Hub: realtime.NewHub(db, authService, roomService), SlideService: slideService, AudioService: audioService}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -99,6 +108,21 @@ func runSlideCleanup(ctx context.Context, service *slides.Service) {
 		case at := <-ticker.C:
 			if err := service.Cleanup(ctx, at.UTC()); err != nil {
 				log.Printf("slide cleanup failed: %v", err)
+			}
+		}
+	}
+}
+
+func runAudioCleanup(ctx context.Context, service *audio.Service, gcAfter time.Duration) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case at := <-ticker.C:
+			if err := service.Cleanup(ctx, at.UTC(), gcAfter); err != nil {
+				log.Printf("audio cleanup failed: %v", err)
 			}
 		}
 	}

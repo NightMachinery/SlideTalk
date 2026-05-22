@@ -1,10 +1,10 @@
 # SlideTalk
 
-SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking order, observer queue, shared timer, slides, and optional discussion notes synchronized for groups that already have a separate audio call.
+SlideTalk is a self-hosted roundtable coordination app. It keeps the speaking order, observer queue, shared timer, slides, optional discussion notes, and shared audio playback synchronized for small groups.
 
-SlideTalk is not an audio/video conferencing system, a public event platform, or an account-management service. It assumes a small trusted group, a separate call, and an operator who controls the host.
+SlideTalk is not a video conferencing system, a public event platform, or an account-management service. It assumes a small trusted group and an operator who controls the host.
 
-This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, PDF and image slide storage with expiration cleanup, shared slide viewing, no-slide markdown mode, admin membership controls, moderator room settings, room migration links, slide replacement/removal, and no-Docker self-hosting with Caddy and tmux.
+This repository is in the seed implementation phase. The current milestone provides the Go server, Svelte 5/Vite frontend shell, local browser-token identity, bootstrap admin promotion, room create/join flows, realtime roundtable controls, turn selection, shared timers, hand-raise queues, PDF and image slide storage with expiration cleanup, shared slide viewing, no-slide markdown mode, synchronized room audio with audio-only mode, admin membership controls, moderator room settings, room migration links, slide/audio replacement and removal, and no-Docker self-hosting with Caddy and tmux.
 
 ## Requirements
 
@@ -58,6 +58,9 @@ POST /api/rooms/{roomId}/slide
 PATCH /api/rooms/{roomId}/slide
 DELETE /api/rooms/{roomId}/slide
 GET /api/rooms/{roomId}/slide/file
+POST /api/rooms/{roomId}/audio
+GET /api/rooms/{roomId}/audio/{trackId}
+DELETE /api/rooms/{roomId}/audio/{trackId}
 GET /api/slides/{sha256}
 POST /api/slides
 GET /api/ws?ticket={ticket}
@@ -106,7 +109,12 @@ The Go server reads these environment variables:
 - `SLIDETALK_DATA_DIR`: app data directory, default `~/.slidetalk`
 - `SLIDETALK_PUBLIC_URL`: public URL used by self-hosting and deployment workflows
 - `SLIDETALK_DEV`: set to `1` for development mode
-- `SLIDETALK_SLIDE_MAX_BYTES`: slide upload limit, default `209715200`
+- `SLIDETALK_SLIDE_UPLOAD_LIMIT`: slide upload limit, default `200m`
+- `SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT`: non-admin audio upload limit, default `50m`
+- `SLIDETALK_AUDIO_FILES_GC_AFTER`: delete room audio files after room age, default `7d`
+- `SLIDETALK_MIN_FREE_SPACE`: reject retained uploads that would leave less free disk space, default `0.5GB`
+
+`SLIDETALK_SLIDE_MAX_BYTES` is accepted as a deprecated fallback when `SLIDETALK_SLIDE_UPLOAD_LIMIT` is unset.
 
 On startup, the server creates `~/.slidetalk/admin_token` and `~/.slidetalk/slides` if they do not already exist. Submit that token in the profile panel to promote the current browser identity to site admin.
 
@@ -115,8 +123,13 @@ Runtime data lives under `~/.slidetalk` by default:
 - `~/.slidetalk/slidetalk.db`
 - `~/.slidetalk/admin_token`
 - `~/.slidetalk/slides/`
+- `~/.slidetalk/audio/`
 
-Room participants fetch an initial room snapshot from `/api/rooms/{roomId}/snapshot`, then connect to `/api/ws` with a one-time room-scoped ticket for live updates. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, manual or queue-based raised hands, shared slide navigation, markdown updates, room settings, password changes, and slide replacement/removal. Room moderators can upload or replace the PDF, PNG, JPEG, WebP, or GIF slide file attached to their room. Site admins can manage admin membership, inspect slide storage status, and change existing slide expiration. The browser hashes files before upload, the server stores files by SHA-256 and validated extension, and expired room references are cleaned up hourly.
+Room participants fetch an initial room snapshot from `/api/rooms/{roomId}/snapshot`, then connect to `/api/ws` with a one-time room-scoped ticket for live updates. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, manual or queue-based raised hands, shared slide navigation, markdown updates, room settings, password changes, slide replacement/removal, audio playlist controls, and synchronized audio play/pause/seek.
+
+Room moderators can upload or replace the PDF, PNG, JPEG, WebP, or GIF slide file attached to their room. Room moderators can upload audio files, reorder the audio playlist, choose the end-of-track behavior, and switch the room into audio-only mode. Optional room settings let non-observer participants upload/download audio and separately control playback; observers can see and download audio when audience access is enabled, but cannot upload or control playback. Site admins bypass the audio per-file size limit after a browser confirmation, but all uploads remain subject to the minimum free-space floor.
+
+The browser hashes files before upload, the server stores files by SHA-256 and validated extension, and cleanup runs hourly.
 
 Room moderators can create 24-hour migration links from room settings. A migration ID is a bearer secret that is shown once to the issuing browser, lets the holder join that room even when it has a password, and is stored in SQLite only as a SHA-256 hash.
 

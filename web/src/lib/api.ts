@@ -55,6 +55,9 @@ export type RoomSettingsInput = {
   noSlideMode?: boolean;
   allowParticipantMarkdown?: boolean;
   sharedNavigationEnabled?: boolean;
+  audioOnlyMode?: boolean;
+  allowAudienceAudioAccess?: boolean;
+  allowAudienceAudioControl?: boolean;
   raiseHandMode?: 'off' | 'manual' | 'queue';
 };
 
@@ -193,6 +196,66 @@ export async function updateRoomSlideExpiration(roomId: string, expiresAt: strin
 
 export async function removeRoomSlide(roomId: string): Promise<void> {
   return apiVoid(`/api/rooms/${encodeURIComponent(roomId)}/slide`, { method: 'DELETE' });
+}
+
+export function audioFileRequest(roomId: string, trackId: string): { url: string; headers: Record<string, string> } {
+  return {
+    url: `/api/rooms/${encodeURIComponent(roomId)}/audio/${encodeURIComponent(trackId)}`,
+    headers: { Authorization: `Bearer ${getAuthToken()}` }
+  };
+}
+
+export function uploadRoomAudio(
+  input: {
+    roomId: string;
+    sha256: string;
+    originalName: string;
+    file: File;
+  },
+  onProgress: (percent: number) => void
+): Promise<{
+  id: string;
+  sha256: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedByUserId: string;
+  alreadyUploaded: boolean;
+  missing: boolean;
+}> {
+  const form = new FormData();
+  form.set('sha256', input.sha256);
+  form.set('originalName', input.originalName);
+  form.set('file', input.file, input.originalName);
+
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', `/api/rooms/${encodeURIComponent(input.roomId)}/audio`);
+    request.setRequestHeader('Authorization', `Bearer ${getAuthToken()}`);
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    request.onload = () => {
+      if (request.status < 200 || request.status >= 300) {
+        try {
+          const problem = JSON.parse(request.responseText) as { detail?: string };
+          reject(new Error(problem.detail ?? 'Request failed.'));
+        } catch {
+          reject(new Error('Request failed.'));
+        }
+        return;
+      }
+      resolve(JSON.parse(request.responseText));
+    };
+    request.onerror = () => reject(new Error('Audio upload failed.'));
+    request.send(form);
+  });
+}
+
+export async function removeRoomAudio(roomId: string, trackId: string): Promise<void> {
+  return apiVoid(`/api/rooms/${encodeURIComponent(roomId)}/audio/${encodeURIComponent(trackId)}`, { method: 'DELETE' });
 }
 
 function uploadSlideRequest(

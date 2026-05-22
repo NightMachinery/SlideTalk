@@ -17,6 +17,9 @@ export type RoomSnapshot = {
     raiseHandMode: 'off' | 'manual' | 'queue';
     slidePage: number;
     sharedNavigationEnabled: boolean;
+    audioOnlyMode: boolean;
+    allowAudienceAudioAccess: boolean;
+    allowAudienceAudioControl: boolean;
   };
   caller: {
     userId: string;
@@ -47,6 +50,24 @@ export type RoomSnapshot = {
     expiresAt: string;
     missing: boolean;
   } | null;
+  audio: {
+    tracks: {
+      id: string;
+      sha256: string;
+      originalName: string;
+      mimeType: string;
+      sizeBytes: number;
+      uploadedByUserId: string;
+      displayOrder: number;
+      missing: boolean;
+    }[];
+    currentTrackId: string;
+    state: 'paused' | 'playing';
+    positionSeconds: number;
+    startedAt: string | null;
+    serverNow: string;
+    playbackMode: 'stop' | 'next' | 'previous' | 'repeat-one' | 'repeat-all' | 'shuffle';
+  };
   markdown: string;
   markdownUpdatedByUserId: string;
   markdownUpdatedByName: string;
@@ -67,6 +88,7 @@ type RoomSnapshotWire = Omit<RoomSnapshot, 'participants' | 'observers' | 'hands
   participants?: SnapshotMember[] | null;
   observers?: SnapshotMember[] | null;
   hands?: RoomSnapshot['hands'] | null;
+  audio?: Partial<RoomSnapshot['audio']> | null;
 };
 
 export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot {
@@ -74,7 +96,16 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
     ...snapshot,
     participants: snapshot.participants ?? [],
     observers: snapshot.observers ?? [],
-    hands: snapshot.hands ?? []
+    hands: snapshot.hands ?? [],
+    audio: {
+      tracks: snapshot.audio?.tracks ?? [],
+      currentTrackId: snapshot.audio?.currentTrackId ?? '',
+      state: snapshot.audio?.state ?? 'paused',
+      positionSeconds: snapshot.audio?.positionSeconds ?? 0,
+      startedAt: snapshot.audio?.startedAt ?? null,
+      serverNow: snapshot.audio?.serverNow ?? new Date().toISOString(),
+      playbackMode: snapshot.audio?.playbackMode ?? 'stop'
+    }
   };
 }
 
@@ -116,6 +147,9 @@ export type RealtimeCommand =
         sharedNavigationEnabled?: boolean;
         noSlideMode?: boolean;
         allowParticipantMarkdown?: boolean;
+        audioOnlyMode?: boolean;
+        allowAudienceAudioAccess?: boolean;
+        allowAudienceAudioControl?: boolean;
       };
     }
   | {
@@ -125,6 +159,29 @@ export type RealtimeCommand =
   | {
       type: 'markdown.update';
       payload: { markdown: string };
+    }
+  | {
+      type: 'audio.play';
+      payload: { trackId?: string; positionSeconds: number };
+    }
+  | {
+      type: 'audio.pause' | 'audio.ended';
+    }
+  | {
+      type: 'audio.seek';
+      payload: { positionSeconds: number };
+    }
+  | {
+      type: 'audio.select';
+      payload: { trackId: string };
+    }
+  | {
+      type: 'audio.reorder';
+      payload: { trackIds: string[] };
+    }
+  | {
+      type: 'audio.mode';
+      payload: { mode: RoomSnapshot['audio']['playbackMode'] };
     };
 
 export type RealtimeConnection = {

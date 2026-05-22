@@ -76,13 +76,16 @@ type JoinInput struct {
 
 // SettingsInput is a partial room settings update.
 type SettingsInput struct {
-	Title                    *string
-	Password                 *string
-	ClearPassword            bool
-	NoSlideMode              *bool
-	AllowParticipantMarkdown *bool
-	SharedNavigationEnabled  *bool
-	RaiseHandMode            *string
+	Title                     *string
+	Password                  *string
+	ClearPassword             bool
+	NoSlideMode               *bool
+	AllowParticipantMarkdown  *bool
+	SharedNavigationEnabled   *bool
+	AudioOnlyMode             *bool
+	AllowAudienceAudioAccess  *bool
+	AllowAudienceAudioControl *bool
+	RaiseHandMode             *string
 }
 
 // MigrationLink is a one-time-visible bearer secret for a future room migration.
@@ -314,6 +317,21 @@ func (s *Service) UpdateSettings(ctx context.Context, roomID string, input Setti
 	if input.SharedNavigationEnabled != nil {
 		if _, err := tx.ExecContext(ctx, `update rooms set shared_navigation_enabled = ?, updated_at = ? where id = ?`, *input.SharedNavigationEnabled, nowText(), roomID); err != nil {
 			return Room{}, fmt.Errorf("update shared navigation: %w", err)
+		}
+	}
+	if input.AudioOnlyMode != nil {
+		if _, err := tx.ExecContext(ctx, `update rooms set audio_only_mode = ?, updated_at = ? where id = ?`, *input.AudioOnlyMode, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update audio-only mode: %w", err)
+		}
+	}
+	if input.AllowAudienceAudioAccess != nil {
+		if _, err := tx.ExecContext(ctx, `update rooms set allow_audience_audio_access = ?, updated_at = ? where id = ?`, *input.AllowAudienceAudioAccess, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update audience audio access: %w", err)
+		}
+	}
+	if input.AllowAudienceAudioControl != nil {
+		if _, err := tx.ExecContext(ctx, `update rooms set allow_audience_audio_control = ?, updated_at = ? where id = ?`, *input.AllowAudienceAudioControl, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update audience audio control: %w", err)
 		}
 	}
 	if input.RaiseHandMode != nil {

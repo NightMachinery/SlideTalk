@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NightMachinery/SlideTalk/internal/audio"
 	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/realtime"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
@@ -28,6 +29,7 @@ type ServerOptions struct {
 	RoomService  *rooms.Service
 	Hub          *realtime.Hub
 	SlideService *slides.Service
+	AudioService *audio.Service
 }
 
 // New returns a configured HTTP handler for the SlideTalk server.
@@ -39,6 +41,7 @@ func New(options ServerOptions) http.Handler {
 		rooms:        options.RoomService,
 		hub:          options.Hub,
 		slides:       options.SlideService,
+		audio:        options.AudioService,
 		adminLimiter: newFailureLimiter(5, 15*time.Minute),
 		joinLimiter:  newFailureLimiter(5, 15*time.Minute),
 		wsLimiter:    newFailureLimiter(10, time.Minute),
@@ -74,6 +77,7 @@ type appServer struct {
 	rooms        *rooms.Service
 	hub          *realtime.Hub
 	slides       *slides.Service
+	audio        *audio.Service
 	adminLimiter *failureLimiter
 	joinLimiter  *failureLimiter
 	wsLimiter    *failureLimiter
@@ -115,6 +119,14 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.deleteRoomSlide)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide")))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "/slide/file") != "":
 		s.withUser(s.getRoomSlideFile)(w, withRoomID(r, roomPathValue(r.URL.Path, "/slide/file")))
+	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/audio") != "":
+		s.withUser(s.postRoomAudio)(w, withRoomID(r, roomPathValue(r.URL.Path, "/audio")))
+	case r.Method == http.MethodDelete && roomAudioPathOK(r.URL.Path):
+		roomID, trackID := splitRoomAudioPath(r.URL.Path)
+		s.withUser(s.deleteRoomAudio)(w, withTrackID(withRoomID(r, roomID), trackID))
+	case r.Method == http.MethodGet && roomAudioPathOK(r.URL.Path):
+		roomID, trackID := splitRoomAudioPath(r.URL.Path)
+		s.withUser(s.getRoomAudioFile)(w, withTrackID(withRoomID(r, roomID), trackID))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "/snapshot") != "":
 		s.withUser(s.getRoomSnapshot)(w, withRoomID(r, roomPathValue(r.URL.Path, "/snapshot")))
 	case r.Method == http.MethodGet && roomPathValue(r.URL.Path, "") != "":
@@ -331,23 +343,29 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	var input struct {
-		Title                    *string `json:"title"`
-		Password                 *string `json:"password"`
-		PasswordAction           string  `json:"passwordAction"`
-		NoSlideMode              *bool   `json:"noSlideMode"`
-		AllowParticipantMarkdown *bool   `json:"allowParticipantMarkdown"`
-		SharedNavigationEnabled  *bool   `json:"sharedNavigationEnabled"`
-		RaiseHandMode            *string `json:"raiseHandMode"`
+		Title                     *string `json:"title"`
+		Password                  *string `json:"password"`
+		PasswordAction            string  `json:"passwordAction"`
+		NoSlideMode               *bool   `json:"noSlideMode"`
+		AllowParticipantMarkdown  *bool   `json:"allowParticipantMarkdown"`
+		SharedNavigationEnabled   *bool   `json:"sharedNavigationEnabled"`
+		AudioOnlyMode             *bool   `json:"audioOnlyMode"`
+		AllowAudienceAudioAccess  *bool   `json:"allowAudienceAudioAccess"`
+		AllowAudienceAudioControl *bool   `json:"allowAudienceAudioControl"`
+		RaiseHandMode             *string `json:"raiseHandMode"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
 	settings := rooms.SettingsInput{
-		Title:                    input.Title,
-		NoSlideMode:              input.NoSlideMode,
-		AllowParticipantMarkdown: input.AllowParticipantMarkdown,
-		SharedNavigationEnabled:  input.SharedNavigationEnabled,
-		RaiseHandMode:            input.RaiseHandMode,
+		Title:                     input.Title,
+		NoSlideMode:               input.NoSlideMode,
+		AllowParticipantMarkdown:  input.AllowParticipantMarkdown,
+		SharedNavigationEnabled:   input.SharedNavigationEnabled,
+		AudioOnlyMode:             input.AudioOnlyMode,
+		AllowAudienceAudioAccess:  input.AllowAudienceAudioAccess,
+		AllowAudienceAudioControl: input.AllowAudienceAudioControl,
+		RaiseHandMode:             input.RaiseHandMode,
 	}
 	switch strings.TrimSpace(input.PasswordAction) {
 	case "":
@@ -586,6 +604,141 @@ func (s *appServer) getRoomSlideFile(w http.ResponseWriter, r *http.Request, use
 	http.ServeContent(w, r, file.OriginalName, time.Time{}, handle)
 }
 
+func (s *appServer) postRoomAudio(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.audio == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	if details.Membership.Role == rooms.RoleObserver {
+		writeProblem(w, http.StatusForbidden, "Forbidden", "Observers cannot upload audio files.")
+		return
+	}
+	if details.Membership.Role != rooms.RoleMod {
+		snapshot, err := s.hub.Snapshot(r.Context(), roomID, user.ID)
+		if err != nil {
+			writeRoomError(w, err)
+			return
+		}
+		if !snapshot.Room.AllowAudienceAudioAccess {
+			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio uploads are not enabled for participants.")
+			return
+		}
+	}
+	status, ok := s.storeAudioFromMultipart(w, r, user, roomID)
+	if !ok {
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), roomID, "")
+	}
+	writeJSON(w, http.StatusCreated, status)
+}
+
+func (s *appServer) getRoomAudioFile(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.audio == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	if details.Membership.Role == rooms.RoleObserver {
+		snapshot, err := s.hub.Snapshot(r.Context(), roomID, user.ID)
+		if err != nil {
+			writeRoomError(w, err)
+			return
+		}
+		if !snapshot.Room.AllowAudienceAudioAccess {
+			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio downloads are not enabled for observers.")
+			return
+		}
+	}
+	file, err := s.audio.CurrentRoomFile(r.Context(), roomID, trackIDFromContext(r.Context()))
+	if err != nil {
+		writeAudioError(w, err)
+		return
+	}
+	handle, err := os.Open(file.StoredPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeAudioError(w, audio.ErrMissingFile)
+			return
+		}
+		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Could not read audio file.")
+		return
+	}
+	defer handle.Close()
+	w.Header().Set("Content-Type", file.MIMEType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(file.OriginalName, `"`, "")+`"`)
+	http.ServeContent(w, r, file.OriginalName, time.Time{}, handle)
+}
+
+func (s *appServer) deleteRoomAudio(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if s.audio == nil || s.rooms == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	roomID := roomIDFromContext(r.Context())
+	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	if err := s.audio.RemoveTrack(r.Context(), roomID, trackIDFromContext(r.Context()), user.ID, details.Membership.Role == rooms.RoleMod); err != nil {
+		writeAudioError(w, err)
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastSnapshot(r.Context(), roomID, "")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *appServer) storeAudioFromMultipart(w http.ResponseWriter, r *http.Request, user auth.User, roomID string) (audio.Status, bool) {
+	maxBody := s.audio.MaxBytes() + 10<<20
+	if user.IsAdmin {
+		maxBody = 1 << 62
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Audio upload must be multipart form data.")
+		return audio.Status{}, false
+	}
+	var file io.Reader
+	mimeType := ""
+	uploadedFile, header, err := r.FormFile("file")
+	if err == nil {
+		defer uploadedFile.Close()
+		file = uploadedFile
+		mimeType = header.Header.Get("Content-Type")
+	} else if !errors.Is(err, http.ErrMissingFile) {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Audio file field is invalid.")
+		return audio.Status{}, false
+	}
+	status, err := s.audio.Store(r.Context(), user.ID, audio.StoreInput{
+		RoomID:       roomID,
+		SHA256:       r.FormValue("sha256"),
+		OriginalName: r.FormValue("originalName"),
+		MIMEType:     mimeType,
+		File:         file,
+		IsAdmin:      user.IsAdmin,
+	})
+	if err != nil {
+		writeAudioError(w, err)
+		return audio.Status{}, false
+	}
+	return status, true
+}
+
 func (s *appServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	if s.hub == nil {
 		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
@@ -702,7 +855,7 @@ func (s *appServer) requireRoomMod(w http.ResponseWriter, r *http.Request, user 
 
 func writeSlideError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, slides.ErrUnsupportedFile), errors.Is(err, slides.ErrHashMismatch), errors.Is(err, slides.ErrInvalidHash), errors.Is(err, slides.ErrInvalidExpiry), errors.Is(err, slides.ErrFileRequired), errors.Is(err, slides.ErrTooLarge):
+	case errors.Is(err, slides.ErrUnsupportedFile), errors.Is(err, slides.ErrHashMismatch), errors.Is(err, slides.ErrInvalidHash), errors.Is(err, slides.ErrInvalidExpiry), errors.Is(err, slides.ErrFileRequired), errors.Is(err, slides.ErrTooLarge), errors.Is(err, slides.ErrInsufficientFreeSpace):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, slides.ErrNoRoomSlide):
 		writeProblem(w, http.StatusNotFound, "Not Found", "Room has no slide file.")
@@ -710,6 +863,21 @@ func writeSlideError(w http.ResponseWriter, err error) {
 		writeProblem(w, http.StatusNotFound, "Not Found", err.Error())
 	default:
 		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Slide operation failed.")
+	}
+}
+
+func writeAudioError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, audio.ErrUnsupportedFile), errors.Is(err, audio.ErrHashMismatch), errors.Is(err, audio.ErrInvalidHash), errors.Is(err, audio.ErrFileRequired), errors.Is(err, audio.ErrTooLarge), errors.Is(err, audio.ErrInsufficientFreeSpace):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
+	case errors.Is(err, audio.ErrNotTrackUploaderOrMod):
+		writeProblem(w, http.StatusForbidden, "Forbidden", err.Error())
+	case errors.Is(err, audio.ErrNoRoomAudio):
+		writeProblem(w, http.StatusNotFound, "Not Found", "Room has no audio track.")
+	case errors.Is(err, audio.ErrMissingFile):
+		writeProblem(w, http.StatusNotFound, "Not Found", err.Error())
+	default:
+		writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Audio operation failed.")
 	}
 }
 
@@ -803,6 +971,7 @@ type problem struct {
 const roomIDContextKey contextKey = "roomID"
 const slideSHAContextKey contextKey = "slideSHA"
 const adminIDContextKey contextKey = "adminID"
+const trackIDContextKey contextKey = "trackID"
 
 func roomPathValue(path string, suffix string) string {
 	const prefix = "/api/rooms/"
@@ -840,6 +1009,25 @@ func adminPathValue(path string) string {
 	return value
 }
 
+func roomAudioPathOK(path string) bool {
+	roomID, trackID := splitRoomAudioPath(path)
+	return roomID != "" && trackID != ""
+}
+
+func splitRoomAudioPath(path string) (string, string) {
+	const prefix = "/api/rooms/"
+	const marker = "/audio/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", ""
+	}
+	value := strings.TrimPrefix(path, prefix)
+	parts := strings.Split(value, marker)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.Contains(parts[0], "/") || strings.Contains(parts[1], "/") {
+		return "", ""
+	}
+	return parts[0], parts[1]
+}
+
 func withRoomID(r *http.Request, roomID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), roomIDContextKey, roomID))
 }
@@ -864,6 +1052,15 @@ func withAdminID(r *http.Request, adminID string) *http.Request {
 
 func adminIDFromContext(ctx context.Context) string {
 	value, _ := ctx.Value(adminIDContextKey).(string)
+	return value
+}
+
+func withTrackID(r *http.Request, trackID string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), trackIDContextKey, trackID))
+}
+
+func trackIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(trackIDContextKey).(string)
 	return value
 }
 

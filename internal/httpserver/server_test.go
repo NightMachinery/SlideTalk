@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NightMachinery/SlideTalk/internal/audio"
 	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/realtime"
 	"github.com/NightMachinery/SlideTalk/internal/rooms"
@@ -551,6 +552,7 @@ func newAPITestServerWithDataDir(t *testing.T, dataDir string) http.Handler {
 		RoomService:  rooms.NewService(db),
 		Hub:          realtime.NewHub(db, authService, rooms.NewService(db)),
 		SlideService: mustSlideService(t, db, dataDir),
+		AudioService: mustAudioService(t, db, dataDir),
 	}), dataDir: dataDir}
 }
 
@@ -691,6 +693,15 @@ func mustSlideService(t *testing.T, db *store.DB, dataDir string) *slides.Servic
 	service, err := slides.NewService(db, filepath.Join(dataDir, "slides"), 200*1024*1024)
 	if err != nil {
 		t.Fatalf("new slide service: %v", err)
+	}
+	return service
+}
+
+func mustAudioService(t *testing.T, db *store.DB, dataDir string) *audio.Service {
+	t.Helper()
+	service, err := audio.NewService(db, filepath.Join(dataDir, "audio"), 50*1024*1024, 0)
+	if err != nil {
+		t.Fatalf("new audio service: %v", err)
 	}
 	return service
 }

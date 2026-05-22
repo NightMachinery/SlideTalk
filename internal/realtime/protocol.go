@@ -24,11 +24,28 @@ const (
 	CommandSlideNavigate  = "slide.navigate"
 	CommandMarkdownUpdate = "markdown.update"
 	CommandSettingsUpdate = "settings.update"
+	CommandAudioPlay      = "audio.play"
+	CommandAudioPause     = "audio.pause"
+	CommandAudioSeek      = "audio.seek"
+	CommandAudioSelect    = "audio.select"
+	CommandAudioReorder   = "audio.reorder"
+	CommandAudioMode      = "audio.mode"
+	CommandAudioEnded     = "audio.ended"
 )
 
 const (
 	TimerStateStopped = "stopped"
 	TimerStateRunning = "running"
+
+	AudioStatePaused  = "paused"
+	AudioStatePlaying = "playing"
+
+	AudioModeStop      = "stop"
+	AudioModeNext      = "next"
+	AudioModePrevious  = "previous"
+	AudioModeRepeatOne = "repeat-one"
+	AudioModeRepeatAll = "repeat-all"
+	AudioModeShuffle   = "shuffle"
 
 	RaiseHandModeOff    = "off"
 	RaiseHandModeManual = "manual"
@@ -67,18 +84,22 @@ type Snapshot struct {
 	MarkdownUpdatedByUserID string           `json:"markdownUpdatedByUserId"`
 	MarkdownUpdatedByName   string           `json:"markdownUpdatedByName"`
 	MarkdownUpdatedAt       string           `json:"markdownUpdatedAt"`
+	Audio                   SnapshotAudio    `json:"audio"`
 }
 
 // SnapshotRoom is room metadata in realtime snapshots.
 type SnapshotRoom struct {
-	ID                       string `json:"id"`
-	Title                    string `json:"title"`
-	HasPassword              bool   `json:"hasPassword"`
-	NoSlideMode              bool   `json:"noSlideMode"`
-	AllowParticipantMarkdown bool   `json:"allowParticipantMarkdown"`
-	RaiseHandMode            string `json:"raiseHandMode"`
-	SlidePage                int    `json:"slidePage"`
-	SharedNavigationEnabled  bool   `json:"sharedNavigationEnabled"`
+	ID                        string `json:"id"`
+	Title                     string `json:"title"`
+	HasPassword               bool   `json:"hasPassword"`
+	NoSlideMode               bool   `json:"noSlideMode"`
+	AllowParticipantMarkdown  bool   `json:"allowParticipantMarkdown"`
+	RaiseHandMode             string `json:"raiseHandMode"`
+	SlidePage                 int    `json:"slidePage"`
+	SharedNavigationEnabled   bool   `json:"sharedNavigationEnabled"`
+	AudioOnlyMode             bool   `json:"audioOnlyMode"`
+	AllowAudienceAudioAccess  bool   `json:"allowAudienceAudioAccess"`
+	AllowAudienceAudioControl bool   `json:"allowAudienceAudioControl"`
 }
 
 // SnapshotCaller identifies the receiving user.
@@ -124,6 +145,29 @@ type SnapshotSlide struct {
 	MIMEType     string `json:"mimeType"`
 	ExpiresAt    string `json:"expiresAt"`
 	Missing      bool   `json:"missing"`
+}
+
+// SnapshotAudio contains shared room audio playlist and playback state.
+type SnapshotAudio struct {
+	Tracks          []SnapshotAudioTrack `json:"tracks"`
+	CurrentTrackID  string               `json:"currentTrackId"`
+	State           string               `json:"state"`
+	PositionSeconds int                  `json:"positionSeconds"`
+	StartedAt       *string              `json:"startedAt"`
+	ServerNow       string               `json:"serverNow"`
+	PlaybackMode    string               `json:"playbackMode"`
+}
+
+// SnapshotAudioTrack describes one shared audio track.
+type SnapshotAudioTrack struct {
+	ID               string `json:"id"`
+	SHA256           string `json:"sha256"`
+	OriginalName     string `json:"originalName"`
+	MIMEType         string `json:"mimeType"`
+	SizeBytes        int64  `json:"sizeBytes"`
+	UploadedByUserID string `json:"uploadedByUserId"`
+	DisplayOrder     int    `json:"displayOrder"`
+	Missing          bool   `json:"missing"`
 }
 
 // WSTicket is a short-lived room-scoped connection token.

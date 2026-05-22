@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/NightMachinery/SlideTalk/internal/store"
@@ -31,9 +32,11 @@ const (
 
 // Service stores slide PDFs under a configured local directory.
 type Service struct {
-	db       *store.DB
-	slideDir string
-	maxBytes int64
+	db           *store.DB
+	slideDir     string
+	maxBytes     int64
+	minFreeBytes int64
+	freeSpace    func(string) (int64, error)
 }
 
 // StoreInput is the upload or attachment payload.
@@ -64,25 +67,34 @@ type RoomFile struct {
 }
 
 var (
-	ErrUnsupportedFile = errors.New("only PDF, PNG, JPEG, WebP, and GIF slide files are supported")
-	ErrHashMismatch    = errors.New("slide hash does not match uploaded file")
-	ErrInvalidHash     = errors.New("slide hash must be a SHA-256 hex digest")
-	ErrMissingFile     = errors.New("slide file was deleted manually")
-	ErrFileRequired    = errors.New("slide file is required")
-	ErrInvalidExpiry   = errors.New("slide expiration must be in the future")
-	ErrTooLarge        = errors.New("slide file exceeds size limit")
-	ErrNoRoomSlide     = errors.New("room has no slide file")
+	ErrUnsupportedFile       = errors.New("only PDF, PNG, JPEG, WebP, and GIF slide files are supported")
+	ErrHashMismatch          = errors.New("slide hash does not match uploaded file")
+	ErrInvalidHash           = errors.New("slide hash must be a SHA-256 hex digest")
+	ErrMissingFile           = errors.New("slide file was deleted manually")
+	ErrFileRequired          = errors.New("slide file is required")
+	ErrInvalidExpiry         = errors.New("slide expiration must be in the future")
+	ErrTooLarge              = errors.New("slide file exceeds size limit")
+	ErrNoRoomSlide           = errors.New("room has no slide file")
+	ErrInsufficientFreeSpace = errors.New("upload would leave too little free disk space")
 )
 
 // NewService creates the slide directory and returns a service.
 func NewService(db *store.DB, slideDir string, maxBytes int64) (*Service, error) {
+	return NewServiceWithMinFree(db, slideDir, maxBytes, 0)
+}
+
+// NewServiceWithMinFree creates the slide directory and enforces a post-upload free-space floor.
+func NewServiceWithMinFree(db *store.DB, slideDir string, maxBytes int64, minFreeBytes int64) (*Service, error) {
 	if maxBytes <= 0 {
 		return nil, fmt.Errorf("slide max bytes must be positive")
+	}
+	if minFreeBytes < 0 {
+		return nil, fmt.Errorf("minimum free space must not be negative")
 	}
 	if err := os.MkdirAll(slideDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create slide dir: %w", err)
 	}
-	return &Service{db: db, slideDir: slideDir, maxBytes: maxBytes}, nil
+	return &Service{db: db, slideDir: slideDir, maxBytes: maxBytes, minFreeBytes: minFreeBytes, freeSpace: filesystemFreeSpace}, nil
 }
 
 // MaxBytes returns the configured upload size limit.
@@ -347,6 +359,13 @@ func (s *Service) writeFile(sha string, ext string, reader io.Reader) (string, i
 	if err := tmp.Close(); err != nil {
 		return "", 0, "", fmt.Errorf("close temp slide: %w", err)
 	}
+	freeBytes, err := s.freeSpace(s.slideDir)
+	if err != nil {
+		return "", 0, "", err
+	}
+	if freeBytes-written < s.minFreeBytes {
+		return "", 0, "", ErrInsufficientFreeSpace
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return "", 0, "", fmt.Errorf("store slide: %w", err)
 	}
@@ -459,6 +478,14 @@ func (d *contentDetector) MIME() string {
 
 func nowText() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func filesystemFreeSpace(path string) (int64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, fmt.Errorf("stat filesystem: %w", err)
+	}
+	return int64(stat.Bavail) * int64(stat.Bsize), nil
 }
 
 func rollback(tx *sql.Tx) {

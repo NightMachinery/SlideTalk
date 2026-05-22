@@ -11,6 +11,9 @@
   import Link2 from '@lucide/svelte/icons/link-2';
   import LogOut from '@lucide/svelte/icons/log-out';
   import Mic from '@lucide/svelte/icons/mic';
+  import Music from '@lucide/svelte/icons/music';
+  import Pause from '@lucide/svelte/icons/pause';
+  import Play from '@lucide/svelte/icons/play';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Save from '@lucide/svelte/icons/save';
   import Settings from '@lucide/svelte/icons/settings';
@@ -20,7 +23,7 @@
   import Upload from '@lucide/svelte/icons/upload';
   import UserRound from '@lucide/svelte/icons/user-round';
   import UsersRound from '@lucide/svelte/icons/users-round';
-  import { createMigrationLink, getSlideStatus, removeRoomSlide, slideFileRequest, updateRoomSettings, updateRoomSlideExpiration, uploadRoomSlide } from '../api';
+  import { audioFileRequest, createMigrationLink, getSlideStatus, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
   import { copyText } from '../clipboard';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { parseMarkdown } from './markdown';
@@ -54,6 +57,7 @@
     participants: boolean;
     observers: boolean;
     slides: boolean;
+    audio: boolean;
     settings: boolean;
     shortcuts: boolean;
   };
@@ -76,6 +80,7 @@
     participants: true,
     observers: true,
     slides: true,
+    audio: true,
     settings: true,
     shortcuts: true
   });
@@ -109,6 +114,16 @@
   let settingsMessage = $state('');
   let settingsError = $state('');
   let migrationFallbackText = $state('');
+  let audioFile = $state<File | null>(null);
+  let audioElement = $state<HTMLAudioElement | null>(null);
+  let audioObjectUrl = $state('');
+  let activeAudioObjectUrl = '';
+  let audioBusy = $state(false);
+  let audioProgress = $state(0);
+  let audioMessage = $state('');
+  let audioError = $state('');
+  let audioBlocked = $state(false);
+  let audioPositionDraft = $state(0);
 
   const isMod = $derived(snapshot.caller.role === 'mod');
   const canManageSlides = $derived(isMod);
@@ -120,6 +135,10 @@
   const canUseHands = $derived(snapshot.caller.role !== 'observer' && snapshot.room.raiseHandMode !== 'off');
   const markdownBlocks = $derived(parseMarkdown(snapshot.markdown || ''));
   const markdownEditorVisible = $derived(snapshot.room.noSlideMode && canEditMarkdown);
+  const canSeeAudio = $derived(isMod || snapshot.room.allowAudienceAudioAccess);
+  const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowAudienceAudioAccess));
+  const canControlAudio = $derived(isMod || (snapshot.caller.role !== 'observer' && snapshot.room.allowAudienceAudioControl));
+  const currentAudioTrack = $derived(snapshot.audio.tracks.find((track) => track.id === snapshot.audio.currentTrackId) ?? snapshot.audio.tracks[0]);
   const slideMimeType = $derived(snapshot.slide?.mimeType || 'application/pdf');
   const slideIsPDF = $derived(slideMimeType === 'application/pdf');
   const slideIsImage = $derived(slideMimeType.startsWith('image/'));
@@ -140,6 +159,21 @@
     return Math.max(snapshot.timer.durationSeconds - elapsed, 0);
   });
   const timerLabel = $derived(formatDuration(remainingSeconds));
+  const audioSync = $derived.by(() => {
+    const serverNowMs = Date.parse(snapshot.audio.serverNow);
+    const receivedAtMs = Date.now();
+    return {
+      receivedAtMs,
+      serverNowMs: Number.isNaN(serverNowMs) ? receivedAtMs : serverNowMs
+    };
+  });
+  const estimatedAudioSeconds = $derived.by(() => {
+    if (snapshot.audio.state !== 'playing' || !snapshot.audio.startedAt) return snapshot.audio.positionSeconds;
+    const startedAt = Date.parse(snapshot.audio.startedAt);
+    if (Number.isNaN(startedAt)) return snapshot.audio.positionSeconds;
+    const estimatedServerNow = audioSync.serverNowMs + (nowMs - audioSync.receivedAtMs);
+    return Math.max(snapshot.audio.positionSeconds + Math.floor((estimatedServerNow - startedAt) / 1000), 0);
+  });
 
   onMount(() => {
     panelState = loadPanelState();
@@ -232,6 +266,64 @@
     return () => {
       cancelled = true;
     };
+  });
+
+  $effect(() => {
+    const trackID = snapshot.audio.currentTrackId;
+    if (!trackID || !canSeeAudio) {
+      if (activeAudioObjectUrl) {
+        URL.revokeObjectURL(activeAudioObjectUrl);
+        activeAudioObjectUrl = '';
+        audioObjectUrl = '';
+      }
+      audioError = '';
+      return;
+    }
+
+    let cancelled = false;
+    let nextUrl = '';
+    audioError = '';
+    void loadAudio().catch((error) => {
+      if (!cancelled) {
+        audioError = error instanceof Error ? error.message : 'Could not load audio.';
+      }
+    });
+
+    async function loadAudio() {
+      const request = audioFileRequest(snapshot.room.id, trackID);
+      const response = await fetch(request.url, { headers: request.headers });
+      if (!response.ok) throw new Error('Could not load audio.');
+      const blob = await response.blob();
+      nextUrl = URL.createObjectURL(blob);
+      if (!cancelled) {
+        if (activeAudioObjectUrl) URL.revokeObjectURL(activeAudioObjectUrl);
+        activeAudioObjectUrl = nextUrl;
+        audioObjectUrl = nextUrl;
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      if (nextUrl && nextUrl !== activeAudioObjectUrl) URL.revokeObjectURL(nextUrl);
+    };
+  });
+
+  $effect(() => {
+    if (!audioElement || !audioObjectUrl) return;
+    const desired = estimatedAudioSeconds;
+    if (Number.isFinite(desired) && Math.abs(audioElement.currentTime - desired) > 2) {
+      audioElement.currentTime = desired;
+    }
+    audioPositionDraft = Math.floor(audioElement.currentTime || desired);
+    if (snapshot.audio.state === 'playing') {
+      void audioElement.play().then(() => {
+        audioBlocked = false;
+      }).catch(() => {
+        audioBlocked = true;
+      });
+    } else if (!audioElement.paused) {
+      audioElement.pause();
+    }
   });
 
   $effect(() => {
@@ -359,7 +451,10 @@
     send({ type: 'settings.update', payload: { raiseHandMode: mode } });
   }
 
-  function setRoomBooleanSetting(name: 'sharedNavigationEnabled' | 'noSlideMode' | 'allowParticipantMarkdown', value: boolean) {
+  function setRoomBooleanSetting(
+    name: 'sharedNavigationEnabled' | 'noSlideMode' | 'allowParticipantMarkdown' | 'audioOnlyMode' | 'allowAudienceAudioAccess' | 'allowAudienceAudioControl',
+    value: boolean
+  ) {
     send({ type: 'settings.update', payload: { [name]: value } });
   }
 
@@ -491,6 +586,89 @@
     }
   }
 
+  async function submitAudioUpload() {
+    if (!audioFile || audioBusy) return;
+    if (!safeBrowserAudio(audioFile) && !window.confirm('This audio type may not play in every browser. Upload it anyway?')) {
+      return;
+    }
+    if (snapshot.caller.isAdmin && audioFile.size > 50 * 1024 * 1024 && !window.confirm('This audio file exceeds the participant upload limit. Upload as site admin?')) {
+      return;
+    }
+    audioBusy = true;
+    audioProgress = 0;
+    audioMessage = 'Hashing audio...';
+    audioError = '';
+    try {
+      const sha256 = await sha256File(audioFile);
+      audioMessage = 'Uploading audio...';
+      await uploadRoomAudio(
+        {
+          roomId: snapshot.room.id,
+          sha256,
+          originalName: audioFile.name,
+          file: audioFile
+        },
+        (percent) => {
+          audioProgress = percent;
+        }
+      );
+      audioProgress = 100;
+      audioMessage = 'Audio uploaded.';
+      audioFile = null;
+    } catch (error) {
+      audioError = error instanceof Error ? error.message : 'Audio upload failed.';
+      audioMessage = '';
+    } finally {
+      audioBusy = false;
+    }
+  }
+
+  async function deleteAudioTrack(trackId: string) {
+    audioError = '';
+    audioMessage = '';
+    try {
+      await removeRoomAudio(snapshot.room.id, trackId);
+      audioMessage = 'Audio removed.';
+    } catch (error) {
+      audioError = error instanceof Error ? error.message : 'Audio removal failed.';
+    }
+  }
+
+  function playAudio(trackId = snapshot.audio.currentTrackId || currentAudioTrack?.id || '') {
+    if (!trackId || !canControlAudio) return;
+    send({ type: 'audio.play', payload: { trackId, positionSeconds: Math.max(0, Math.floor(audioElement?.currentTime ?? snapshot.audio.positionSeconds)) } });
+  }
+
+  function pauseAudio() {
+    if (!canControlAudio) return;
+    send({ type: 'audio.pause' });
+  }
+
+  function seekAudio(value: number) {
+    if (!canControlAudio) return;
+    const positionSeconds = Math.max(0, Math.floor(value));
+    send({ type: 'audio.seek', payload: { positionSeconds } });
+  }
+
+  function selectAudio(trackId: string) {
+    if (!canControlAudio) return;
+    send({ type: 'audio.select', payload: { trackId } });
+  }
+
+  function moveAudioTrack(index: number, direction: -1 | 1) {
+    if (!isMod) return;
+    const next = [...snapshot.audio.tracks];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    send({ type: 'audio.reorder', payload: { trackIds: next.map((track) => track.id) } });
+  }
+
+  function setAudioMode(mode: RoomSnapshot['audio']['playbackMode']) {
+    if (!isMod) return;
+    send({ type: 'audio.mode', payload: { mode } });
+  }
+
   async function saveSlideExpiration() {
     if (!snapshot.slide) return;
     slideError = '';
@@ -575,6 +753,17 @@
     return `${minutes}:${remainder.toString().padStart(2, '0')}`;
   }
 
+  function formatBytes(bytes: number) {
+    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${bytes} B`;
+  }
+
+  function safeBrowserAudio(file: File) {
+    const type = file.type.toLowerCase();
+    return ['audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/ogg', 'audio/opus', 'audio/wav', 'audio/flac', 'audio/webm', 'audio/x-m4a'].includes(type);
+  }
+
   function defaultExpirationInput() {
     const date = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     return date.toISOString().slice(0, 16);
@@ -594,10 +783,11 @@
     const fallback: PanelState = {
       railCollapsed: false,
       participants: true,
-      observers: true,
-      slides: true,
-      settings: true,
-      shortcuts: true
+        observers: true,
+        slides: true,
+        audio: true,
+        settings: true,
+        shortcuts: true
     };
     try {
       const raw = localStorage.getItem(panelStorageKey);
@@ -608,6 +798,7 @@
         participants: typeof parsed.participants === 'boolean' ? parsed.participants : fallback.participants,
         observers: typeof parsed.observers === 'boolean' ? parsed.observers : fallback.observers,
         slides: typeof parsed.slides === 'boolean' ? parsed.slides : fallback.slides,
+        audio: typeof parsed.audio === 'boolean' ? parsed.audio : fallback.audio,
         settings: typeof parsed.settings === 'boolean' ? parsed.settings : fallback.settings,
         shortcuts: typeof parsed.shortcuts === 'boolean' ? parsed.shortcuts : fallback.shortcuts
       };
@@ -643,6 +834,16 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <section class={['roundtable', panelState.railCollapsed && 'rail-collapsed']} aria-label="Live roundtable">
+  {#if canSeeAudio && !snapshot.room.audioOnlyMode}
+    <audio
+      bind:this={audioElement}
+      src={audioObjectUrl}
+      onended={() => send({ type: 'audio.ended' })}
+      ontimeupdate={() => {
+        audioPositionDraft = Math.floor(audioElement?.currentTime ?? 0);
+      }}
+    ></audio>
+  {/if}
   <div class="room-stage">
     <div class="timer-row" aria-label="Room timer">
       <div class="timer-row-value">
@@ -667,8 +868,55 @@
       {/if}
     </div>
 
-    <section class="document-panel" aria-label={snapshot.room.noSlideMode ? 'Shared markdown' : 'Slides'}>
-      {#if snapshot.room.noSlideMode}
+    <section class="document-panel" aria-label={snapshot.room.audioOnlyMode ? 'Shared audio' : snapshot.room.noSlideMode ? 'Shared markdown' : 'Slides'}>
+      {#if snapshot.room.audioOnlyMode}
+        <div class="audio-stage">
+          <audio
+            bind:this={audioElement}
+            src={audioObjectUrl}
+            onended={() => send({ type: 'audio.ended' })}
+            ontimeupdate={() => {
+              audioPositionDraft = Math.floor(audioElement?.currentTime ?? 0);
+            }}
+          ></audio>
+          <div class="audio-stage-art">
+            <Music size={48} />
+          </div>
+          <div class="audio-stage-copy">
+            <p class="kicker">Audio mode</p>
+            <h3>{currentAudioTrack?.originalName ?? 'No audio selected'}</h3>
+            <p>{currentAudioTrack ? `${formatBytes(currentAudioTrack.sizeBytes)} ${currentAudioTrack.mimeType}` : 'Upload a track from the Audio panel.'}</p>
+          </div>
+          <div class="audio-stage-controls">
+            <button type="button" disabled={!canControlAudio || !currentAudioTrack} onclick={() => snapshot.audio.state === 'playing' ? pauseAudio() : playAudio()}>
+              {#if snapshot.audio.state === 'playing'}
+                <Pause size={18} /> Pause
+              {:else}
+                <Play size={18} /> Play
+              {/if}
+            </button>
+            <label>
+              Seek
+              <input
+                type="range"
+                min="0"
+                max={Math.max(Math.floor(audioElement?.duration || estimatedAudioSeconds || 1), 1)}
+                value={audioPositionDraft || estimatedAudioSeconds}
+                disabled={!canControlAudio || !currentAudioTrack}
+                oninput={(event) => (audioPositionDraft = Number(event.currentTarget.value))}
+                onchange={(event) => seekAudio(Number(event.currentTarget.value))}
+              />
+            </label>
+            <span>{formatDuration(audioPositionDraft || estimatedAudioSeconds)}</span>
+          </div>
+          {#if audioBlocked}
+            <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
+          {/if}
+          {#if audioError}
+            <p class="upload-error" role="alert">{audioError}</p>
+          {/if}
+        </div>
+      {:else if snapshot.room.noSlideMode}
         <div class="markdown-panel">
           <div class="document-toolbar">
             <div>
@@ -945,6 +1193,113 @@
       {/if}
     </section>
 
+    {#if canSeeAudio}
+      <section class="rail-panel">
+        <button class="list-toggle" type="button" onclick={() => togglePanel('audio')} aria-expanded={!panelState.audio}>
+          <Music size={19} />
+          <span>Audio</span>
+          <strong>{snapshot.audio.tracks.length}</strong>
+        </button>
+        {#if !panelState.audio}
+          <div class="audio-panel" aria-label="Audio">
+            <div class="audio-now">
+              <strong>{currentAudioTrack?.originalName ?? 'No audio selected'}</strong>
+              <span>{snapshot.audio.state} · {snapshot.audio.playbackMode}</span>
+              <div class="settings-actions">
+                <button type="button" disabled={!canControlAudio || !currentAudioTrack} onclick={() => snapshot.audio.state === 'playing' ? pauseAudio() : playAudio()}>
+                  {#if snapshot.audio.state === 'playing'}
+                    <Pause size={16} /> Pause
+                  {:else}
+                    <Play size={16} /> Play
+                  {/if}
+                </button>
+                {#if audioBlocked}
+                  <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
+                {/if}
+              </div>
+            </div>
+            {#if isMod}
+              <label class="compact-field">
+                Finish
+                <select value={snapshot.audio.playbackMode} onchange={(event) => setAudioMode(event.currentTarget.value as RoomSnapshot['audio']['playbackMode'])}>
+                  <option value="stop">Stop</option>
+                  <option value="next">Next</option>
+                  <option value="previous">Previous</option>
+                  <option value="repeat-one">Repeat one</option>
+                  <option value="repeat-all">Repeat all</option>
+                  <option value="shuffle">Shuffle</option>
+                </select>
+              </label>
+            {/if}
+            <div class="audio-track-list">
+              {#each snapshot.audio.tracks as track, index (track.id)}
+                <article class={['audio-track', track.id === snapshot.audio.currentTrackId && 'current-audio-track']}>
+                  <button type="button" disabled={!canControlAudio} onclick={() => selectAudio(track.id)}>
+                    {track.originalName}
+                  </button>
+                  <span>{formatBytes(track.sizeBytes)} · {track.mimeType}</span>
+                  <div class="settings-actions">
+                    {#if isMod}
+                      <button type="button" disabled={index === 0} onclick={() => moveAudioTrack(index, -1)}>Up</button>
+                      <button type="button" disabled={index === snapshot.audio.tracks.length - 1} onclick={() => moveAudioTrack(index, 1)}>Down</button>
+                    {/if}
+                    <a class="download-link" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => {
+                      event.preventDefault();
+                      const request = audioFileRequest(snapshot.room.id, track.id);
+                      void fetch(request.url, { headers: request.headers })
+                        .then((response) => response.blob())
+                        .then((blob) => {
+                          const url = URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.download = track.originalName;
+                          link.click();
+                          URL.revokeObjectURL(url);
+                        });
+                    }}>Download</a>
+                    {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
+                      <button class="danger-button" type="button" onclick={() => deleteAudioTrack(track.id)}>
+                        <Trash2 size={16} /> Remove
+                      </button>
+                    {/if}
+                  </div>
+                </article>
+              {/each}
+            </div>
+            {#if canUploadAudio}
+              <form class="audio-upload" onsubmit={(event) => { event.preventDefault(); submitAudioUpload(); }}>
+                <label>
+                  Audio file
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    disabled={audioBusy}
+                    onchange={(event) => {
+                      audioFile = event.currentTarget.files?.[0] ?? null;
+                      audioMessage = '';
+                      audioError = '';
+                    }}
+                  />
+                </label>
+                <button type="submit" disabled={audioBusy || !audioFile}>
+                  <Upload size={16} /> {audioBusy ? 'Working' : 'Upload audio'}
+                </button>
+                {#if audioBusy || audioProgress > 0}
+                  <progress max="100" value={audioProgress}>{audioProgress}%</progress>
+                {/if}
+              </form>
+            {/if}
+            {#if audioMessage}
+              <p class="upload-message">{audioMessage}</p>
+            {/if}
+            {#if audioError}
+              <p class="upload-error" role="alert">{audioError}</p>
+            {/if}
+          </div>
+        {/if}
+      </section>
+    {/if}
+
     {#if isMod}
       <section class="rail-panel">
         <button class="list-toggle" type="button" onclick={() => togglePanel('settings')} aria-expanded={!panelState.settings}>
@@ -996,6 +1351,30 @@
                 onchange={(event) => setRoomBooleanSetting('sharedNavigationEnabled', event.currentTarget.checked)}
               />
               Shared navigation default
+            </label>
+            <label class="toggle-field">
+              <input
+                type="checkbox"
+                checked={snapshot.room.audioOnlyMode}
+                onchange={(event) => setRoomBooleanSetting('audioOnlyMode', event.currentTarget.checked)}
+              />
+              Audio-only mode
+            </label>
+            <label class="toggle-field">
+              <input
+                type="checkbox"
+                checked={snapshot.room.allowAudienceAudioAccess}
+                onchange={(event) => setRoomBooleanSetting('allowAudienceAudioAccess', event.currentTarget.checked)}
+              />
+              Audience audio access
+            </label>
+            <label class="toggle-field">
+              <input
+                type="checkbox"
+                checked={snapshot.room.allowAudienceAudioControl}
+                onchange={(event) => setRoomBooleanSetting('allowAudienceAudioControl', event.currentTarget.checked)}
+              />
+              Audience audio controls
             </label>
             <label class="compact-field">
               Hands

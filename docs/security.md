@@ -42,7 +42,11 @@ PDF, PNG, JPEG, WebP, and GIF slide files are stored under `~/.slidetalk/slides/
 
 Room moderators can upload, replace, or remove the slide file attached to their room. Site admins can inspect slide storage status and change slide expiration. Existing file content is deduplicated by hash.
 
-The upload path enforces the configured maximum file size with `SLIDETALK_SLIDE_MAX_BYTES`, validates supported extension and detected content type, preserves the stored MIME type for serving, and rejects hash mismatches.
+The slide upload path enforces the configured maximum file size with `SLIDETALK_SLIDE_UPLOAD_LIMIT`, validates supported extension and detected content type, preserves the stored MIME type for serving, and rejects hash mismatches.
+
+Audio files are stored under `~/.slidetalk/audio/` by SHA-256 and playlist rows are scoped to rooms. Moderators can upload, reorder, control, and remove any room audio track. Non-observer participants can upload and control playback only when the moderator enables the corresponding room settings. Observers can see and download room audio when audience audio access is enabled, but cannot upload or control playback.
+
+Non-admin audio uploads are capped by `SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT`; site admins can bypass that per-file limit after client confirmation. Slide and audio uploads are rejected when the server would have less free disk space than `SLIDETALK_MIN_FREE_SPACE` after retaining the upload. Audio tracks are garbage-collected after room age exceeds `SLIDETALK_AUDIO_FILES_GC_AFTER`.
 
 ## Browser And HTTP Constraints
 
