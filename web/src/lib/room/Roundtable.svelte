@@ -11,6 +11,7 @@
   import FileText from '@lucide/svelte/icons/file-text';
   import FileWarning from '@lucide/svelte/icons/file-warning';
   import Hand from '@lucide/svelte/icons/hand';
+  import HardDrive from '@lucide/svelte/icons/hard-drive';
   import Link2 from '@lucide/svelte/icons/link-2';
   import LogOut from '@lucide/svelte/icons/log-out';
   import Download from '@lucide/svelte/icons/download';
@@ -29,10 +30,13 @@
   import UserRound from '@lucide/svelte/icons/user-round';
   import UsersRound from '@lucide/svelte/icons/users-round';
   import { audioCoverRequest, audioFileRequest, createAudioDownloadLink, createMigrationLink, getSlideStatus, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomAudio, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
-  import { audioSubtype, fileNameWithoutExtension, gcAudioCache, getCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
+  import { audioCacheStats, audioSubtype, clearAudioCache, fileNameWithoutExtension, gcAudioCache, getCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
   import { readAudioUploadMetadata } from '../audioMetadata';
+  import { cacheLimits } from '../cacheConstants';
   import { copyText } from '../clipboard';
+  import type { CacheStats } from '../blobCache';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
+  import { clearSlideCache, gcSlideCache, getCachedSlide, putCachedSlide, slideCacheStats } from '../slideCache';
   import { addToast } from '../toast.svelte';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
@@ -69,6 +73,7 @@
     audio: boolean;
     settings: boolean;
     shortcuts: boolean;
+    cache: boolean;
   };
 
   const panelStorageKey = 'slidetalk.roomPanels.v1';
@@ -112,7 +117,8 @@
     slides: true,
     audio: true,
     settings: true,
-    shortcuts: true
+    shortcuts: true,
+    cache: true
   });
   let shortcutConfig = $state<ShortcutConfig>(loadShortcutConfig(null));
   let shortcutDrafts = $state<Record<RebindableShortcutAction, string>>({ ...defaultShortcutBindings });
@@ -163,6 +169,10 @@
   let editingAudioTrackId = $state('');
   let audioTitleDraft = $state('');
   let audioUploaderDraft = $state('');
+  let audioCacheUsage = $state<CacheStats>({ entries: 0, bytes: 0 });
+  let slideCacheUsage = $state<CacheStats>({ entries: 0, bytes: 0 });
+  let cacheBusy = $state(false);
+  let cacheMessage = $state('');
   let confirmDialog = $state<{
     open: boolean;
     accent: 'danger' | 'warning';
@@ -231,7 +241,9 @@
     const interval = window.setInterval(() => {
       nowMs = Date.now();
     }, 1000);
-    void gcAudioCache().catch(() => {});
+    void Promise.all([gcAudioCache(), gcSlideCache()])
+      .then(() => refreshCacheUsage())
+      .catch(() => {});
     const resize = () => {
       stageResizeTick += 1;
     };
@@ -309,8 +321,22 @@
         import('pdfjs-dist/build/pdf.worker.mjs?url')
       ]);
       GlobalWorkerOptions.workerSrc = worker.default;
-      const request = slideFileRequest(snapshot.room.id);
-      const document = await getDocument({ url: request.url, httpHeaders: request.headers }).promise;
+      const cached = await getCachedSlide(slideKey);
+      let blob = cached?.blob;
+      if (!blob) {
+        const request = slideFileRequest(snapshot.room.id);
+        const response = await fetch(request.url, { headers: request.headers });
+        if (!response.ok) throw new Error('Could not load PDF.');
+        blob = await response.blob();
+        void putCachedSlide({
+          sha256: slideKey,
+          blob,
+          mimeType: snapshot.slide?.mimeType ?? blob.type,
+          originalName: snapshot.slide?.originalName ?? 'slide.pdf',
+          sizeBytes: blob.size
+        }).then(() => refreshCacheUsage()).catch(() => {});
+      }
+      const document = await getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
       if (!cancelled) {
         pdfDocument = document as PDFDocumentLike;
         localPage = pageFromSharedNavigation({
@@ -436,10 +462,21 @@
     });
 
     async function loadImage() {
-      const request = slideFileRequest(snapshot.room.id);
-      const response = await fetch(request.url, { headers: request.headers });
-      if (!response.ok) throw new Error('Could not load image slide.');
-      const blob = await response.blob();
+      const cached = await getCachedSlide(slideKey);
+      let blob = cached?.blob;
+      if (!blob) {
+        const request = slideFileRequest(snapshot.room.id);
+        const response = await fetch(request.url, { headers: request.headers });
+        if (!response.ok) throw new Error('Could not load image slide.');
+        blob = await response.blob();
+        void putCachedSlide({
+          sha256: slideKey,
+          blob,
+          mimeType: snapshot.slide?.mimeType ?? blob.type,
+          originalName: snapshot.slide?.originalName ?? 'slide',
+          sizeBytes: blob.size
+        }).then(() => refreshCacheUsage()).catch(() => {});
+      }
       nextUrl = URL.createObjectURL(blob);
       if (!cancelled) {
         if (activeImageObjectUrl) URL.revokeObjectURL(activeImageObjectUrl);
@@ -701,7 +738,8 @@
     slideProgress = 0;
     slideMessage = 'Hashing slide...';
     try {
-      const sha256 = await sha256File(slideFile);
+      const file = slideFile;
+      const sha256 = await sha256File(file);
       const status = snapshot.caller.isAdmin ? await getSlideStatus(sha256) : { alreadyUploaded: false, missing: false };
       if (status.missing) {
         addToast('This slide file was deleted manually on the server.');
@@ -713,13 +751,20 @@
           roomId: snapshot.room.id,
           sha256,
           expiresAt: new Date(slideExpiresAt).toISOString(),
-          originalName: slideFile.name,
-          file: status.alreadyUploaded ? undefined : slideFile
+          originalName: file.name,
+          file: status.alreadyUploaded ? undefined : file
         },
         (percent) => {
           slideProgress = percent;
         }
       );
+      void putCachedSlide({
+        sha256,
+        blob: file,
+        mimeType: file.type || slideMimeType,
+        originalName: file.name,
+        sizeBytes: file.size
+      }).then(() => refreshCacheUsage()).catch(() => {});
       slideProgress = 100;
       slideMessage = status.alreadyUploaded ? 'Slide attached.' : 'Slide uploaded.';
       slideFile = null;
@@ -805,6 +850,28 @@
     setAudioSource(track.id, cachedURL, true);
   }
 
+  async function refreshCacheUsage() {
+    const [audio, slides] = await Promise.all([audioCacheStats(), slideCacheStats()]);
+    audioCacheUsage = audio;
+    slideCacheUsage = slides;
+  }
+
+  async function clearCache(kind: 'audio' | 'slides' | 'all') {
+    if (cacheBusy) return;
+    cacheBusy = true;
+    cacheMessage = '';
+    try {
+      if (kind === 'audio' || kind === 'all') await clearAudioCache();
+      if (kind === 'slides' || kind === 'all') await clearSlideCache();
+      await refreshCacheUsage();
+      cacheMessage = kind === 'all' ? 'Cache cleared.' : `${kind === 'audio' ? 'Audio' : 'Slide'} cache cleared.`;
+    } catch (error) {
+      addToast(errorMessage(error, 'Could not clear cache.'));
+    } finally {
+      cacheBusy = false;
+    }
+  }
+
   function confirmAction(input: Omit<typeof confirmDialog, 'open' | 'onConfirm'>): Promise<boolean> {
     return new Promise((resolve) => {
       pendingConfirmResolve = resolve;
@@ -857,7 +924,7 @@
         audioMessage = `Hashing ${index + 1} / ${audioFiles.length}...`;
         const [sha256, metadata] = await Promise.all([sha256File(file), readAudioUploadMetadata(file)]);
         audioMessage = `Uploading ${index + 1} / ${audioFiles.length}...`;
-        await uploadRoomAudio(
+        const uploadedTrack = await uploadRoomAudio(
           {
             roomId: snapshot.room.id,
             sha256,
@@ -871,6 +938,15 @@
             audioProgress = percent;
           }
         );
+        void putCachedAudio({
+          sha256: uploadedTrack.sha256 || sha256,
+          blob: file,
+          mimeType: uploadedTrack.mimeType || file.type,
+          originalName: uploadedTrack.originalName || file.name,
+          sizeBytes: uploadedTrack.sizeBytes || file.size
+        }).then(() => refreshCacheUsage()).catch(() => {});
+        audioDownloaded = { ...audioDownloaded, [uploadedTrack.sha256 || sha256]: true };
+        audioDownloadProgress = { ...audioDownloadProgress, [uploadedTrack.sha256 || sha256]: 100 };
       }
       audioProgress = 100;
       audioMessage = audioFiles.length === 1 ? 'Audio uploaded.' : 'Audio files uploaded.';
@@ -1075,9 +1151,14 @@
   }
 
   function formatBytes(bytes: number) {
+    if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
     if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
     if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
     return `${bytes} B`;
+  }
+
+  function formatCacheLimit() {
+    return `${formatBytes(cacheLimits.maxBytes)} / ${cacheLimits.maxEntries} entries each`;
   }
 
   function updateAudioTiming() {
@@ -1122,11 +1203,12 @@
     const fallback: PanelState = {
       railCollapsed: false,
       participants: true,
-        observers: true,
-        slides: true,
-        audio: true,
-        settings: true,
-        shortcuts: true
+      observers: true,
+      slides: true,
+      audio: true,
+      settings: true,
+      shortcuts: true,
+      cache: true
     };
     try {
       const raw = localStorage.getItem(panelStorageKey);
@@ -1139,7 +1221,8 @@
         slides: typeof parsed.slides === 'boolean' ? parsed.slides : fallback.slides,
         audio: typeof parsed.audio === 'boolean' ? parsed.audio : fallback.audio,
         settings: typeof parsed.settings === 'boolean' ? parsed.settings : fallback.settings,
-        shortcuts: typeof parsed.shortcuts === 'boolean' ? parsed.shortcuts : fallback.shortcuts
+        shortcuts: typeof parsed.shortcuts === 'boolean' ? parsed.shortcuts : fallback.shortcuts,
+        cache: typeof parsed.cache === 'boolean' ? parsed.cache : fallback.cache
       };
     } catch {
       return fallback;
@@ -1892,6 +1975,40 @@
         {/if}
       </section>
     {/if}
+
+    <section class="rail-panel">
+      <button class="list-toggle" type="button" onclick={() => { togglePanel('cache'); if (panelState.cache) void refreshCacheUsage(); }} aria-expanded={!panelState.cache}>
+        <HardDrive size={19} />
+        <span>Cache</span>
+        <strong>{formatBytes(audioCacheUsage.bytes + slideCacheUsage.bytes)}</strong>
+      </button>
+      {#if !panelState.cache}
+        <div class="cache-panel" aria-label="Local cache">
+          <p class="cache-limit">Local browser cache limit: {formatCacheLimit()}</p>
+          <div class="cache-usage-grid">
+            <div>
+              <span>Audio</span>
+              <strong>{formatBytes(audioCacheUsage.bytes)}</strong>
+              <em>{audioCacheUsage.entries} {audioCacheUsage.entries === 1 ? 'file' : 'files'}</em>
+            </div>
+            <div>
+              <span>Slides</span>
+              <strong>{formatBytes(slideCacheUsage.bytes)}</strong>
+              <em>{slideCacheUsage.entries} {slideCacheUsage.entries === 1 ? 'file' : 'files'}</em>
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button type="button" disabled={cacheBusy} onclick={() => refreshCacheUsage()}>Refresh</button>
+            <button type="button" disabled={cacheBusy || audioCacheUsage.entries === 0} onclick={() => clearCache('audio')}>Reset audio</button>
+            <button type="button" disabled={cacheBusy || slideCacheUsage.entries === 0} onclick={() => clearCache('slides')}>Reset slides</button>
+            <button class="danger-button" type="button" disabled={cacheBusy || audioCacheUsage.entries + slideCacheUsage.entries === 0} onclick={() => clearCache('all')}>Reset all</button>
+          </div>
+          {#if cacheMessage}
+            <p class="upload-message">{cacheMessage}</p>
+          {/if}
+        </div>
+      {/if}
+    </section>
 
     <section class="rail-panel">
       <button class="list-toggle" type="button" onclick={() => togglePanel('shortcuts')} aria-expanded={!panelState.shortcuts}>

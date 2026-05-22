@@ -1,70 +1,33 @@
+import { createBlobCache, type CacheStats, type CachedBlobMetadata } from './blobCache';
 import type { RoomSnapshot } from './realtime';
 
-const dbName = 'slidetalk-audio-cache';
-const storeName = 'audio';
-const dbVersion = 1;
-const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
-const maxBytes = 1024 * 1024 * 1024;
-const maxEntries = 30;
+const audioCache = createBlobCache('slidetalk-audio-cache', 'audio');
 
-export type CachedAudio = {
-  sha256: string;
-  blob: Blob;
-  mimeType: string;
-  originalName: string;
-  sizeBytes: number;
-  lastAccessedAt: number;
-  createdAt: number;
-};
-
-type StoredAudio = CachedAudio;
+export type CachedAudio = CachedBlobMetadata;
+export type AudioCacheStats = CacheStats;
 
 export function audioCacheAvailable() {
-  return typeof indexedDB !== 'undefined';
+  return audioCache.available();
 }
 
-export async function getCachedAudio(sha256: string): Promise<CachedAudio | null> {
-  const db = await openDB();
-  if (!db) return null;
-  const cached = await request<StoredAudio | undefined>(db.transaction(storeName, 'readonly').objectStore(storeName).get(sha256));
-  if (!cached) {
-    db.close();
-    return null;
-  }
-  cached.lastAccessedAt = Date.now();
-  await request(db.transaction(storeName, 'readwrite').objectStore(storeName).put(cached));
-  db.close();
-  return cached;
+export function getCachedAudio(sha256: string): Promise<CachedAudio | null> {
+  return audioCache.get(sha256);
 }
 
-export async function putCachedAudio(input: Omit<CachedAudio, 'lastAccessedAt' | 'createdAt'>): Promise<void> {
-  const db = await openDB();
-  if (!db) return;
-  const now = Date.now();
-  await request(db.transaction(storeName, 'readwrite').objectStore(storeName).put({ ...input, lastAccessedAt: now, createdAt: now }));
-  db.close();
-  await gcAudioCache();
+export function putCachedAudio(input: Omit<CachedAudio, 'lastAccessedAt' | 'createdAt'>): Promise<void> {
+  return audioCache.put(input);
 }
 
-export async function gcAudioCache(now = Date.now()): Promise<void> {
-  const db = await openDB();
-  if (!db) return;
-  const store = db.transaction(storeName, 'readonly').objectStore(storeName);
-  const entries = (await request<StoredAudio[]>(store.getAll())).sort((a, b) => a.lastAccessedAt - b.lastAccessedAt);
-  let total = entries.reduce((sum, entry) => sum + entry.sizeBytes, 0);
-  let count = entries.length;
-  const remove: string[] = [];
-  for (const entry of entries) {
-    if (now - entry.lastAccessedAt <= maxAgeMs && total <= maxBytes && count <= maxEntries) continue;
-    remove.push(entry.sha256);
-    total -= entry.sizeBytes;
-    count -= 1;
-  }
-  if (remove.length > 0) {
-    const writeStore = db.transaction(storeName, 'readwrite').objectStore(storeName);
-    await Promise.all(remove.map((sha256) => request(writeStore.delete(sha256))));
-  }
-  db.close();
+export function gcAudioCache(now = Date.now()): Promise<void> {
+  return audioCache.gc(now);
+}
+
+export function audioCacheStats(): Promise<AudioCacheStats> {
+  return audioCache.stats();
+}
+
+export function clearAudioCache(): Promise<void> {
+  return audioCache.clear();
 }
 
 export function trackDisplayTitle(track: RoomSnapshot['audio']['tracks'][number] | undefined) {
@@ -84,26 +47,4 @@ export function fileNameWithoutExtension(name: string) {
 
 export function audioSubtype(mimeType: string) {
   return mimeType.toLowerCase().replace(/^audio\//, '');
-}
-
-function openDB(): Promise<IDBDatabase | null> {
-  if (!audioCacheAvailable()) return Promise.resolve(null);
-  return new Promise((resolve, reject) => {
-    const open = indexedDB.open(dbName, dbVersion);
-    open.onupgradeneeded = () => {
-      const db = open.result;
-      if (!db.objectStoreNames.contains(storeName)) {
-        db.createObjectStore(storeName, { keyPath: 'sha256' });
-      }
-    };
-    open.onsuccess = () => resolve(open.result);
-    open.onerror = () => reject(open.error ?? new Error('Could not open audio cache.'));
-  });
-}
-
-function request<T = unknown>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('Audio cache request failed.'));
-  });
 }
