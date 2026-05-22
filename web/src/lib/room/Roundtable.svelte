@@ -32,6 +32,7 @@
   import { readAudioUploadMetadata } from '../audioMetadata';
   import { copyText } from '../clipboard';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
+  import { addToast } from '../toast.svelte';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
   import { pageFromSharedNavigation } from './slides';
@@ -114,7 +115,6 @@
   });
   let shortcutConfig = $state<ShortcutConfig>(loadShortcutConfig(null));
   let shortcutDrafts = $state<Record<RebindableShortcutAction, string>>({ ...defaultShortcutBindings });
-  let shortcutMessage = $state('');
   let preferencesReady = $state(false);
   let timerDurationSeconds = $state(300);
   let nowMs = $state(Date.now());
@@ -123,14 +123,11 @@
   let slideBusy = $state(false);
   let slideProgress = $state(0);
   let slideMessage = $state('');
-  let slideError = $state('');
   let slideConfirmRemove = $state(false);
   let slideCanvas = $state<HTMLCanvasElement | null>(null);
   let pdfDocument = $state<PDFDocumentLike | null>(null);
-  let pdfError = $state('');
   let imageObjectUrl = $state('');
   let activeImageObjectUrl = '';
-  let imageError = $state('');
   let localPage = $state(1);
   let stageResizeTick = $state(0);
   let followSharedNavigation = $state(true);
@@ -140,7 +137,6 @@
   let roomTitleDraft = $state('');
   let roomPasswordDraft = $state('');
   let settingsMessage = $state('');
-  let settingsError = $state('');
   let migrationFallbackText = $state('');
   let audioFiles = $state<File[]>([]);
   let audioElement = $state<HTMLAudioElement | null>(null);
@@ -151,7 +147,6 @@
   let audioProgress = $state(0);
   let audioUploadIndex = $state(0);
   let audioMessage = $state('');
-  let audioError = $state('');
   let audioBlocked = $state(false);
   let audioPositionDraft = $state(0);
   let audioSeeking = $state(false);
@@ -283,16 +278,14 @@
     const slideKey = snapshot.slide?.sha256;
     if (!slideKey || snapshot.slide?.missing || snapshot.room.roomMode !== 'slides' || !slideIsPDF) {
       pdfDocument = null;
-      pdfError = '';
       return;
     }
 
     let cancelled = false;
-    pdfError = '';
     void loadPDF().catch((error) => {
       if (!cancelled) {
         pdfDocument = null;
-        pdfError = error instanceof Error ? error.message : 'Could not load PDF.';
+        addToast(errorMessage(error, 'Could not load PDF.'));
       }
     });
 
@@ -328,18 +321,16 @@
         audioObjectUrl = '';
       }
       activeAudioTrackId = '';
-      audioError = '';
       return;
     }
 
     let cancelled = false;
     let nextBlobUrl = '';
-    audioError = '';
     activeAudioTrackId = trackID;
     audioBufferedPercent = 0;
     void loadAudioSource().catch((error) => {
       if (!cancelled) {
-        audioError = error instanceof Error ? error.message : 'Could not load audio.';
+        addToast(errorMessage(error, 'Could not load audio.'));
       }
     });
 
@@ -419,16 +410,14 @@
         activeImageObjectUrl = '';
         imageObjectUrl = '';
       }
-      imageError = '';
       return;
     }
 
     let cancelled = false;
     let nextUrl = '';
-    imageError = '';
     void loadImage().catch((error) => {
       if (!cancelled) {
-        imageError = error instanceof Error ? error.message : 'Could not load image slide.';
+        addToast(errorMessage(error, 'Could not load image slide.'));
       }
     });
 
@@ -458,7 +447,7 @@
     let cancelled = false;
     void renderPDFPage(pdfDocument, slideCanvas, localPage).catch((error) => {
       if (!cancelled) {
-        pdfError = error instanceof Error ? error.message : 'Could not render PDF page.';
+        addToast(errorMessage(error, 'Could not render PDF page.'));
       }
     });
     return () => {
@@ -556,42 +545,38 @@
   }
 
   async function saveRoomTitle() {
-    settingsError = '';
     settingsMessage = '';
     try {
       await updateRoomSettings(snapshot.room.id, { title: roomTitleDraft });
       settingsMessage = 'Room title saved.';
     } catch (error) {
-      settingsError = error instanceof Error ? error.message : 'Room title update failed.';
+      addToast(errorMessage(error, 'Room title update failed.'));
     }
   }
 
   async function setRoomPassword() {
-    settingsError = '';
     settingsMessage = '';
     try {
       await updateRoomSettings(snapshot.room.id, { passwordAction: 'set', password: roomPasswordDraft });
       roomPasswordDraft = '';
       settingsMessage = 'Room password updated.';
     } catch (error) {
-      settingsError = error instanceof Error ? error.message : 'Password update failed.';
+      addToast(errorMessage(error, 'Password update failed.'));
     }
   }
 
   async function clearRoomPassword() {
-    settingsError = '';
     settingsMessage = '';
     try {
       await updateRoomSettings(snapshot.room.id, { passwordAction: 'clear' });
       roomPasswordDraft = '';
       settingsMessage = 'Room password cleared.';
     } catch (error) {
-      settingsError = error instanceof Error ? error.message : 'Password clear failed.';
+      addToast(errorMessage(error, 'Password clear failed.'));
     }
   }
 
   async function copyMigrationLink() {
-    settingsError = '';
     settingsMessage = '';
     migrationFallbackText = '';
     try {
@@ -610,7 +595,7 @@
         document.querySelector<HTMLInputElement>('[data-migration-fallback]')?.select();
       });
     } catch (error) {
-      settingsError = error instanceof Error ? error.message : 'Migration link creation failed.';
+      addToast(errorMessage(error, 'Migration link creation failed.'));
     }
   }
 
@@ -671,12 +656,11 @@
     slideBusy = true;
     slideProgress = 0;
     slideMessage = 'Hashing slide...';
-    slideError = '';
     try {
       const sha256 = await sha256File(slideFile);
       const status = snapshot.caller.isAdmin ? await getSlideStatus(sha256) : { alreadyUploaded: false, missing: false };
       if (status.missing) {
-        slideError = 'This slide file was deleted manually on the server.';
+        addToast('This slide file was deleted manually on the server.');
         return;
       }
       slideMessage = status.alreadyUploaded ? 'Attaching existing slide...' : 'Uploading slide...';
@@ -696,7 +680,7 @@
       slideMessage = status.alreadyUploaded ? 'Slide attached.' : 'Slide uploaded.';
       slideFile = null;
     } catch (error) {
-      slideError = error instanceof Error ? error.message : 'Slide upload failed.';
+      addToast(errorMessage(error, 'Slide upload failed.'));
       slideMessage = '';
     } finally {
       slideBusy = false;
@@ -756,7 +740,7 @@
       }
       await cacheDownloadedTrack(track, new Blob(chunks, { type: track.mimeType }));
     } catch (error) {
-      if (activeAudioTrackId === track.id) audioError = error instanceof Error ? error.message : 'Could not cache audio.';
+      if (activeAudioTrackId === track.id) addToast(errorMessage(error, 'Could not cache audio.'));
     } finally {
       audioDownloadBusy = { ...audioDownloadBusy, [track.sha256]: false };
     }
@@ -804,7 +788,6 @@
     audioProgress = 0;
     audioUploadIndex = 0;
     audioMessage = 'Preparing audio...';
-    audioError = '';
     try {
       for (const [index, file] of audioFiles.entries()) {
         audioUploadIndex = index + 1;
@@ -849,7 +832,7 @@
       audioMessage = audioFiles.length === 1 ? 'Audio uploaded.' : 'Audio files uploaded.';
       audioFiles = [];
     } catch (error) {
-      audioError = error instanceof Error ? error.message : 'Audio upload failed.';
+      addToast(errorMessage(error, 'Audio upload failed.'));
       audioMessage = '';
     } finally {
       audioBusy = false;
@@ -865,13 +848,12 @@
       confirmLabel: 'Remove'
     });
     if (!confirmed) return;
-    audioError = '';
     audioMessage = '';
     try {
       await removeRoomAudio(snapshot.room.id, trackId);
       audioMessage = 'Audio removed.';
     } catch (error) {
-      audioError = error instanceof Error ? error.message : 'Audio removal failed.';
+      addToast(errorMessage(error, 'Audio removal failed.'));
     }
   }
 
@@ -949,7 +931,6 @@
   }
 
   async function saveAudioMetadata(track: RoomSnapshot['audio']['tracks'][number]) {
-    audioError = '';
     audioMessage = '';
     try {
       await updateRoomAudio(snapshot.room.id, track.id, {
@@ -959,19 +940,18 @@
       editingAudioTrackId = '';
       audioMessage = 'Audio details updated.';
     } catch (error) {
-      audioError = error instanceof Error ? error.message : 'Audio update failed.';
+      addToast(errorMessage(error, 'Audio update failed.'));
     }
   }
 
   async function saveSlideExpiration() {
     if (!snapshot.slide) return;
-    slideError = '';
     slideMessage = '';
     try {
       await updateRoomSlideExpiration(snapshot.room.id, new Date(slideExpiresAt).toISOString());
       slideMessage = 'Slide expiration updated.';
     } catch (error) {
-      slideError = error instanceof Error ? error.message : 'Slide expiration update failed.';
+      addToast(errorMessage(error, 'Slide expiration update failed.'));
     }
   }
 
@@ -979,10 +959,8 @@
     if (!slideConfirmRemove) {
       slideConfirmRemove = true;
       slideMessage = 'Confirm removing the slide from this room.';
-      slideError = '';
       return;
     }
-    slideError = '';
     slideMessage = '';
     try {
       await removeRoomSlide(snapshot.room.id);
@@ -990,7 +968,7 @@
       slideFile = null;
       slideMessage = 'Slide removed from room.';
     } catch (error) {
-      slideError = error instanceof Error ? error.message : 'Slide removal failed.';
+      addToast(errorMessage(error, 'Slide removal failed.'));
     }
   }
 
@@ -1003,7 +981,9 @@
 
   function updateShortcut(action: RebindableShortcutAction, value: string) {
     const result = setShortcutBinding(shortcutConfig, action, value);
-    shortcutMessage = result.error;
+    if (result.error) {
+      addToast(result.error);
+    }
     shortcutConfig = result.config;
     if (!result.error) {
       shortcutDrafts = { ...result.config.bindings };
@@ -1011,13 +991,11 @@
   }
 
   function resetShortcut(action: RebindableShortcutAction) {
-    shortcutMessage = '';
     shortcutConfig = resetShortcutBinding(shortcutConfig, action);
     shortcutDrafts = { ...shortcutConfig.bindings };
   }
 
   function setShortcutBoolean(name: 'enabled' | 'modShortcutsEnabled', value: boolean) {
-    shortcutMessage = '';
     shortcutConfig = {
       ...shortcutConfig,
       [name]: value
@@ -1045,6 +1023,10 @@
     const minutes = Math.floor(seconds / 60);
     const remainder = seconds % 60;
     return `${minutes}:${remainder.toString().padStart(2, '0')}`;
+  }
+
+  function errorMessage(error: unknown, fallback: string) {
+    return error instanceof Error ? error.message : fallback;
   }
 
   function formatBytes(bytes: number) {
@@ -1208,7 +1190,6 @@
             {/if}
           </div>
           <div class="audio-stage-copy">
-            <p class="kicker">Audio mode</p>
             <h3>{trackDisplayTitle(currentAudioTrack)}</h3>
             <p>
               {#if currentAudioTrack}
@@ -1318,7 +1299,6 @@
                     onchange={(event) => {
                       audioFiles = Array.from(event.currentTarget.files ?? []);
                       audioMessage = '';
-                      audioError = '';
                     }}
                   />
                 </label>
@@ -1334,9 +1314,6 @@
               <p class="upload-message">{audioMessage}</p>
             {/if}
           </div>
-          {#if audioError}
-            <p class="upload-error" role="alert">{audioError}</p>
-          {/if}
         </div>
       {:else if snapshot.room.roomMode === 'markdown'}
         <div class="markdown-panel">
@@ -1420,7 +1397,6 @@
                       onchange={(event) => {
                         slideFile = event.currentTarget.files?.[0] ?? null;
                         slideMessage = '';
-                        slideError = '';
                       }}
                     />
                   </label>
@@ -1440,12 +1416,6 @@
                 </form>
               {/if}
             </div>
-          {/if}
-          {#if pdfError}
-            <p class="upload-error" role="alert">{pdfError}</p>
-          {/if}
-          {#if imageError}
-            <p class="upload-error" role="alert">{imageError}</p>
           {/if}
         </div>
       {/if}
@@ -1614,7 +1584,6 @@
                   onchange={(event) => {
                     slideFile = event.currentTarget.files?.[0] ?? null;
                     slideMessage = '';
-                    slideError = '';
                   }}
                 />
               </label>
@@ -1638,9 +1607,6 @@
               {/if}
               {#if slideMessage}
                 <p class="upload-message">{slideMessage}</p>
-              {/if}
-              {#if slideError}
-                <p class="upload-error" role="alert">{slideError}</p>
               {/if}
             </form>
           {/if}
@@ -1767,7 +1733,6 @@
                     onchange={(event) => {
                       audioFiles = Array.from(event.currentTarget.files ?? []);
                       audioMessage = '';
-                      audioError = '';
                     }}
                   />
                 </label>
@@ -1781,9 +1746,6 @@
             {/if}
             {#if audioMessage}
               <p class="upload-message">{audioMessage}</p>
-            {/if}
-            {#if audioError}
-              <p class="upload-error" role="alert">{audioError}</p>
             {/if}
           </div>
         {/if}
@@ -1876,9 +1838,6 @@
             {#if settingsMessage}
               <p class="upload-message">{settingsMessage}</p>
             {/if}
-            {#if settingsError}
-              <p class="upload-error" role="alert">{settingsError}</p>
-            {/if}
           </div>
         {/if}
       </section>
@@ -1933,9 +1892,6 @@
           <div class="settings-actions">
             <span class="shortcut-fixed"><kbd>?</kbd> opens this panel</span>
           </div>
-          {#if shortcutMessage}
-            <p class="upload-error" role="alert">{shortcutMessage}</p>
-          {/if}
         </div>
       {/if}
     </section>
