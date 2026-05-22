@@ -538,8 +538,9 @@ func TestRoomSlideFileReportsManualDeletion(t *testing.T) {
 	}
 }
 
-func TestAudioDownloadRequiresAudienceAccessForParticipants(t *testing.T) {
-	server := newAPITestServer(t)
+func TestAudioDownloadIsAvailableToParticipantsByDefault(t *testing.T) {
+	dataDir := t.TempDir()
+	server := newAPITestServerWithDataDir(t, dataDir)
 	roomID := createAdminRoom(t, server)
 	content := testWAVBytes()
 	body, contentType := audioUploadBody(t, roomID, "track.wav", content, sha256HexTest(content))
@@ -554,10 +555,52 @@ func TestAudioDownloadRequiresAudienceAccessForParticipants(t *testing.T) {
 
 	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "participant"), http.StatusOK)
 	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "participant"), http.StatusOK)
-	serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/audio/"+status.ID, "", "participant"), http.StatusForbidden)
 
-	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", `{"allowAudienceAudioAccess":true}`, "admin"), http.StatusOK)
 	serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/audio/"+status.ID, "", "participant"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio/"+status.ID+"/download-link", `{}`, "participant"), http.StatusCreated)
+
+	db, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatalf("open db to set observer: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("close observer db: %v", err)
+		}
+	})
+	if _, err := db.ExecContext(context.Background(), `update room_members set role = ? where room_id = ? and role = ?`, rooms.RoleObserver, roomID, rooms.RoleParticipant); err != nil {
+		t.Fatalf("set observer role: %v", err)
+	}
+	serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/audio/"+status.ID, "", "participant"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio/"+status.ID+"/download-link", `{}`, "participant"), http.StatusCreated)
+
+	body, contentType = audioUploadBody(t, roomID, "observer.wav", content, sha256HexTest(content))
+	request = httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio", body)
+	request.Header.Set("Authorization", "Bearer participant")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusForbidden)
+}
+
+func TestParticipantAudioUploadRequiresAudienceUploadSetting(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "participant"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "participant"), http.StatusOK)
+
+	content := testWAVBytes()
+	body, contentType := audioUploadBody(t, roomID, "participant.wav", content, sha256HexTest(content))
+	request := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio", body)
+	request.Header.Set("Authorization", "Bearer participant")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusForbidden)
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", `{"allowAudienceAudioUpload":true}`, "admin"), http.StatusOK)
+
+	body, contentType = audioUploadBody(t, roomID, "participant.wav", content, sha256HexTest(content))
+	request = httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio", body)
+	request.Header.Set("Authorization", "Bearer participant")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusCreated)
 }
 
 func TestAudioDownloadTokenAllowsExternalDownloadWithoutAuth(t *testing.T) {

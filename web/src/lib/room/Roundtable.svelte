@@ -185,8 +185,8 @@
   const canUseHands = $derived(snapshot.caller.role !== 'observer' && snapshot.room.raiseHandMode !== 'off');
   const markdownBlocks = $derived(parseMarkdown(snapshot.markdown || ''));
   const markdownEditorVisible = $derived(snapshot.room.roomMode === 'markdown' && canEditMarkdown);
-  const canSeeAudio = $derived(isMod || snapshot.room.allowAudienceAudioAccess);
-  const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowAudienceAudioAccess));
+  const canSeeAudio = true;
+  const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowAudienceAudioUpload));
   const canControlAudio = $derived(isMod || (snapshot.caller.role !== 'observer' && snapshot.room.allowAudienceAudioControl));
   const currentAudioTrack = $derived(snapshot.audio.tracks.find((track) => track.id === snapshot.audio.currentTrackId) ?? snapshot.audio.tracks[0]);
   const slideMimeType = $derived(snapshot.slide?.mimeType || 'application/pdf');
@@ -545,7 +545,7 @@
   }
 
   function setRoomBooleanSetting(
-    name: 'sharedNavigationEnabled' | 'allowParticipantMarkdown' | 'allowAudienceAudioAccess' | 'allowAudienceAudioControl',
+    name: 'sharedNavigationEnabled' | 'allowParticipantMarkdown' | 'allowAudienceAudioUpload' | 'allowAudienceAudioControl',
     value: boolean
   ) {
     send({ type: 'settings.update', payload: { [name]: value } });
@@ -1843,10 +1843,10 @@
             <label class="toggle-field">
               <input
                 type="checkbox"
-                checked={snapshot.room.allowAudienceAudioAccess}
-                onchange={(event) => setRoomBooleanSetting('allowAudienceAudioAccess', event.currentTarget.checked)}
+                checked={snapshot.room.allowAudienceAudioUpload}
+                onchange={(event) => setRoomBooleanSetting('allowAudienceAudioUpload', event.currentTarget.checked)}
               />
-              Audience audio access
+              Audience can upload audio
             </label>
             <label class="toggle-field">
               <input

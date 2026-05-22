@@ -58,7 +58,7 @@ export type RoomSettingsInput = {
   roomMode?: 'slides' | 'markdown' | 'audio';
   allowParticipantMarkdown?: boolean;
   sharedNavigationEnabled?: boolean;
-  allowAudienceAudioAccess?: boolean;
+  allowAudienceAudioUpload?: boolean;
   allowAudienceAudioControl?: boolean;
   raiseHandMode?: 'off' | 'manual' | 'queue';
 };

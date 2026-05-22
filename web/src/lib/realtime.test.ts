@@ -142,6 +142,7 @@ describe('normalizeRoomSnapshot', () => {
     });
 
     expect(snapshot.room.roomMode).toBe('slides');
+    expect(snapshot.room.allowAudienceAudioUpload).toBe(false);
   });
 
   it('preserves slide MIME metadata during normalization', () => {

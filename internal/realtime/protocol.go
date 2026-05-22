@@ -103,7 +103,7 @@ type SnapshotRoom struct {
 	SlidePage                 int    `json:"slidePage"`
 	SharedNavigationEnabled   bool   `json:"sharedNavigationEnabled"`
 	RoomMode                  string `json:"roomMode"`
-	AllowAudienceAudioAccess  bool   `json:"allowAudienceAudioAccess"`
+	AllowAudienceAudioUpload  bool   `json:"allowAudienceAudioUpload"`
 	AllowAudienceAudioControl bool   `json:"allowAudienceAudioControl"`
 }
 

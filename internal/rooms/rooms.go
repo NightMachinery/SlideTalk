@@ -87,7 +87,7 @@ type SettingsInput struct {
 	AllowParticipantMarkdown  *bool
 	SharedNavigationEnabled   *bool
 	RoomMode                  *string
-	AllowAudienceAudioAccess  *bool
+	AllowAudienceAudioUpload  *bool
 	AllowAudienceAudioControl *bool
 	RaiseHandMode             *string
 }
@@ -335,9 +335,9 @@ func (s *Service) UpdateSettings(ctx context.Context, roomID string, input Setti
 			return Room{}, fmt.Errorf("update room mode: %w", err)
 		}
 	}
-	if input.AllowAudienceAudioAccess != nil {
-		if _, err := tx.ExecContext(ctx, `update rooms set allow_audience_audio_access = ?, updated_at = ? where id = ?`, *input.AllowAudienceAudioAccess, nowText(), roomID); err != nil {
-			return Room{}, fmt.Errorf("update audience audio access: %w", err)
+	if input.AllowAudienceAudioUpload != nil {
+		if _, err := tx.ExecContext(ctx, `update rooms set allow_audience_audio_upload = ?, updated_at = ? where id = ?`, *input.AllowAudienceAudioUpload, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update audience audio upload: %w", err)
 		}
 	}
 	if input.AllowAudienceAudioControl != nil {

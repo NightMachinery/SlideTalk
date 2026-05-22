@@ -17,7 +17,7 @@ export type RoomSnapshot = {
     raiseHandMode: 'off' | 'manual' | 'queue';
     slidePage: number;
     sharedNavigationEnabled: boolean;
-    allowAudienceAudioAccess: boolean;
+    allowAudienceAudioUpload: boolean;
     allowAudienceAudioControl: boolean;
   };
   caller: {
@@ -107,7 +107,7 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
     room: {
       ...snapshot.room,
       roomMode: snapshot.room.roomMode ?? 'slides',
-      allowAudienceAudioAccess: snapshot.room.allowAudienceAudioAccess ?? false,
+      allowAudienceAudioUpload: snapshot.room.allowAudienceAudioUpload ?? false,
       allowAudienceAudioControl: snapshot.room.allowAudienceAudioControl ?? false
     },
     participants: snapshot.participants ?? [],
@@ -171,7 +171,7 @@ export type RealtimeCommand =
         sharedNavigationEnabled?: boolean;
         roomMode?: 'slides' | 'markdown' | 'audio';
         allowParticipantMarkdown?: boolean;
-        allowAudienceAudioAccess?: boolean;
+        allowAudienceAudioUpload?: boolean;
         allowAudienceAudioControl?: boolean;
       };
     }

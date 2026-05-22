@@ -122,7 +122,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		AllowParticipantMarkdown  bool
 		SlidePage                 int
 		SharedNavigationEnabled   bool
-		AllowAudienceAudioAccess  bool
+		AllowAudienceAudioUpload  bool
 		AllowAudienceAudioControl bool
 		AudioCurrentTrackID       sql.NullString
 		AudioState                string
@@ -139,7 +139,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		TimerStartedAt            sql.NullString
 		RaiseHandMode             string
 	}
-	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.room_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.allow_audience_audio_access, r.allow_audience_audio_control, r.audio_current_track_id, r.audio_state, r.audio_position_seconds, r.audio_started_at, r.audio_playback_mode, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.RoomMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.AllowAudienceAudioAccess, &roomRow.AllowAudienceAudioControl, &roomRow.AudioCurrentTrackID, &roomRow.AudioState, &roomRow.AudioPositionSeconds, &roomRow.AudioStartedAt, &roomRow.AudioPlaybackMode, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
+	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.room_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.allow_audience_audio_upload, r.allow_audience_audio_control, r.audio_current_track_id, r.audio_state, r.audio_position_seconds, r.audio_started_at, r.audio_playback_mode, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.RoomMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.AllowAudienceAudioUpload, &roomRow.AllowAudienceAudioControl, &roomRow.AudioCurrentTrackID, &roomRow.AudioState, &roomRow.AudioPositionSeconds, &roomRow.AudioStartedAt, &roomRow.AudioPlaybackMode, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Snapshot{}, rooms.ErrNotFound
 		}
@@ -159,7 +159,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			RaiseHandMode:             roomRow.RaiseHandMode,
 			SlidePage:                 roomRow.SlidePage,
 			SharedNavigationEnabled:   roomRow.SharedNavigationEnabled,
-			AllowAudienceAudioAccess:  roomRow.AllowAudienceAudioAccess,
+			AllowAudienceAudioUpload:  roomRow.AllowAudienceAudioUpload,
 			AllowAudienceAudioControl: roomRow.AllowAudienceAudioControl,
 		},
 		Caller: SnapshotCaller{
@@ -432,7 +432,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			SharedNavigationEnabled   *bool   `json:"sharedNavigationEnabled"`
 			RoomMode                  *string `json:"roomMode"`
 			AllowParticipantMarkdown  *bool   `json:"allowParticipantMarkdown"`
-			AllowAudienceAudioAccess  *bool   `json:"allowAudienceAudioAccess"`
+			AllowAudienceAudioUpload  *bool   `json:"allowAudienceAudioUpload"`
 			AllowAudienceAudioControl *bool   `json:"allowAudienceAudioControl"`
 		}
 		if err := json.Unmarshal(command.Payload, &payload); err != nil {
@@ -464,9 +464,9 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 				return fmt.Errorf("update participant markdown setting: %w", err)
 			}
 		}
-		if payload.AllowAudienceAudioAccess != nil {
-			if _, err := h.db.ExecContext(ctx, `update rooms set allow_audience_audio_access = ? where id = ?`, *payload.AllowAudienceAudioAccess, roomID); err != nil {
-				return fmt.Errorf("update audience audio access: %w", err)
+		if payload.AllowAudienceAudioUpload != nil {
+			if _, err := h.db.ExecContext(ctx, `update rooms set allow_audience_audio_upload = ? where id = ?`, *payload.AllowAudienceAudioUpload, roomID); err != nil {
+				return fmt.Errorf("update audience audio upload: %w", err)
 			}
 		}
 		if payload.AllowAudienceAudioControl != nil {

@@ -376,7 +376,7 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 		RoomMode                  *string `json:"roomMode"`
 		AllowParticipantMarkdown  *bool   `json:"allowParticipantMarkdown"`
 		SharedNavigationEnabled   *bool   `json:"sharedNavigationEnabled"`
-		AllowAudienceAudioAccess  *bool   `json:"allowAudienceAudioAccess"`
+		AllowAudienceAudioUpload  *bool   `json:"allowAudienceAudioUpload"`
 		AllowAudienceAudioControl *bool   `json:"allowAudienceAudioControl"`
 		RaiseHandMode             *string `json:"raiseHandMode"`
 	}
@@ -388,7 +388,7 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 		RoomMode:                  input.RoomMode,
 		AllowParticipantMarkdown:  input.AllowParticipantMarkdown,
 		SharedNavigationEnabled:   input.SharedNavigationEnabled,
-		AllowAudienceAudioAccess:  input.AllowAudienceAudioAccess,
+		AllowAudienceAudioUpload:  input.AllowAudienceAudioUpload,
 		AllowAudienceAudioControl: input.AllowAudienceAudioControl,
 		RaiseHandMode:             input.RaiseHandMode,
 	}
@@ -650,7 +650,7 @@ func (s *appServer) postRoomAudio(w http.ResponseWriter, r *http.Request, user a
 			writeRoomError(w, err)
 			return
 		}
-		if !snapshot.Room.AllowAudienceAudioAccess {
+		if !snapshot.Room.AllowAudienceAudioUpload {
 			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio uploads are not enabled for participants.")
 			return
 		}
@@ -671,21 +671,10 @@ func (s *appServer) getRoomAudioFile(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	roomID := roomIDFromContext(r.Context())
-	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	_, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
 	if err != nil {
 		writeRoomError(w, err)
 		return
-	}
-	if details.Membership.Role != rooms.RoleMod {
-		snapshot, err := s.hub.Snapshot(r.Context(), roomID, user.ID)
-		if err != nil {
-			writeRoomError(w, err)
-			return
-		}
-		if !snapshot.Room.AllowAudienceAudioAccess {
-			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio downloads are not enabled for this room.")
-			return
-		}
 	}
 	file, err := s.audio.CurrentRoomFile(r.Context(), roomID, trackIDFromContext(r.Context()))
 	if err != nil {
@@ -714,21 +703,10 @@ func (s *appServer) postRoomAudioDownloadLink(w http.ResponseWriter, r *http.Req
 		return
 	}
 	roomID := roomIDFromContext(r.Context())
-	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	_, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
 	if err != nil {
 		writeRoomError(w, err)
 		return
-	}
-	if details.Membership.Role != rooms.RoleMod {
-		snapshot, err := s.hub.Snapshot(r.Context(), roomID, user.ID)
-		if err != nil {
-			writeRoomError(w, err)
-			return
-		}
-		if !snapshot.Room.AllowAudienceAudioAccess {
-			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio downloads are not enabled for this room.")
-			return
-		}
 	}
 	trackID := trackIDFromContext(r.Context())
 	token, err := s.audio.IssueDownloadToken(r.Context(), roomID, trackID, user.ID)
@@ -747,21 +725,10 @@ func (s *appServer) getRoomAudioCover(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	roomID := roomIDFromContext(r.Context())
-	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	_, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
 	if err != nil {
 		writeRoomError(w, err)
 		return
-	}
-	if details.Membership.Role != rooms.RoleMod {
-		snapshot, err := s.hub.Snapshot(r.Context(), roomID, user.ID)
-		if err != nil {
-			writeRoomError(w, err)
-			return
-		}
-		if !snapshot.Room.AllowAudienceAudioAccess {
-			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio cover access is not enabled for this room.")
-			return
-		}
 	}
 	file, err := s.audio.CoverFile(r.Context(), roomID, trackIDFromContext(r.Context()))
 	if err != nil {
