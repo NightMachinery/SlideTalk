@@ -6,6 +6,7 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import ChevronsLeft from '@lucide/svelte/icons/chevrons-left';
   import ChevronsRight from '@lucide/svelte/icons/chevrons-right';
+  import Copy from '@lucide/svelte/icons/copy';
   import Eye from '@lucide/svelte/icons/eye';
   import FileText from '@lucide/svelte/icons/file-text';
   import FileWarning from '@lucide/svelte/icons/file-warning';
@@ -538,13 +539,18 @@
     startTimer();
   }
 
-  function resetTimer() {
-    send({ type: 'timer.reset' });
-  }
-
   function resetAndStartTimer() {
     send({ type: 'timer.reset' });
     window.setTimeout(startTimer, 50);
+  }
+
+  async function copyCurrentRoomLink() {
+    const result = await copyText(window.location.href);
+    if (result.copied) {
+      addToast('Room link copied', 'success');
+      return;
+    }
+    addToast('Could not copy room link automatically.');
   }
 
   function playBeep() {
@@ -1178,36 +1184,41 @@
     ></audio>
   {/if}
   <div class="room-stage">
-    <div class="timer-row" aria-label="Room timer">
-      <div class="timer-row-main">
-        <div class="timer-row-value">
-          <Timer size={18} />
-          <strong>{timerLabel}</strong>
-        </div>
-        <div class="timer-speakers" aria-label="Turn summary">
-          <span><strong>Now</strong> {currentSpeaker?.displayName || 'No speaker'}</span>
-          <span><strong>Next</strong> {nextSpeaker?.displayName || 'No one queued'}</span>
-        </div>
+    <div class="top-timer-row" aria-label="Room timer">
+      <div class={['top-timer-value', timerEndedPulse && 'timer-ended-pulse', remainingSeconds === 0 && snapshot.timer.state === 'running' && 'timer-ended']}>
+        <Timer size={18} />
+        <strong>{timerLabel}</strong>
       </div>
-      {#if isMod || canUseHands}
-        <div class="timer-row-controls" aria-label="Timer and hand controls">
-          {#if isMod}
-            <label class="compact-field">
-              Timer
-              <input type="number" min="1" max="86400" bind:value={timerDurationSeconds} />
-            </label>
-            <button type="button" onclick={toggleTimer}>{snapshot.timer.state === 'running' ? 'Stop' : 'Start'}</button>
-            <button type="button" title="Reset timer" onclick={resetTimer}>
-              <RotateCcw size={16} /> Reset
-            </button>
+
+      {#if isMod}
+        <input class="top-timer-duration" type="number" min="1" max="86400" bind:value={timerDurationSeconds} aria-label="Timer duration" />
+        <button class="top-icon-button" type="button" onclick={toggleTimer} title={snapshot.timer.state === 'running' ? 'Pause' : 'Start'} aria-label={snapshot.timer.state === 'running' ? 'Pause timer' : 'Start timer'}>
+          {#if snapshot.timer.state === 'running'}
+            <Pause size={16} />
+          {:else}
+            <Play size={16} />
           {/if}
-          {#if canUseHands}
-            <button class="hand-toggle compact-hand" type="button" onclick={toggleHand}>
-              <Hand size={17} /> {callerHand ? 'Lower hand' : 'Raise hand'}
-            </button>
-          {/if}
-        </div>
+        </button>
+        <button class="top-icon-button" type="button" onclick={resetAndStartTimer} title="Reset and start" aria-label="Reset and start timer">
+          <RotateCcw size={16} />
+        </button>
       {/if}
+
+      <div class="top-timer-speakers" aria-label="Turn summary">
+        <span><em>Now:</em> <strong>{currentSpeaker?.displayName || 'None'}</strong></span>
+        <span><em>Next:</em> <strong>{nextSpeaker?.displayName || 'None'}</strong></span>
+      </div>
+
+      <div class="top-room-actions">
+        <button class="top-icon-button" type="button" onclick={copyCurrentRoomLink} title="Copy room link" aria-label="Copy room link">
+          <Copy size={16} />
+        </button>
+        {#if canUseHands}
+          <button class={['top-icon-button', 'top-hand-button', callerHand && 'raised']} type="button" onclick={toggleHand} title={callerHand ? 'Lower hand' : 'Raise hand'} aria-label={callerHand ? 'Lower hand' : 'Raise hand'}>
+            <Hand size={16} />
+          </button>
+        {/if}
+      </div>
     </div>
 
     <section class="document-panel" aria-label={snapshot.room.roomMode === 'audio' ? 'Shared audio' : snapshot.room.roomMode === 'markdown' ? 'Shared markdown' : 'Slides'}>

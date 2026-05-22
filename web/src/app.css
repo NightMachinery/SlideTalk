@@ -955,27 +955,11 @@ h2 {
 }
 
 .moderator-controls button,
-.hand-toggle {
+.top-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-}
-
-.compact-field {
-  width: min(150px, 100%);
-  gap: 5px;
-  font-size: 0.78rem;
-}
-
-.compact-field input,
-.compact-field select {
-  min-height: 38px;
-}
-
-.hand-toggle {
-  grid-column: 1 / -1;
-  justify-self: start;
 }
 
 .hand-queue {
@@ -1170,80 +1154,124 @@ code {
   gap: 8px;
 }
 
-.timer-row {
+.top-timer-row {
   display: flex;
   min-width: 0;
   min-height: 48px;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   border: 1px solid oklch(82% 0.025 245);
   border-radius: 8px;
-  padding: 7px 9px;
+  padding: 7px 10px;
   background: oklch(99% 0.006 235 / 0.92);
 }
 
-.timer-row-main {
+.top-timer-value,
+.top-room-actions,
+.top-timer-speakers {
   display: inline-flex;
   min-width: 0;
-  flex: 1;
   align-items: center;
-  gap: 16px;
 }
 
-.timer-row-value,
-.timer-row-controls {
-  display: inline-flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+.top-timer-value {
+  flex: 0 0 auto;
+  gap: 7px;
 }
 
-.timer-row-value strong {
+.top-timer-value strong {
   color: oklch(18% 0.018 245);
-  font-size: 1.52rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.25rem;
   line-height: 1;
 }
 
-.timer-speakers {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, auto));
-  gap: 6px 12px;
+.top-timer-value.timer-ended {
+  color: oklch(54% 0.18 28);
 }
 
-.timer-speakers span {
-  overflow: hidden;
+.top-timer-value.timer-ended strong {
+  color: oklch(42% 0.17 28);
+}
+
+.timer-ended-pulse {
+  animation: timer-ended-pulse 720ms ease-in-out infinite alternate;
+}
+
+.top-timer-duration {
+  width: 68px;
+  min-height: 34px;
+  border-radius: 7px;
+  padding: 0 8px;
+  background: transparent;
+  font-size: 0.86rem;
+}
+
+.top-icon-button,
+.rail-collapse-toggle,
+.rail-edge-toggle {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.84rem;
+}
+
+.top-icon-button {
+  width: 34px;
+  min-width: 34px;
+  border-radius: 7px;
+  padding: 0;
+  background: transparent;
+}
+
+.top-icon-button:hover:not(:disabled) {
+  transform: none;
+  background: oklch(92% 0.02 245);
+}
+
+.top-hand-button.raised {
+  color: oklch(36% 0.1 205);
+  background: oklch(91% 0.06 205);
+}
+
+.top-hand-button.raised:hover:not(:disabled) {
+  background: oklch(86% 0.07 205);
+}
+
+.top-timer-speakers {
+  flex: 1 1 auto;
+  justify-content: center;
+  gap: 12px;
   color: oklch(30% 0.024 245);
-  font-size: 0.82rem;
-  font-weight: 680;
+  font-size: 0.86rem;
+  text-align: center;
+}
+
+.top-timer-speakers span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.timer-speakers strong {
-  margin-right: 4px;
-  color: oklch(48% 0.07 195);
-  font-size: 0.72rem;
-  letter-spacing: 0;
-  text-transform: uppercase;
+.top-timer-speakers em {
+  color: oklch(48% 0.026 245);
+  font-style: normal;
+  font-weight: 700;
 }
 
-.timer-row-controls {
-  justify-content: flex-end;
+.top-room-actions {
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
-.timer-row-controls button,
-.rail-collapse-toggle,
-.rail-edge-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 10px;
-  font-size: 0.84rem;
+@keyframes timer-ended-pulse {
+  from {
+    transform: scale(1);
+  }
+
+  to {
+    transform: scale(1.08);
+  }
 }
 
 .room-board-header {
@@ -1775,25 +1803,16 @@ kbd {
     overflow: visible;
   }
 
-  .timer-row {
-    align-items: flex-start;
+  .top-timer-row {
     flex-wrap: wrap;
+    gap: 8px;
   }
 
-  .timer-row-main {
-    width: 100%;
-    flex-wrap: wrap;
-    gap: 8px 12px;
-  }
-
-  .timer-speakers {
-    flex: 1;
-    grid-template-columns: 1fr;
-  }
-
-  .timer-row-controls {
-    width: 100%;
+  .top-timer-speakers {
+    order: 3;
+    flex-basis: 100%;
     justify-content: flex-start;
+    text-align: left;
   }
 
   .rail-edge-toggle {
