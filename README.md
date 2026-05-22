@@ -59,7 +59,10 @@ PATCH /api/rooms/{roomId}/slide
 DELETE /api/rooms/{roomId}/slide
 GET /api/rooms/{roomId}/slide/file
 POST /api/rooms/{roomId}/audio
+PATCH /api/rooms/{roomId}/audio/{trackId}
+POST /api/rooms/{roomId}/audio/{trackId}/download-link
 GET /api/rooms/{roomId}/audio/{trackId}
+GET /api/rooms/{roomId}/audio/{trackId}/cover
 DELETE /api/rooms/{roomId}/audio/{trackId}
 GET /api/slides/{sha256}
 POST /api/slides
@@ -125,9 +128,11 @@ Runtime data lives under `~/.slidetalk` by default:
 
 Room participants fetch an initial room snapshot from `/api/rooms/{roomId}/snapshot`, then connect to `/api/ws` with a one-time room-scoped ticket for live updates. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, manual or queue-based raised hands, shared slide navigation, markdown updates, room settings, password changes, slide replacement/removal, audio playlist controls, and synchronized audio play/pause/seek.
 
-Room moderators can upload or replace the PDF, PNG, JPEG, WebP, or GIF slide file attached to their room. Rooms use a single mode setting: slides, markdown, or audio. In audio mode, the shared audio player, playlist, finish behavior, and upload controls move into the main stage instead of a right-side audio rail. Optional room settings let non-observer participants upload/download audio and separately control playback; observers can see and download audio when audience access is enabled, but cannot upload or control playback. Site admins bypass the audio per-file size limit after a browser confirmation, but all uploads remain subject to the minimum free-space floor.
+Room moderators can upload or replace the PDF, PNG, JPEG, WebP, or GIF slide file attached to their room. Rooms use a single mode setting: slides, markdown, or audio. In audio mode, the shared audio player, playlist, finish behavior, and upload controls move into the main stage instead of a right-side audio rail. Optional room settings let non-observer participants upload/download audio and separately control playback; observers can see and download audio when audience access is enabled, but cannot upload or control playback. Site admins bypass the audio per-file size limit after a styled confirmation, but all uploads remain subject to the minimum free-space floor.
 
-The browser hashes files before upload, the server stores files by SHA-256 and validated extension, and cleanup runs hourly.
+Audio downloads can be converted into room-track download links with a random bearer token in the URL. These links are intended for external download managers and remain valid until the track is removed from the room; the server stores only a hash of the token and does not include browser auth tokens or user IDs in the URL. Browsers stream uncached audio immediately, fill a persistent IndexedDB audio cache in the background, and reuse cached blobs for playback and manual downloads after refresh. The browser cache garbage-collects entries older than 30 days and trims oldest entries beyond 1 GiB or 30 files.
+
+The browser hashes files before upload, extracts supported audio title/duration/cover metadata, the server stores files by SHA-256 and validated extension, and cleanup runs hourly. Room moderators can edit a track's display title and uploader display name; uploaders can edit their own track title.
 
 Room moderators can create 24-hour migration links from room settings. A migration ID is a bearer secret that is shown once to the issuing browser, lets the holder join that room even when it has a password, and is stored in SQLite only as a SHA-256 hash.
 

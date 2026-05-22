@@ -44,7 +44,9 @@ Room moderators can upload, replace, or remove the slide file attached to their 
 
 The slide upload path enforces the configured maximum file size with `SLIDETALK_SLIDE_UPLOAD_LIMIT`, validates supported extension and detected content type, preserves the stored MIME type for serving, and rejects hash mismatches.
 
-Audio files are stored under `~/.slidetalk/audio/` by SHA-256 and playlist rows are scoped to rooms. Moderators can upload, reorder, control, and remove any room audio track. Non-observer participants can upload and control playback only when the moderator enables the corresponding room settings. Observers can see and download room audio when audience audio access is enabled, but cannot upload or control playback.
+Audio files are stored under `~/.slidetalk/audio/` by SHA-256 and playlist rows are scoped to rooms. Moderators can upload, reorder, control, edit display metadata, and remove any room audio track. Uploaders can edit their own track title. Non-observer participants can upload and control playback only when the moderator enables the corresponding room settings. Observers can see and download room audio when audience audio access is enabled, but cannot upload or control playback.
+
+Audio download links use random room-track bearer tokens in the URL so copied links work in external download managers. The server stores only token hashes, never raw tokens or browser auth tokens. These links remain valid until the associated room track is removed, so operators should treat copied audio URLs as room-scoped bearer secrets.
 
 Non-admin audio uploads are capped by `SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT`; site admins can bypass that per-file limit after client confirmation. Slide and audio uploads are rejected when the server would have less free disk space than `SLIDETALK_MIN_FREE_SPACE` after retaining the upload. Audio tracks are garbage-collected after room age exceeds `SLIDETALK_AUDIO_FILES_GC_AFTER`.
 
@@ -61,4 +63,4 @@ HTTPS is recommended. Plain HTTP deployments remain usable for intranets, but br
 
 ## Logging
 
-The server logs startup and slide cleanup failures. It does not log raw auth tokens, room passwords, admin-token submissions, WebSocket tickets, or migration IDs.
+The server logs startup and slide cleanup failures. It does not log raw auth tokens, room passwords, admin-token submissions, WebSocket tickets, audio download tokens, or migration IDs.

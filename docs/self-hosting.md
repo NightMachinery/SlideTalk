@@ -104,6 +104,8 @@ JSON request bodies are capped by the server. PDF, PNG, JPEG, WebP, and GIF slid
 
 Audio uploads are capped for non-admin users by `SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT`, which defaults to 50 MiB. Site admins can upload larger audio files after a browser confirmation. Slide and audio uploads are rejected when retaining the upload would leave less free disk space than `SLIDETALK_MIN_FREE_SPACE`, which defaults to 0.5 GiB. Room audio tracks are cleaned after room age exceeds `SLIDETALK_AUDIO_FILES_GC_AFTER`, which defaults to 7 days.
 
+Browsers keep downloaded audio blobs in IndexedDB so playback can resume from cached files after refresh. That browser cache is local to each client and self-prunes entries older than 30 days, then trims oldest cached audio beyond 1 GiB or 30 files. Server-side audio download links include durable room-track bearer tokens for external download managers and remain valid until the track is removed.
+
 Admin-token submissions, invalid room-password attempts, and WebSocket ticket creation are rate-limited.
 
 ## Proxy Environment
