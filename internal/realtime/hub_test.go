@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -328,6 +330,30 @@ func TestSlideNavigateUpdatesSharedPageOnlyWhenSharingEnabled(t *testing.T) {
 	}
 	if snapshot.Room.SlidePage != 4 {
 		t.Fatalf("slide page = %d, want 4", snapshot.Room.SlidePage)
+	}
+}
+
+func TestSnapshotSlideIncludesMIMEType(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+	sha := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	slidePath := filepath.Join(t.TempDir(), sha+".png")
+	if err := os.WriteFile(slidePath, []byte("\x89PNG\r\n\x1a\n"), 0o600); err != nil {
+		t.Fatalf("write slide file: %v", err)
+	}
+	if _, err := hub.db.ExecContext(ctx, `insert into slide_files (sha256, ext, size_bytes, mime_type, stored_path, uploaded_by_user_id, created_at, missing_at) values (?, ?, ?, ?, ?, ?, ?, null)`, sha, "png", 8, "image/png", slidePath, modID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert slide file: %v", err)
+	}
+	if _, err := hub.db.ExecContext(ctx, `insert into room_slides (room_id, sha256, original_name, expires_at, uploaded_by_user_id, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)`, roomID, sha, "diagram.png", time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano), modID, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert room slide: %v", err)
+	}
+
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Slide == nil || snapshot.Slide.MIMEType != "image/png" {
+		t.Fatalf("slide = %+v, want image/png MIME type", snapshot.Slide)
 	}
 }
 

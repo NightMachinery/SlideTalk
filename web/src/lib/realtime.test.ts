@@ -124,4 +124,29 @@ describe('normalizeRoomSnapshot', () => {
     expect(snapshot.observers).toEqual([]);
     expect(snapshot.hands).toEqual([]);
   });
+
+  it('preserves slide MIME metadata during normalization', () => {
+    const snapshot = normalizeRoomSnapshot({
+      room: { id: 'room-one', title: 'Live', hasPassword: false, noSlideMode: false, allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
+      caller: { userId: 'user-one', role: 'mod', isAdmin: false },
+      participants: [],
+      observers: [],
+      currentTurn: { currentSpeakerUserId: '', nextSpeakerUserId: '' },
+      timer: { state: 'stopped', durationSeconds: 0, startedAt: null, serverNow: '2026-05-22T00:00:00Z' },
+      hands: [],
+      slide: {
+        sha256: 'a'.repeat(64),
+        originalName: 'diagram.png',
+        expiresAt: '2026-05-23T00:00:00Z',
+        missing: false,
+        mimeType: 'image/png'
+      },
+      markdown: '',
+      markdownUpdatedByUserId: '',
+      markdownUpdatedByName: '',
+      markdownUpdatedAt: ''
+    });
+
+    expect(snapshot.slide?.mimeType).toBe('image/png');
+  });
 });

@@ -35,6 +35,79 @@ func TestStoreRejectsNonPDFExtension(t *testing.T) {
 	}
 }
 
+func TestStoreAcceptsImageSlideAndUsesValidatedExtensionAndMIME(t *testing.T) {
+	ctx := context.Background()
+	fixture := newSlideFixture(t)
+	content := []byte("\x89PNG\r\n\x1a\nimage\n")
+	sum := sha256Hex(content)
+
+	_, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sum,
+		OriginalName: "diagram.png",
+		ExpiresAt:    time.Now().UTC().Add(24 * time.Hour),
+		MIMEType:     "image/png",
+		File:         bytes.NewReader(content),
+	})
+	if err != nil {
+		t.Fatalf("store image slide: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(fixture.slideDir, sum+".png")); err != nil {
+		t.Fatalf("stored image path: %v", err)
+	}
+	file, err := fixture.service.CurrentRoomFile(ctx, fixture.room.ID)
+	if err != nil {
+		t.Fatalf("current room file: %v", err)
+	}
+	if file.MIMEType != "image/png" {
+		t.Fatalf("mime type = %q, want image/png", file.MIMEType)
+	}
+}
+
+func TestStorePreservesJPGExtensionForJPEGSlides(t *testing.T) {
+	ctx := context.Background()
+	fixture := newSlideFixture(t)
+	content := []byte{0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43, 0x00}
+	sum := sha256Hex(content)
+
+	_, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sum,
+		OriginalName: "photo.jpg",
+		ExpiresAt:    time.Now().UTC().Add(24 * time.Hour),
+		MIMEType:     "image/jpeg",
+		File:         bytes.NewReader(content),
+	})
+	if err != nil {
+		t.Fatalf("store jpg slide: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(fixture.slideDir, sum+".jpg")); err != nil {
+		t.Fatalf("stored jpg path: %v", err)
+	}
+}
+
+func TestStoreRejectsMismatchedImageExtensionAndMIME(t *testing.T) {
+	ctx := context.Background()
+	fixture := newSlideFixture(t)
+	content := []byte("not really a jpeg")
+	sum := sha256Hex(content)
+
+	_, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sum,
+		OriginalName: "diagram.png",
+		ExpiresAt:    time.Now().UTC().Add(24 * time.Hour),
+		MIMEType:     "image/jpeg",
+		File:         bytes.NewReader(content),
+	})
+
+	if !errors.Is(err, ErrUnsupportedFile) {
+		t.Fatalf("expected unsupported file error, got %v", err)
+	}
+}
+
 func TestStoreRejectsHashMismatch(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSlideFixture(t)

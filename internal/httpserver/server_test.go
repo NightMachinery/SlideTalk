@@ -474,6 +474,29 @@ func TestRoomMemberCanFetchCurrentPDFAndNonMemberCannot(t *testing.T) {
 	}
 }
 
+func TestRoomMemberCanFetchCurrentImageWithStoredContentType(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	content := []byte("\x89PNG\r\n\x1a\nstream\n")
+	body, contentType := slideUploadBody(t, roomID, "diagram.png", content, sha256HexTest(content))
+	request := httptest.NewRequest(http.MethodPost, "/api/slides", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusCreated)
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/slide/file", "", "admin"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("member status = %d body = %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("content type = %q, want image/png", got)
+	}
+	if !bytes.Equal(response.Body.Bytes(), content) {
+		t.Fatalf("streamed content mismatch: %q", response.Body.String())
+	}
+}
+
 func TestRoomSlideFileReportsManualDeletion(t *testing.T) {
 	dataDir := t.TempDir()
 	server := newAPITestServerWithDataDir(t, dataDir)

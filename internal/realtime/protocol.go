@@ -121,6 +121,7 @@ type SnapshotHand struct {
 type SnapshotSlide struct {
 	SHA256       string `json:"sha256"`
 	OriginalName string `json:"originalName"`
+	MIMEType     string `json:"mimeType"`
 	ExpiresAt    string `json:"expiresAt"`
 	Missing      bool   `json:"missing"`
 }

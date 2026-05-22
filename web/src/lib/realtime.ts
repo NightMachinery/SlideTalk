@@ -43,6 +43,7 @@ export type RoomSnapshot = {
   slide: {
     sha256: string;
     originalName: string;
+    mimeType: string;
     expiresAt: string;
     missing: boolean;
   } | null;

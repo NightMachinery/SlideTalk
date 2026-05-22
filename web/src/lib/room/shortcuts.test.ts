@@ -40,6 +40,14 @@ describe('shortcut configuration', () => {
     expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: '[' }), config)).toBe('previousSlide');
     expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: ']' }), config)).toBe('nextSlide');
     expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: '?' }), config)).toBe('toggleHelp');
+    expect(resolveShortcutAction(new KeyboardEvent('keydown', { key: '/', shiftKey: true }), config)).toBe('toggleHelp');
+  });
+
+  it('keeps shifted help shortcut suppressed in editable fields', () => {
+    document.body.innerHTML = '<input id="shortcut-source" />';
+    const input = document.getElementById('shortcut-source');
+
+    expect(shouldIgnoreShortcut(new KeyboardEvent('keydown', { key: '/', shiftKey: true }), input)).toBe(true);
   });
 
   it('persists custom shortcut bindings locally', () => {

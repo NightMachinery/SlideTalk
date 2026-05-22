@@ -581,7 +581,7 @@ func (s *appServer) getRoomSlideFile(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	defer handle.Close()
-	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Type", file.MIMEType)
 	w.Header().Set("Content-Disposition", `inline; filename="`+strings.ReplaceAll(file.OriginalName, `"`, "")+`"`)
 	http.ServeContent(w, r, file.OriginalName, time.Time{}, handle)
 }

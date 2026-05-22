@@ -38,11 +38,11 @@ Treat every migration ID as a bearer secret: it should not appear in logs, scree
 
 ## File Storage And Expiration
 
-PDF files are stored under `~/.slidetalk/slides/` by SHA-256. Room references include expiration timestamps, and the server periodically cleans expired room references and unreferenced files.
+PDF, PNG, JPEG, WebP, and GIF slide files are stored under `~/.slidetalk/slides/` by SHA-256 and validated extension. Room references include expiration timestamps, and the server periodically cleans expired room references and unreferenced files.
 
-Room moderators can upload, replace, or remove the PDF attached to their room. Site admins can inspect slide storage status and change slide expiration. Existing file content is deduplicated by hash.
+Room moderators can upload, replace, or remove the slide file attached to their room. Site admins can inspect slide storage status and change slide expiration. Existing file content is deduplicated by hash.
 
-The upload path enforces the configured maximum file size with `SLIDETALK_SLIDE_MAX_BYTES`, validates PDF extension/content shape, and rejects hash mismatches.
+The upload path enforces the configured maximum file size with `SLIDETALK_SLIDE_MAX_BYTES`, validates supported extension and detected content type, preserves the stored MIME type for serving, and rejects hash mismatches.
 
 ## Browser And HTTP Constraints
 

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,16 @@ import (
 	"github.com/NightMachinery/SlideTalk/internal/store"
 )
 
-const pdfExt = ".pdf"
+const (
+	pdfExt       = "pdf"
+	octetMIME    = "application/octet-stream"
+	pdfMIME      = "application/pdf"
+	pngMIME      = "image/png"
+	jpegMIME     = "image/jpeg"
+	webpMIME     = "image/webp"
+	gifMIME      = "image/gif"
+	detectPrefix = 512
+)
 
 // Service stores slide PDFs under a configured local directory.
 type Service struct {
@@ -50,10 +60,11 @@ type RoomFile struct {
 	SHA256       string
 	OriginalName string
 	StoredPath   string
+	MIMEType     string
 }
 
 var (
-	ErrUnsupportedFile = errors.New("only PDF slide files are supported")
+	ErrUnsupportedFile = errors.New("only PDF, PNG, JPEG, WebP, and GIF slide files are supported")
 	ErrHashMismatch    = errors.New("slide hash does not match uploaded file")
 	ErrInvalidHash     = errors.New("slide hash must be a SHA-256 hex digest")
 	ErrMissingFile     = errors.New("slide file was deleted manually")
@@ -121,12 +132,12 @@ func (s *Service) CurrentRoomFile(ctx context.Context, roomID string) (RoomFile,
 	var missingAt sql.NullString
 	err := s.db.QueryRowContext(
 		ctx,
-		`select rs.sha256, rs.original_name, sf.stored_path, sf.missing_at
+		`select rs.sha256, rs.original_name, sf.stored_path, sf.mime_type, sf.missing_at
 		 from room_slides rs
 		 join slide_files sf on sf.sha256 = rs.sha256
 		 where rs.room_id = ?`,
 		roomID,
-	).Scan(&file.SHA256, &file.OriginalName, &file.StoredPath, &missingAt)
+	).Scan(&file.SHA256, &file.OriginalName, &file.StoredPath, &file.MIMEType, &missingAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RoomFile{}, ErrNoRoomSlide
 	}
@@ -152,10 +163,8 @@ func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (S
 	if !validSHA256(sha) {
 		return Status{}, ErrInvalidHash
 	}
-	if filepath.Ext(strings.ToLower(input.OriginalName)) != pdfExt {
-		return Status{}, ErrUnsupportedFile
-	}
-	if input.MIMEType != "" && input.MIMEType != "application/pdf" && input.MIMEType != "application/octet-stream" {
+	media, err := mediaFor(input.OriginalName, input.MIMEType)
+	if err != nil {
 		return Status{}, ErrUnsupportedFile
 	}
 	if !input.ExpiresAt.After(time.Now().UTC()) {
@@ -169,34 +178,41 @@ func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (S
 	if status.Missing {
 		return Status{}, ErrMissingFile
 	}
-	path := s.pathFor(sha)
+	path := s.pathFor(sha, media.ext)
 	sizeBytes := int64(0)
 	if input.File == nil {
 		if !status.AlreadyUploaded {
 			return Status{}, ErrFileRequired
 		}
 		var existingSize int64
-		if err := s.db.QueryRowContext(ctx, `select size_bytes from slide_files where sha256 = ?`, sha).Scan(&existingSize); err != nil {
+		if err := s.db.QueryRowContext(ctx, `select size_bytes, stored_path from slide_files where sha256 = ?`, sha).Scan(&existingSize, &path); err != nil {
 			return Status{}, fmt.Errorf("read existing slide size: %w", err)
 		}
 		sizeBytes = existingSize
 	} else if status.AlreadyUploaded {
-		hash, written, err := hashUpload(input.File, io.Discard, s.maxBytes)
+		hash, written, detected, err := hashUpload(input.File, io.Discard, s.maxBytes)
 		if err != nil {
 			return Status{}, err
 		}
 		if hash != sha {
 			return Status{}, ErrHashMismatch
 		}
+		if !media.matchesDetected(detected) {
+			return Status{}, ErrUnsupportedFile
+		}
 		sizeBytes = written
 	} else {
-		hash, written, err := s.writeFile(sha, input.File)
+		hash, written, detected, err := s.writeFile(sha, media.ext, input.File)
 		if err != nil {
 			return Status{}, err
 		}
 		if hash != sha {
 			_ = os.Remove(path)
 			return Status{}, ErrHashMismatch
+		}
+		if !media.matchesDetected(detected) {
+			_ = os.Remove(path)
+			return Status{}, ErrUnsupportedFile
 		}
 		sizeBytes = written
 	}
@@ -213,9 +229,9 @@ func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (S
 		 values (?, ?, ?, ?, ?, ?, ?, null)
 		 on conflict(sha256) do update set missing_at = null`,
 		sha,
-		"pdf",
+		media.ext,
 		sizeBytes,
-		mimeFor(input.MIMEType),
+		media.mime,
 		path,
 		userID,
 		now,
@@ -313,41 +329,42 @@ func (s *Service) Cleanup(ctx context.Context, at time.Time) error {
 	return nil
 }
 
-func (s *Service) writeFile(sha string, reader io.Reader) (string, int64, error) {
-	path := s.pathFor(sha)
+func (s *Service) writeFile(sha string, ext string, reader io.Reader) (string, int64, string, error) {
+	path := s.pathFor(sha, ext)
 	tmp, err := os.CreateTemp(s.slideDir, sha+".*.tmp")
 	if err != nil {
-		return "", 0, fmt.Errorf("create temp slide: %w", err)
+		return "", 0, "", fmt.Errorf("create temp slide: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 	}()
-	hash, written, err := hashUpload(reader, tmp, s.maxBytes)
+	hash, written, detected, err := hashUpload(reader, tmp, s.maxBytes)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	if err := tmp.Close(); err != nil {
-		return "", 0, fmt.Errorf("close temp slide: %w", err)
+		return "", 0, "", fmt.Errorf("close temp slide: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return "", 0, fmt.Errorf("store slide: %w", err)
+		return "", 0, "", fmt.Errorf("store slide: %w", err)
 	}
-	return hash, written, nil
+	return hash, written, detected, nil
 }
 
-func hashUpload(reader io.Reader, writer io.Writer, maxBytes int64) (string, int64, error) {
+func hashUpload(reader io.Reader, writer io.Writer, maxBytes int64) (string, int64, string, error) {
 	hasher := sha256.New()
+	detector := &contentDetector{}
 	limited := &limitReader{reader: reader, remaining: maxBytes + 1}
-	written, err := io.Copy(io.MultiWriter(writer, hasher), limited)
+	written, err := io.Copy(io.MultiWriter(writer, hasher, detector), limited)
 	if err != nil {
-		return "", 0, fmt.Errorf("read slide upload: %w", err)
+		return "", 0, "", fmt.Errorf("read slide upload: %w", err)
 	}
 	if written > maxBytes {
-		return "", 0, ErrTooLarge
+		return "", 0, "", ErrTooLarge
 	}
-	return hex.EncodeToString(hasher.Sum(nil)), written, nil
+	return hex.EncodeToString(hasher.Sum(nil)), written, detector.MIME(), nil
 }
 
 type limitReader struct {
@@ -367,8 +384,8 @@ func (r *limitReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (s *Service) pathFor(sha string) string {
-	return filepath.Join(s.slideDir, sha+pdfExt)
+func (s *Service) pathFor(sha string, ext string) string {
+	return filepath.Join(s.slideDir, sha+"."+ext)
 }
 
 func validSHA256(value string) bool {
@@ -379,11 +396,65 @@ func validSHA256(value string) bool {
 	return err == nil
 }
 
-func mimeFor(value string) string {
-	if value == "" {
-		return "application/pdf"
+type mediaType struct {
+	ext  string
+	mime string
+}
+
+func mediaFor(originalName string, mimeType string) (mediaType, error) {
+	ext := strings.TrimPrefix(filepath.Ext(strings.ToLower(strings.TrimSpace(originalName))), ".")
+	byExt := map[string]string{
+		pdfExt: "application/pdf",
+		"png":  pngMIME,
+		"jpg":  jpegMIME,
+		"jpeg": jpegMIME,
+		"webp": webpMIME,
+		"gif":  gifMIME,
 	}
-	return value
+	expected, ok := byExt[ext]
+	if !ok {
+		return mediaType{}, ErrUnsupportedFile
+	}
+	mime := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	if mime == "" || mime == octetMIME {
+		mime = expected
+	}
+	if mime != expected {
+		return mediaType{}, ErrUnsupportedFile
+	}
+	return mediaType{ext: ext, mime: expected}, nil
+}
+
+func (m mediaType) matchesDetected(detected string) bool {
+	if detected == "" || detected == octetMIME {
+		return false
+	}
+	if m.mime == jpegMIME {
+		return detected == jpegMIME
+	}
+	return detected == m.mime
+}
+
+type contentDetector struct {
+	prefix []byte
+}
+
+func (d *contentDetector) Write(p []byte) (int, error) {
+	remaining := detectPrefix - len(d.prefix)
+	if remaining > 0 {
+		if len(p) < remaining {
+			remaining = len(p)
+		}
+		d.prefix = append(d.prefix, p[:remaining]...)
+	}
+	return len(p), nil
+}
+
+func (d *contentDetector) MIME() string {
+	if len(d.prefix) == 0 {
+		return ""
+	}
+	return http.DetectContentType(d.prefix)
 }
 
 func nowText() string {

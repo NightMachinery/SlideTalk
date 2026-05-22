@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import ChevronLeft from '@lucide/svelte/icons/chevron-left';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import ChevronsLeft from '@lucide/svelte/icons/chevrons-left';
+  import ChevronsRight from '@lucide/svelte/icons/chevrons-right';
   import Eye from '@lucide/svelte/icons/eye';
   import FileText from '@lucide/svelte/icons/file-text';
   import FileWarning from '@lucide/svelte/icons/file-warning';
@@ -48,6 +50,7 @@
   };
 
   type PanelState = {
+    railCollapsed: boolean;
     participants: boolean;
     observers: boolean;
     slides: boolean;
@@ -69,6 +72,7 @@
   } = $props();
 
   let panelState = $state<PanelState>({
+    railCollapsed: false,
     participants: true,
     observers: true,
     slides: true,
@@ -91,7 +95,11 @@
   let slideCanvas = $state<HTMLCanvasElement | null>(null);
   let pdfDocument = $state<PDFDocumentLike | null>(null);
   let pdfError = $state('');
+  let imageObjectUrl = $state('');
+  let activeImageObjectUrl = '';
+  let imageError = $state('');
   let localPage = $state(1);
+  let stageResizeTick = $state(0);
   let followSharedNavigation = $state(true);
   let modShareNavigation = $state(false);
   let markdownDraft = $state('');
@@ -112,6 +120,9 @@
   const canUseHands = $derived(snapshot.caller.role !== 'observer' && snapshot.room.raiseHandMode !== 'off');
   const markdownBlocks = $derived(parseMarkdown(snapshot.markdown || ''));
   const markdownEditorVisible = $derived(snapshot.room.noSlideMode && canEditMarkdown);
+  const slideMimeType = $derived(snapshot.slide?.mimeType || 'application/pdf');
+  const slideIsPDF = $derived(slideMimeType === 'application/pdf');
+  const slideIsImage = $derived(slideMimeType.startsWith('image/'));
   const timerSync = $derived.by(() => {
     const serverNowMs = Date.parse(snapshot.timer.serverNow);
     const receivedAtMs = Date.now();
@@ -138,7 +149,14 @@
     const interval = window.setInterval(() => {
       nowMs = Date.now();
     }, 1000);
-    return () => window.clearInterval(interval);
+    const resize = () => {
+      stageResizeTick += 1;
+    };
+    window.addEventListener('resize', resize);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('resize', resize);
+    };
   });
 
   $effect(() => {
@@ -178,7 +196,7 @@
 
   $effect(() => {
     const slideKey = snapshot.slide?.sha256;
-    if (!slideKey || snapshot.slide?.missing || snapshot.room.noSlideMode) {
+    if (!slideKey || snapshot.slide?.missing || snapshot.room.noSlideMode || !slideIsPDF) {
       pdfDocument = null;
       pdfError = '';
       return;
@@ -217,7 +235,49 @@
   });
 
   $effect(() => {
+    const slideKey = snapshot.slide?.sha256;
+    if (!slideKey || snapshot.slide?.missing || snapshot.room.noSlideMode || !slideIsImage) {
+      if (activeImageObjectUrl) {
+        URL.revokeObjectURL(activeImageObjectUrl);
+        activeImageObjectUrl = '';
+        imageObjectUrl = '';
+      }
+      imageError = '';
+      return;
+    }
+
+    let cancelled = false;
+    let nextUrl = '';
+    imageError = '';
+    void loadImage().catch((error) => {
+      if (!cancelled) {
+        imageError = error instanceof Error ? error.message : 'Could not load image slide.';
+      }
+    });
+
+    async function loadImage() {
+      const request = slideFileRequest(snapshot.room.id);
+      const response = await fetch(request.url, { headers: request.headers });
+      if (!response.ok) throw new Error('Could not load image slide.');
+      const blob = await response.blob();
+      nextUrl = URL.createObjectURL(blob);
+      if (!cancelled) {
+        if (activeImageObjectUrl) URL.revokeObjectURL(activeImageObjectUrl);
+        activeImageObjectUrl = nextUrl;
+        imageObjectUrl = nextUrl;
+        localPage = 1;
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      if (nextUrl && nextUrl !== activeImageObjectUrl) URL.revokeObjectURL(nextUrl);
+    };
+  });
+
+  $effect(() => {
     if (!pdfDocument || !slideCanvas || snapshot.room.noSlideMode) return;
+    stageResizeTick;
     let cancelled = false;
     void renderPDFPage(pdfDocument, slideCanvas, localPage).catch((error) => {
       if (!cancelled) {
@@ -526,11 +586,13 @@
   }
 
   function totalPageCount() {
+    if (slideIsImage) return 1;
     return Math.max(pdfDocument?.numPages ?? snapshot.room.slidePage ?? 1, 1);
   }
 
   function loadPanelState(): PanelState {
     const fallback: PanelState = {
+      railCollapsed: false,
       participants: true,
       observers: true,
       slides: true,
@@ -542,6 +604,7 @@
       if (!raw) return fallback;
       const parsed = JSON.parse(raw) as Partial<PanelState>;
       return {
+        railCollapsed: typeof parsed.railCollapsed === 'boolean' ? parsed.railCollapsed : fallback.railCollapsed,
         participants: typeof parsed.participants === 'boolean' ? parsed.participants : fallback.participants,
         observers: typeof parsed.observers === 'boolean' ? parsed.observers : fallback.observers,
         slides: typeof parsed.slides === 'boolean' ? parsed.slides : fallback.slides,
@@ -561,8 +624,9 @@
   async function renderPDFPage(document: PDFDocumentLike, canvas: HTMLCanvasElement, page: number) {
     const pdfPage = await document.getPage(page);
     const containerWidth = canvas.parentElement?.clientWidth ?? 800;
+    const containerHeight = canvas.parentElement?.clientHeight ?? 600;
     const baseViewport = pdfPage.getViewport({ scale: 1 });
-    const scale = Math.min(containerWidth / baseViewport.width, 3);
+    const scale = Math.min(containerWidth / baseViewport.width, containerHeight / baseViewport.height, 3);
     const viewport = pdfPage.getViewport({ scale });
     const context = canvas.getContext('2d');
     if (!context) return;
@@ -578,21 +642,30 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<section class="roundtable" aria-label="Live roundtable">
+<section class={['roundtable', panelState.railCollapsed && 'rail-collapsed']} aria-label="Live roundtable">
   <div class="room-stage">
-    <header class="room-board-header">
-      <div>
-        <p class="kicker">Live room</p>
-        <h2>{snapshot.room.title}</h2>
-        <p class="next-speaker">Up next: {nextSpeaker?.displayName ?? 'No one queued'}</p>
+    <div class="timer-row" aria-label="Room timer">
+      <div class="timer-row-value">
+        <Timer size={18} />
+        <strong>{timerLabel}</strong>
       </div>
-      <div class="room-header-actions">
-        <button class="shortcut-help-button" type="button" onclick={() => togglePanel('shortcuts')} aria-expanded={!panelState.shortcuts}>
-          ? Shortcuts
+      {#if isMod}
+        <div class="timer-row-controls" aria-label="Moderator timer controls">
+          <label class="compact-field">
+            Timer
+            <input type="number" min="1" max="86400" bind:value={timerDurationSeconds} />
+          </label>
+          <button type="button" onclick={toggleTimer}>{snapshot.timer.state === 'running' ? 'Stop' : 'Start'}</button>
+          <button type="button" title="Reset timer" onclick={resetTimer}>
+            <RotateCcw size={16} /> Reset
+          </button>
+        </div>
+      {:else if canUseHands}
+        <button class="hand-toggle compact-hand" type="button" onclick={toggleHand}>
+          <Hand size={17} /> {callerHand ? 'Lower hand' : 'Raise hand'}
         </button>
-        <span class={['connection-pill', status]}>{status}</span>
-      </div>
-    </header>
+      {/if}
+    </div>
 
     <section class="document-panel" aria-label={snapshot.room.noSlideMode ? 'Shared markdown' : 'Slides'}>
       {#if snapshot.room.noSlideMode}
@@ -645,100 +718,62 @@
         </div>
       {:else}
         <div class="pdf-panel">
-          <div class="document-toolbar">
-            <div>
-              <p class="kicker">Slide deck</p>
-              <h3>{snapshot.slide?.originalName ?? 'No PDF attached'}</h3>
-              {#if snapshot.slide?.missing}
-                <p class="missing">File was deleted manually.</p>
-              {:else if snapshot.slide}
-                <p>Page {localPage} of {totalPageCount()}</p>
-              {/if}
-            </div>
-            <div class="slide-controls">
-              <button type="button" onclick={() => navigateSlide(-1)} disabled={localPage <= 1 || !snapshot.slide || snapshot.slide.missing}>
-                <ChevronLeft size={16} /> Page
-              </button>
-              <button type="button" onclick={() => navigateSlide(1)} disabled={localPage >= totalPageCount() || !snapshot.slide || snapshot.slide.missing}>
-                Page <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-          <div class="stage-toggles">
-            {#if isMod}
-              <label class="toggle-field">
-                <input
-                  type="checkbox"
-                  bind:checked={modShareNavigation}
-                  onchange={(event) => setRoomBooleanSetting('sharedNavigationEnabled', event.currentTarget.checked)}
-                />
-                Share navigation
-              </label>
-            {/if}
-            <label class="toggle-field">
-              <input type="checkbox" bind:checked={followSharedNavigation} />
-              Follow moderator navigation
-            </label>
-          </div>
           {#if snapshot.slide && !snapshot.slide.missing}
-            <div class="pdf-canvas-wrap">
-              <canvas bind:this={slideCanvas}></canvas>
+            <div class="slide-stage-wrap">
+              {#if slideIsPDF}
+                <canvas bind:this={slideCanvas}></canvas>
+              {:else if slideIsImage && imageObjectUrl}
+                <img src={imageObjectUrl} alt={snapshot.slide.originalName} />
+              {/if}
+              <div class="slide-nav-overlay">
+                <button type="button" aria-label="Previous slide" onclick={() => navigateSlide(-1)} disabled={localPage <= 1 || !snapshot.slide || snapshot.slide.missing}>
+                  <ChevronLeft size={18} />
+                </button>
+                <span>{localPage} / {totalPageCount()}</span>
+                <button type="button" aria-label="Next slide" onclick={() => navigateSlide(1)} disabled={localPage >= totalPageCount() || !snapshot.slide || snapshot.slide.missing}>
+                  <ChevronRight size={18} />
+                </button>
+              </div>
             </div>
           {:else}
             <div class="empty-document">
               <FileText size={34} />
-              <p>{snapshot.slide?.missing ? 'The attached slide file is missing.' : 'Upload a PDF to show slides here.'}</p>
+              <p>{snapshot.slide?.missing ? 'The attached slide file is missing.' : 'Upload a slide file to show slides here.'}</p>
             </div>
           {/if}
           {#if pdfError}
             <p class="upload-error" role="alert">{pdfError}</p>
+          {/if}
+          {#if imageError}
+            <p class="upload-error" role="alert">{imageError}</p>
           {/if}
         </div>
       {/if}
     </section>
   </div>
 
-  <aside class="room-rail">
-    <div class="turn-console" aria-label="Turn controls">
-      <div class="current-speaker-card">
-        <Mic size={24} />
-        <div>
-          <span>Current speaker</span>
-          <strong>{currentSpeaker?.displayName ?? 'No active speaker'}</strong>
-        </div>
-      </div>
-      <div class="timer-card">
-        <Timer size={22} />
-        <div>
-          <span>{snapshot.timer.state === 'running' ? 'Timer running' : 'Timer stopped'}</span>
-          <strong>{timerLabel}</strong>
-        </div>
-      </div>
+  {#if panelState.railCollapsed}
+    <button class="rail-edge-toggle" type="button" onclick={() => (panelState = { ...panelState, railCollapsed: false })} aria-label="Show room controls">
+      <ChevronsLeft size={18} />
+    </button>
+  {:else}
+    <aside class="room-rail">
+      <button class="rail-collapse-toggle" type="button" onclick={() => (panelState = { ...panelState, railCollapsed: true })}>
+        <ChevronsRight size={18} /> Hide controls
+      </button>
+
       {#if isMod}
-        <div class="moderator-controls" aria-label="Moderator turn controls">
+        <div class="moderator-controls turn-actions" aria-label="Moderator turn controls">
           <button type="button" title="Previous speaker" onclick={previousTurn}>
             <ChevronLeft size={17} /> Previous
           </button>
           <button type="button" title="Next speaker" onclick={nextTurn}>
             <ChevronRight size={17} /> Next
           </button>
-          <label class="compact-field">
-            Timer
-            <input type="number" min="1" max="86400" bind:value={timerDurationSeconds} />
-          </label>
-          <button type="button" onclick={toggleTimer}>{snapshot.timer.state === 'running' ? 'Stop' : 'Start'}</button>
-          <button type="button" title="Reset timer" onclick={resetTimer}>
-            <RotateCcw size={16} /> Reset
-          </button>
         </div>
-      {:else if canUseHands}
-        <button class="hand-toggle" type="button" onclick={toggleHand}>
-          <Hand size={17} /> {callerHand ? 'Lower hand' : 'Raise hand'}
-        </button>
       {/if}
-    </div>
 
-    {#if snapshot.hands.length > 0}
+      {#if snapshot.hands.length > 0}
       <div class="hand-queue" aria-label="Raised hands">
         <div>
           <Hand size={18} />
@@ -753,7 +788,7 @@
           </span>
         {/each}
       </div>
-    {/if}
+      {/if}
 
     <section class="rail-panel">
       <button class="list-toggle" type="button" onclick={() => togglePanel('participants')} aria-expanded={!panelState.participants}>
@@ -852,10 +887,10 @@
           {#if canManageSlides}
             <form class="slide-upload" onsubmit={(event) => { event.preventDefault(); submitSlideUpload(); }}>
               <label>
-                PDF
+                Slide file
                 <input
                   type="file"
-                  accept="application/pdf,.pdf"
+                  accept="application/pdf,image/png,image/jpeg,image/webp,image/gif,.pdf,.png,.jpg,.jpeg,.webp,.gif"
                   disabled={slideBusy}
                   onchange={(event) => {
                     slideFile = event.currentTarget.files?.[0] ?? null;
@@ -870,7 +905,7 @@
               </label>
               <div class="settings-actions">
                 <button type="submit" disabled={slideBusy || !slideFile}>
-                  <Upload size={16} /> {slideBusy ? 'Working' : 'Replace PDF'}
+                  <Upload size={16} /> {slideBusy ? 'Working' : 'Replace slide'}
                 </button>
                 {#if canChangeSlideExpiration}
                   <button type="button" disabled={slideBusy || !snapshot.slide} onclick={saveSlideExpiration}>Save expiration</button>
@@ -890,6 +925,22 @@
               {/if}
             </form>
           {/if}
+          <div class="slide-rail-toggles">
+            {#if isMod}
+              <label class="toggle-field">
+                <input
+                  type="checkbox"
+                  bind:checked={modShareNavigation}
+                  onchange={(event) => setRoomBooleanSetting('sharedNavigationEnabled', event.currentTarget.checked)}
+                />
+                Share navigation
+              </label>
+            {/if}
+            <label class="toggle-field">
+              <input type="checkbox" bind:checked={followSharedNavigation} />
+              Follow moderator navigation
+            </label>
+          </div>
         </div>
       {/if}
     </section>
@@ -1031,5 +1082,6 @@
         </div>
       {/if}
     </section>
-  </aside>
+    </aside>
+  {/if}
 </section>

@@ -91,7 +91,7 @@ export function resetShortcutBinding(config: ShortcutConfig, action: RebindableS
 }
 
 export function resolveShortcutAction(event: KeyboardEvent, config: ShortcutConfig): ShortcutAction | null {
-  const key = normalizeKey(event.key);
+  const key = normalizeEventKey(event);
   if (!key) return null;
   if (key === fixedHelpKey) return 'toggleHelp';
   if (!config.enabled || !config.modShortcutsEnabled) return null;
@@ -140,6 +140,11 @@ function normalizeKey(key: string): string {
   if (!trimmed) return '';
   if (trimmed.length === 1) return trimmed.toLowerCase();
   return trimmed;
+}
+
+function normalizeEventKey(event: KeyboardEvent): string {
+  if (event.shiftKey && event.key === '/') return fixedHelpKey;
+  return normalizeKey(event.key);
 }
 
 function browserStorage(): Storage | null {

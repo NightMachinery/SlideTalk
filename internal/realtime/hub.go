@@ -645,12 +645,12 @@ func (h *Hub) roomSlide(ctx context.Context, roomID string) (*SnapshotSlide, err
 	var missingAt sql.NullString
 	err := h.db.QueryRowContext(
 		ctx,
-		`select rs.sha256, rs.original_name, rs.expires_at, sf.stored_path, sf.missing_at
+		`select rs.sha256, rs.original_name, rs.expires_at, sf.mime_type, sf.stored_path, sf.missing_at
 		 from room_slides rs
 		 join slide_files sf on sf.sha256 = rs.sha256
 		 where rs.room_id = ?`,
 		roomID,
-	).Scan(&slide.SHA256, &slide.OriginalName, &slide.ExpiresAt, &storedPath, &missingAt)
+	).Scan(&slide.SHA256, &slide.OriginalName, &slide.ExpiresAt, &slide.MIMEType, &storedPath, &missingAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

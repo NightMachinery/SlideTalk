@@ -811,9 +811,9 @@ h2 {
 
 .member-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   gap: 14px;
-  align-items: center;
+  align-items: start;
   border: 1px solid oklch(84% 0.018 245);
   border-radius: 8px;
   padding: 14px;
@@ -842,10 +842,19 @@ h2 {
   gap: 10px;
 }
 
+.member-identity,
+.member-identity > div,
+.member-actions {
+  min-width: 0;
+}
+
 .member-identity h3 {
+  overflow: hidden;
   margin: 0 0 2px;
   color: oklch(22% 0.018 245);
   font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .member-identity p {
@@ -860,6 +869,7 @@ h2 {
 }
 
 .member-actions button {
+  min-width: 58px;
   min-height: 34px;
   padding: 0 10px;
   font-size: 0.82rem;
@@ -903,6 +913,11 @@ code {
   margin: 0;
 }
 
+.roundtable.rail-collapsed {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
 .room-stage,
 .room-rail {
   min-width: 0;
@@ -911,7 +926,51 @@ code {
 .room-stage {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.timer-row {
+  display: flex;
+  min-width: 0;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
+  border: 1px solid oklch(82% 0.025 245);
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: oklch(99% 0.006 235 / 0.92);
+}
+
+.timer-row-value,
+.timer-row-controls {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.timer-row-value strong {
+  color: oklch(18% 0.018 245);
+  font-size: clamp(1.25rem, 2.4vw, 1.8rem);
+  line-height: 1;
+}
+
+.timer-row-controls {
+  justify-content: flex-end;
+}
+
+.timer-row-controls button,
+.rail-collapse-toggle,
+.rail-edge-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.84rem;
 }
 
 .room-board-header {
@@ -949,7 +1008,12 @@ code {
 
 .pdf-panel,
 .markdown-panel {
+  display: grid;
   min-height: 0;
+}
+
+.pdf-panel {
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .document-toolbar {
@@ -964,12 +1028,15 @@ code {
   padding: 0 10px;
 }
 
-.pdf-canvas-wrap {
+.slide-stage-wrap {
+  position: relative;
+  display: grid;
   place-items: center;
-  min-height: min(78vh, 980px);
-  max-height: calc(100vh - 150px);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   padding: clamp(10px, 1.4vw, 18px);
-  overflow: auto;
+  overflow: hidden;
   background:
     linear-gradient(45deg, oklch(92% 0.01 245) 25%, transparent 25%),
     linear-gradient(-45deg, oklch(92% 0.01 245) 25%, transparent 25%),
@@ -984,12 +1051,57 @@ code {
   background-size: 20px 20px;
 }
 
-.pdf-canvas-wrap canvas {
+.slide-stage-wrap canvas {
   max-width: none;
+  max-height: 100%;
+  border-radius: 4px;
+  background: white;
+  box-shadow: 0 16px 40px oklch(28% 0.04 245 / 0.22);
+}
+
+.slide-stage-wrap img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.slide-nav-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid oklch(86% 0.018 245);
+  border-radius: 999px;
+  padding: 5px;
+  background: oklch(99% 0.006 235 / 0.88);
+  box-shadow: 0 10px 30px oklch(28% 0.04 245 / 0.16);
+  transform: translateX(-50%);
+}
+
+.slide-nav-overlay button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.slide-nav-overlay span {
+  min-width: 48px;
+  color: oklch(28% 0.026 245);
+  font-size: 0.84rem;
+  font-weight: 780;
+  text-align: center;
 }
 
 .empty-document {
-  min-height: min(74vh, 760px);
+  min-height: 0;
 }
 
 .room-rail {
@@ -1001,30 +1113,20 @@ code {
   padding-right: 2px;
 }
 
-.room-rail .turn-console {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  display: grid;
-  grid-template-columns: 1fr 0.72fr;
-  gap: 9px;
-  margin-bottom: 0;
+.rail-collapse-toggle,
+.rail-edge-toggle {
   border: 1px solid oklch(82% 0.025 245);
   border-radius: 8px;
-  padding: 10px;
   background: oklch(99% 0.006 235 / 0.96);
   box-shadow: 0 18px 48px oklch(35% 0.04 245 / 0.1);
 }
 
-.room-rail .current-speaker-card,
-.room-rail .timer-card {
-  min-height: 76px;
-  padding: 12px;
-}
-
-.room-rail .current-speaker-card strong,
-.room-rail .timer-card strong {
-  font-size: clamp(1.1rem, 1.6vw, 1.45rem);
+.rail-edge-toggle {
+  position: sticky;
+  top: 0;
+  width: 42px;
+  min-width: 42px;
+  padding: 0;
 }
 
 .rail-panel,
@@ -1055,6 +1157,11 @@ code {
   margin: 0;
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+.slide-rail-toggles {
+  display: grid;
+  gap: 8px;
 }
 
 .settings-panel {
@@ -1134,21 +1241,16 @@ kbd {
     order: -2;
   }
 
-  .pdf-canvas-wrap {
-    min-height: 300px;
-    max-height: 62vh;
+  .slide-stage-wrap {
     padding: 10px;
-  }
-
-  .room-rail .turn-console {
-    top: 0;
   }
 
   .app-shell.active-room {
     padding: 10px;
   }
 
-  .roundtable {
+  .roundtable,
+  .roundtable.rail-collapsed {
     grid-template-columns: 1fr;
   }
 
@@ -1157,22 +1259,17 @@ kbd {
     overflow: visible;
   }
 
-  .room-rail .turn-console {
-    grid-template-columns: 1fr;
-    position: static;
-  }
-
-  .room-board-header {
+  .timer-row {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .room-header-actions {
+  .timer-row-controls {
     justify-content: flex-start;
   }
 
-  .pdf-canvas-wrap {
-    min-height: 58vh;
-    max-height: 64vh;
+  .rail-edge-toggle {
+    position: static;
+    width: 100%;
   }
 }
