@@ -25,12 +25,13 @@ import (
 
 // ServerOptions configures the SlideTalk HTTP server.
 type ServerOptions struct {
-	StaticDir    string
-	AuthService  *auth.Service
-	RoomService  *rooms.Service
-	Hub          *realtime.Hub
-	SlideService *slides.Service
-	AudioService *audio.Service
+	StaticDir                  string
+	AuthService                *auth.Service
+	RoomService                *rooms.Service
+	Hub                        *realtime.Hub
+	SlideService               *slides.Service
+	AudioService               *audio.Service
+	AudioDriftThresholdSeconds int
 }
 
 // New returns a configured HTTP handler for the SlideTalk server.
@@ -38,14 +39,15 @@ func New(options ServerOptions) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
 	app := &appServer{
-		auth:         options.AuthService,
-		rooms:        options.RoomService,
-		hub:          options.Hub,
-		slides:       options.SlideService,
-		audio:        options.AudioService,
-		adminLimiter: newFailureLimiter(5, 15*time.Minute),
-		joinLimiter:  newFailureLimiter(5, 15*time.Minute),
-		wsLimiter:    newFailureLimiter(10, time.Minute),
+		auth:                       options.AuthService,
+		rooms:                      options.RoomService,
+		hub:                        options.Hub,
+		slides:                     options.SlideService,
+		audio:                      options.AudioService,
+		audioDriftThresholdSeconds: options.AudioDriftThresholdSeconds,
+		adminLimiter:               newFailureLimiter(5, 15*time.Minute),
+		joinLimiter:                newFailureLimiter(5, 15*time.Minute),
+		wsLimiter:                  newFailureLimiter(10, time.Minute),
 	}
 
 	var staticHandler http.Handler
@@ -74,14 +76,15 @@ func New(options ServerOptions) http.Handler {
 }
 
 type appServer struct {
-	auth         *auth.Service
-	rooms        *rooms.Service
-	hub          *realtime.Hub
-	slides       *slides.Service
-	audio        *audio.Service
-	adminLimiter *failureLimiter
-	joinLimiter  *failureLimiter
-	wsLimiter    *failureLimiter
+	auth                       *auth.Service
+	rooms                      *rooms.Service
+	hub                        *realtime.Hub
+	slides                     *slides.Service
+	audio                      *audio.Service
+	audioDriftThresholdSeconds int
+	adminLimiter               *failureLimiter
+	joinLimiter                *failureLimiter
+	wsLimiter                  *failureLimiter
 }
 
 type contextKey string
@@ -177,7 +180,16 @@ func (s *appServer) withUser(next func(http.ResponseWriter, *http.Request, auth.
 }
 
 func (s *appServer) getMe(w http.ResponseWriter, _ *http.Request, user auth.User) {
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, meResponse{User: user, Config: clientConfig{AudioDriftThresholdSeconds: s.audioDriftThresholdSeconds}})
+}
+
+type meResponse struct {
+	auth.User
+	Config clientConfig `json:"config"`
+}
+
+type clientConfig struct {
+	AudioDriftThresholdSeconds int `json:"audioDriftThresholdSeconds"`
 }
 
 func (s *appServer) patchMe(w http.ResponseWriter, r *http.Request, user auth.User) {

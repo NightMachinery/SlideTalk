@@ -70,7 +70,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: roomService, Hub: realtime.NewHub(db, authService, roomService), SlideService: slideService, AudioService: audioService}),
+		Handler:           httpserver.New(httpserver.ServerOptions{StaticDir: filepath.Join("web", "dist"), AuthService: authService, RoomService: roomService, Hub: realtime.NewHub(db, authService, roomService), SlideService: slideService, AudioService: audioService, AudioDriftThresholdSeconds: int(cfg.AudioDriftThreshold / time.Second)}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

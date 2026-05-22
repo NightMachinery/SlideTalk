@@ -59,6 +59,7 @@
   const hasDisplayName = $derived(Boolean(user?.displayName.trim()));
   const needsProfile = $derived(Boolean(user && !hasDisplayName));
   const hasPendingRoomGate = $derived(Boolean(!snapshot && pendingRoomParam && needsProfile));
+  const audioDriftThresholdSeconds = $derived(user?.config?.audioDriftThresholdSeconds ?? 3);
 
   onMount(() => {
     document.title = 'SlideTalk';
@@ -425,10 +426,11 @@
     {#if notice}
       <p class="feedback notice room-feedback" role="status">{notice}</p>
     {/if}
-    <Roundtable
-      {snapshot}
-      status={connectionStatus}
-      send={(command) => {
+      <Roundtable
+        {snapshot}
+        status={connectionStatus}
+        {audioDriftThresholdSeconds}
+        send={(command) => {
         const sent = realtime?.send(command) ?? false;
         if (!sent) {
           errorMessage = 'Live connection is still connecting. Try again in a moment.';

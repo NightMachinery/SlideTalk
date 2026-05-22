@@ -115,6 +115,7 @@ The Go server reads these environment variables:
 - `SLIDETALK_SLIDE_UPLOAD_LIMIT`: slide upload limit, default `200m`
 - `SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT`: non-admin audio upload limit, default `50m`
 - `SLIDETALK_AUDIO_FILES_GC_AFTER`: delete room audio files after room age, default `7d`
+- `SLIDETALK_AUDIO_DRIFT_THRESHOLD`: client resync threshold for shared audio drift, default `3s`
 - `SLIDETALK_MIN_FREE_SPACE`: reject retained uploads that would leave less free disk space, default `0.5GB`
 
 On startup, the server creates `~/.slidetalk/admin_token` and `~/.slidetalk/slides` if they do not already exist. Submit that token from the collapsed Admin section on the start page to promote the current browser identity to site admin.
@@ -130,7 +131,7 @@ Room participants fetch an initial room snapshot from `/api/rooms/{roomId}/snaps
 
 Room moderators can upload or replace the PDF, PNG, JPEG, WebP, or GIF slide file attached to their room. Rooms use a single mode setting: slides, markdown, or audio. In audio mode, the shared audio player, playlist, finish behavior, and upload controls move into the main stage instead of a right-side audio rail. Optional room settings let non-observer participants upload/download audio and separately control playback; observers can see and download audio when audience access is enabled, but cannot upload or control playback. Site admins bypass the audio per-file size limit after a styled confirmation, but all uploads remain subject to the minimum free-space floor.
 
-Audio downloads can be converted into room-track download links with a random bearer token in the URL. These links are intended for external download managers and remain valid until the track is removed from the room; the server stores only a hash of the token and does not include browser auth tokens or user IDs in the URL. Browsers stream uncached audio immediately, fill a persistent IndexedDB audio cache in the background, and reuse cached blobs for playback and manual downloads after refresh. The browser cache garbage-collects entries older than 30 days and trims oldest entries beyond 1 GiB or 30 files.
+Audio downloads can be converted into room-track download links with a random bearer token in the URL. These links are intended for external download managers and remain valid until the track is removed from the room; the server stores only a hash of the token and does not include browser auth tokens or user IDs in the URL. Browsers stream uncached audio immediately, fill a persistent IndexedDB audio cache in the background, reuse cached blobs for playback and manual downloads after refresh, and resync shared playback when local drift exceeds `SLIDETALK_AUDIO_DRIFT_THRESHOLD`. The browser cache garbage-collects entries older than 30 days and trims oldest entries beyond 1 GiB or 30 files.
 
 The browser hashes files before upload, extracts supported audio title/duration/cover metadata, the server stores files by SHA-256 and validated extension, and cleanup runs hourly. Room moderators can edit a track's display title and uploader display name; uploaders can edit their own track title.
 

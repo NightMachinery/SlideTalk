@@ -4,6 +4,9 @@ export type User = {
   id: string;
   displayName: string;
   isAdmin: boolean;
+  config?: {
+    audioDriftThresholdSeconds?: number;
+  };
 };
 
 export type Room = {

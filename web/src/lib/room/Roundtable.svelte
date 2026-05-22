@@ -94,10 +94,12 @@
   let {
     snapshot,
     status,
+    audioDriftThresholdSeconds = 3,
     send
   }: {
     snapshot: RoomSnapshot;
     status: 'connecting' | 'connected' | 'disconnected';
+    audioDriftThresholdSeconds?: number;
     send: (command: RealtimeCommand) => void;
   } = $props();
 
@@ -368,7 +370,7 @@
   $effect(() => {
     if (!audioElement || !audioObjectUrl) return;
     const desired = estimatedAudioSeconds;
-    if (Number.isFinite(desired) && Math.abs(audioElement.currentTime - desired) > 2) {
+    if (Number.isFinite(desired) && Math.abs(audioElement.currentTime - desired) > audioDriftThresholdSeconds) {
       audioElement.currentTime = desired;
     }
     if (!audioSeeking) audioPositionDraft = Math.floor(audioElement.currentTime || desired);

@@ -14,6 +14,7 @@ func TestLoadReadsSelfHostingEnvironment(t *testing.T) {
 	t.Setenv("SLIDETALK_SLIDE_UPLOAD_LIMIT", "12345")
 	t.Setenv("SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT", "12m")
 	t.Setenv("SLIDETALK_AUDIO_FILES_GC_AFTER", "48h")
+	t.Setenv("SLIDETALK_AUDIO_DRIFT_THRESHOLD", "3s")
 	t.Setenv("SLIDETALK_MIN_FREE_SPACE", "1GB")
 
 	cfg, err := Load()
@@ -41,6 +42,9 @@ func TestLoadReadsSelfHostingEnvironment(t *testing.T) {
 	}
 	if cfg.AudioFilesGCAfter != 48*time.Hour {
 		t.Fatalf("AudioFilesGCAfter = %s, want 48h", cfg.AudioFilesGCAfter)
+	}
+	if cfg.AudioDriftThreshold != 3*time.Second {
+		t.Fatalf("AudioDriftThreshold = %s, want 3s", cfg.AudioDriftThreshold)
 	}
 	if cfg.MinFreeSpaceBytes != 1024*1024*1024 {
 		t.Fatalf("MinFreeSpaceBytes = %d, want 1 GiB", cfg.MinFreeSpaceBytes)
@@ -87,5 +91,18 @@ func TestLoadParsesDayDurationForAudioGC(t *testing.T) {
 
 	if cfg.AudioFilesGCAfter != 7*24*time.Hour {
 		t.Fatalf("AudioFilesGCAfter = %s, want 7 days", cfg.AudioFilesGCAfter)
+	}
+}
+
+func TestLoadDefaultsAudioDriftThresholdToThreeSeconds(t *testing.T) {
+	t.Setenv("SLIDETALK_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.AudioDriftThreshold != 3*time.Second {
+		t.Fatalf("AudioDriftThreshold = %s, want 3s", cfg.AudioDriftThreshold)
 	}
 }

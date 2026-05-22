@@ -11,24 +11,26 @@ import (
 )
 
 const (
-	defaultAddr              = "127.0.0.1:8097"
-	defaultDir               = ".slidetalk"
-	defaultSlideMaxBytes     = 200 * 1024 * 1024
-	defaultAudioMaxBytes     = 50 * 1024 * 1024
-	defaultAudioFilesGCAfter = 7 * 24 * time.Hour
-	defaultMinFreeSpaceBytes = 512 * 1024 * 1024
+	defaultAddr                = "127.0.0.1:8097"
+	defaultDir                 = ".slidetalk"
+	defaultSlideMaxBytes       = 200 * 1024 * 1024
+	defaultAudioMaxBytes       = 50 * 1024 * 1024
+	defaultAudioFilesGCAfter   = 7 * 24 * time.Hour
+	defaultAudioDriftThreshold = 3 * time.Second
+	defaultMinFreeSpaceBytes   = 512 * 1024 * 1024
 )
 
 // Config contains process-level settings for the SlideTalk server.
 type Config struct {
-	DataDir           string
-	Addr              string
-	PublicURL         string
-	DevMode           bool
-	SlideMaxBytes     int64
-	AudioMaxBytes     int64
-	AudioFilesGCAfter time.Duration
-	MinFreeSpaceBytes int64
+	DataDir             string
+	Addr                string
+	PublicURL           string
+	DevMode             bool
+	SlideMaxBytes       int64
+	AudioMaxBytes       int64
+	AudioFilesGCAfter   time.Duration
+	AudioDriftThreshold time.Duration
+	MinFreeSpaceBytes   int64
 }
 
 // Load reads configuration from the process environment.
@@ -71,6 +73,14 @@ func Load() (Config, error) {
 		}
 		gcAfter = parsed
 	}
+	audioDriftThreshold := defaultAudioDriftThreshold
+	if raw := os.Getenv("SLIDETALK_AUDIO_DRIFT_THRESHOLD"); raw != "" {
+		parsed, err := parseDuration(raw)
+		if err != nil {
+			return Config{}, err
+		}
+		audioDriftThreshold = parsed
+	}
 	minFree := int64(defaultMinFreeSpaceBytes)
 	if raw := os.Getenv("SLIDETALK_MIN_FREE_SPACE"); raw != "" {
 		parsed, err := parseBytes(raw)
@@ -81,14 +91,15 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		DataDir:           dataDir,
-		Addr:              addr,
-		PublicURL:         os.Getenv("SLIDETALK_PUBLIC_URL"),
-		DevMode:           os.Getenv("SLIDETALK_DEV") == "1",
-		SlideMaxBytes:     maxBytes,
-		AudioMaxBytes:     audioMaxBytes,
-		AudioFilesGCAfter: gcAfter,
-		MinFreeSpaceBytes: minFree,
+		DataDir:             dataDir,
+		Addr:                addr,
+		PublicURL:           os.Getenv("SLIDETALK_PUBLIC_URL"),
+		DevMode:             os.Getenv("SLIDETALK_DEV") == "1",
+		SlideMaxBytes:       maxBytes,
+		AudioMaxBytes:       audioMaxBytes,
+		AudioFilesGCAfter:   gcAfter,
+		AudioDriftThreshold: audioDriftThreshold,
+		MinFreeSpaceBytes:   minFree,
 	}, nil
 }
 
