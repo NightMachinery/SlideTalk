@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,6 +193,19 @@ func TestRoomCreateAndPasswordJoin(t *testing.T) {
 	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"password":"secret"}`, "guest"), http.StatusOK)
 }
 
+func TestRoomCreateAcceptsRoomMode(t *testing.T) {
+	server := newAPITestServer(t)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Listening","password":"","roomMode":"audio"}`, "creator"), http.StatusCreated)
+	roomID := extractRoomID(t, create.Body.String())
+
+	response := serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/snapshot", "", "creator"), http.StatusOK)
+
+	if !bytes.Contains(response.Body.Bytes(), []byte(`"roomMode":"audio"`)) {
+		t.Fatalf("snapshot missing audio room mode: %s", response.Body.String())
+	}
+}
+
 func TestRoomPasswordAttemptsAreRateLimited(t *testing.T) {
 	server := newAPITestServer(t)
 	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Ada"}`, "creator"), http.StatusOK)
@@ -213,7 +227,7 @@ func TestRoomSettingsRequireModAndCanClearPassword(t *testing.T) {
 	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "guest"), http.StatusOK)
 	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{"password":"secret"}`, "guest"), http.StatusOK)
 
-	body := `{"title":"Open Room","passwordAction":"clear","noSlideMode":true,"allowParticipantMarkdown":true,"sharedNavigationEnabled":true,"raiseHandMode":"queue"}`
+	body := `{"title":"Open Room","passwordAction":"clear","roomMode":"markdown","allowParticipantMarkdown":true,"sharedNavigationEnabled":true,"raiseHandMode":"queue"}`
 	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", body, "guest"), http.StatusForbidden)
 	updated := serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", body, "mod"), http.StatusOK)
 	if !bytes.Contains(updated.Body.Bytes(), []byte(`"title":"Open Room"`)) || !bytes.Contains(updated.Body.Bytes(), []byte(`"hasPassword":false`)) {
@@ -524,6 +538,28 @@ func TestRoomSlideFileReportsManualDeletion(t *testing.T) {
 	}
 }
 
+func TestAudioDownloadRequiresAudienceAccessForParticipants(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	content := testWAVBytes()
+	body, contentType := audioUploadBody(t, roomID, "track.wav", content, sha256HexTest(content))
+	request := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	upload := serveJSON(t, server, request, http.StatusCreated)
+	var status audio.Status
+	if err := json.Unmarshal(upload.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode audio status: %v", err)
+	}
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "participant"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "participant"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/audio/"+status.ID, "", "participant"), http.StatusForbidden)
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", `{"allowAudienceAudioAccess":true}`, "admin"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodGet, "/api/rooms/"+roomID+"/audio/"+status.ID, "", "participant"), http.StatusOK)
+}
+
 func newAPITestServer(t *testing.T) http.Handler {
 	t.Helper()
 	return newAPITestServerWithDataDir(t, t.TempDir())
@@ -673,9 +709,48 @@ func slideUploadBody(t *testing.T, roomID string, name string, content []byte, s
 	return body, writer.FormDataContentType()
 }
 
+func audioUploadBody(t *testing.T, roomID string, name string, content []byte, sha string) (*bytes.Buffer, string) {
+	t.Helper()
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	fields := map[string]string{
+		"roomId":       roomID,
+		"sha256":       sha,
+		"originalName": name,
+	}
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("write field: %v", err)
+		}
+	}
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", `form-data; name="file"; filename="`+name+`"`)
+	header.Set("Content-Type", "audio/wav")
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	return body, writer.FormDataContentType()
+}
+
 func sha256HexTest(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func testWAVBytes() []byte {
+	return []byte{
+		'R', 'I', 'F', 'F', 40, 0, 0, 0, 'W', 'A', 'V', 'E',
+		'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 1, 0,
+		64, 31, 0, 0, 128, 62, 0, 0, 1, 0, 8, 0,
+		'd', 'a', 't', 'a', 4, 0, 0, 0, 128, 128, 128, 128,
+	}
 }
 
 type dataDirHandler struct {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getRoomSnapshot } from './api';
+import { createRoom, getRoomSnapshot } from './api';
 
 describe('getRoomSnapshot', () => {
   afterEach(() => {
@@ -12,7 +12,7 @@ describe('getRoomSnapshot', () => {
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
-          room: { id: 'room-one', title: 'Live', hasPassword: false, noSlideMode: false, allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
+          room: { id: 'room-one', title: 'Live', hasPassword: false, roomMode: 'slides', allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
           caller: { userId: 'user-one', role: 'mod', isAdmin: true },
           participants: [],
           observers: [],
@@ -35,6 +35,34 @@ describe('getRoomSnapshot', () => {
     expect(snapshot.room.id).toBe('room-one');
     expect(fetchMock).toHaveBeenCalledWith('/api/rooms/room-one/snapshot', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer token-one' })
+    }));
+  });
+});
+
+describe('createRoom', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it('sends room mode when creating a room', async () => {
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          room: { id: 'room-one', title: 'Listening', hasPassword: false },
+          membership: { roomId: 'room-one', userId: 'user-one', role: 'mod', displayOrder: 0 }
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } }
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createRoom('Listening', '', 'audio');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/rooms', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ title: 'Listening', password: '', roomMode: 'audio' })
     }));
   });
 });

@@ -21,6 +21,10 @@ const (
 	RoleMod         = "mod"
 	RoleParticipant = "participant"
 	RoleObserver    = "observer"
+
+	RoomModeSlides   = "slides"
+	RoomModeMarkdown = "markdown"
+	RoomModeAudio    = "audio"
 )
 
 // Service provides room operations.
@@ -66,6 +70,7 @@ type Details struct {
 type CreateInput struct {
 	Title    string
 	Password string
+	RoomMode string
 }
 
 // JoinInput is the room join payload.
@@ -79,10 +84,9 @@ type SettingsInput struct {
 	Title                     *string
 	Password                  *string
 	ClearPassword             bool
-	NoSlideMode               *bool
 	AllowParticipantMarkdown  *bool
 	SharedNavigationEnabled   *bool
-	AudioOnlyMode             *bool
+	RoomMode                  *string
 	AllowAudienceAudioAccess  *bool
 	AllowAudienceAudioControl *bool
 	RaiseHandMode             *string
@@ -108,6 +112,13 @@ func (s *Service) Create(ctx context.Context, creatorUserID string, input Create
 	if err != nil {
 		return Room{}, err
 	}
+	roomMode := strings.TrimSpace(input.RoomMode)
+	if roomMode == "" {
+		roomMode = RoomModeSlides
+	}
+	if !validRoomMode(roomMode) {
+		return Room{}, ErrInvalidRoomMode
+	}
 	id, err := randomID()
 	if err != nil {
 		return Room{}, err
@@ -120,11 +131,12 @@ func (s *Service) Create(ctx context.Context, creatorUserID string, input Create
 	defer rollback(tx)
 	if _, err := tx.ExecContext(
 		ctx,
-		`insert into rooms (id, title, password_hash, no_slide_mode, markdown, allow_participant_markdown, created_by_user_id, created_at, updated_at)
-		 values (?, ?, ?, 0, '', 0, ?, ?, ?)`,
+		`insert into rooms (id, title, password_hash, room_mode, markdown, allow_participant_markdown, created_by_user_id, created_at, updated_at)
+		 values (?, ?, ?, ?, '', 0, ?, ?, ?)`,
 		id,
 		title,
 		nullableString(passwordHash),
+		roomMode,
 		creatorUserID,
 		now,
 		now,
@@ -304,11 +316,6 @@ func (s *Service) UpdateSettings(ctx context.Context, roomID string, input Setti
 			return Room{}, fmt.Errorf("clear room password: %w", err)
 		}
 	}
-	if input.NoSlideMode != nil {
-		if _, err := tx.ExecContext(ctx, `update rooms set no_slide_mode = ?, updated_at = ? where id = ?`, *input.NoSlideMode, nowText(), roomID); err != nil {
-			return Room{}, fmt.Errorf("update no slide mode: %w", err)
-		}
-	}
 	if input.AllowParticipantMarkdown != nil {
 		if _, err := tx.ExecContext(ctx, `update rooms set allow_participant_markdown = ?, updated_at = ? where id = ?`, *input.AllowParticipantMarkdown, nowText(), roomID); err != nil {
 			return Room{}, fmt.Errorf("update participant markdown: %w", err)
@@ -319,9 +326,13 @@ func (s *Service) UpdateSettings(ctx context.Context, roomID string, input Setti
 			return Room{}, fmt.Errorf("update shared navigation: %w", err)
 		}
 	}
-	if input.AudioOnlyMode != nil {
-		if _, err := tx.ExecContext(ctx, `update rooms set audio_only_mode = ?, updated_at = ? where id = ?`, *input.AudioOnlyMode, nowText(), roomID); err != nil {
-			return Room{}, fmt.Errorf("update audio-only mode: %w", err)
+	if input.RoomMode != nil {
+		mode := strings.TrimSpace(*input.RoomMode)
+		if !validRoomMode(mode) {
+			return Room{}, ErrInvalidRoomMode
+		}
+		if _, err := tx.ExecContext(ctx, `update rooms set room_mode = ?, updated_at = ? where id = ?`, mode, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update room mode: %w", err)
 		}
 	}
 	if input.AllowAudienceAudioAccess != nil {
@@ -554,6 +565,7 @@ func rollback(tx *sql.Tx) {
 
 var (
 	ErrInvalidTitle         = errors.New("room title must be 1 to 120 characters")
+	ErrInvalidRoomMode      = errors.New("invalid room mode")
 	ErrDisplayNameRequired  = errors.New("display name required")
 	ErrInvalidPassword      = errors.New("invalid room password")
 	ErrKicked               = errors.New("member was kicked")
@@ -565,6 +577,10 @@ var (
 	ErrInvalidRaiseHandMode = errors.New("invalid raise hand mode")
 	ErrNotModerator         = errors.New("not a room moderator")
 )
+
+func validRoomMode(mode string) bool {
+	return mode == RoomModeSlides || mode == RoomModeMarkdown || mode == RoomModeAudio
+}
 
 func memberRole(ctx context.Context, tx *sql.Tx, roomID string, userID string) (string, error) {
 	var role string

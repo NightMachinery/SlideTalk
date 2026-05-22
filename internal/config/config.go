@@ -48,7 +48,7 @@ func Load() (Config, error) {
 	}
 
 	maxBytes := int64(defaultSlideMaxBytes)
-	if raw := firstNonEmpty(os.Getenv("SLIDETALK_SLIDE_UPLOAD_LIMIT"), os.Getenv("SLIDETALK_SLIDE_MAX_BYTES")); raw != "" {
+	if raw := os.Getenv("SLIDETALK_SLIDE_UPLOAD_LIMIT"); raw != "" {
 		parsed, err := parseBytes(raw)
 		if err != nil {
 			return Config{}, err
@@ -112,15 +112,6 @@ func parseDuration(raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("duration %q must be positive", raw)
 	}
 	return parsed, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func parseBytes(raw string) (int64, error) {

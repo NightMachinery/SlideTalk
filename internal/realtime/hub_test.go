@@ -2,6 +2,8 @@ package realtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -370,7 +372,7 @@ func TestParticipantMarkdownRequiresRoomSetting(t *testing.T) {
 	}
 	if err := hub.HandleCommand(ctx, roomID, modID, Command{
 		Type:    CommandSettingsUpdate,
-		Payload: mustJSON(t, map[string]any{"allowParticipantMarkdown": true, "noSlideMode": true, "sharedNavigationEnabled": false}),
+		Payload: mustJSON(t, map[string]any{"allowParticipantMarkdown": true, "roomMode": RoomModeMarkdown, "sharedNavigationEnabled": false}),
 	}); err != nil {
 		t.Fatalf("enable participant markdown: %v", err)
 	}
@@ -389,6 +391,56 @@ func TestParticipantMarkdownRequiresRoomSetting(t *testing.T) {
 	}
 	if snapshot.MarkdownUpdatedByUserID != participantID || snapshot.MarkdownUpdatedAt == "" {
 		t.Fatalf("markdown metadata missing: %+v", snapshot)
+	}
+}
+
+func TestRoomModeSettingIsEnum(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSettingsUpdate,
+		Payload: mustJSON(t, map[string]string{"roomMode": RoomModeAudio}),
+	}); err != nil {
+		t.Fatalf("set audio mode: %v", err)
+	}
+
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Room.RoomMode != RoomModeAudio {
+		t.Fatalf("room mode = %q, want audio", snapshot.Room.RoomMode)
+	}
+
+	err = hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSettingsUpdate,
+		Payload: mustJSON(t, map[string]string{"roomMode": "video"}),
+	})
+	if !errors.Is(err, ErrBadCommand) {
+		t.Fatalf("invalid room mode error = %v, want bad command", err)
+	}
+}
+
+func TestRepeatBackwardWrapsToLastTrack(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+	firstID := insertAudioTrack(t, ctx, hub, roomID, modID, "first")
+	lastID := insertAudioTrack(t, ctx, hub, roomID, modID, "last")
+	if _, err := hub.db.ExecContext(ctx, `update rooms set audio_current_track_id = ?, audio_state = ?, audio_playback_mode = ? where id = ?`, firstID, AudioStatePlaying, AudioModeRepeatBackward, roomID); err != nil {
+		t.Fatalf("seed audio state: %v", err)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandAudioEnded}); err != nil {
+		t.Fatalf("audio ended: %v", err)
+	}
+
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Audio.CurrentTrackID != lastID || snapshot.Audio.State != AudioStatePlaying {
+		t.Fatalf("audio state = %+v, want wrapped to last track %q", snapshot.Audio, lastID)
 	}
 }
 
@@ -435,6 +487,30 @@ func namedUser(t *testing.T, ctx context.Context, service *auth.Service, token s
 		t.Fatalf("get user: %v", err)
 	}
 	return updated
+}
+
+func insertAudioTrack(t *testing.T, ctx context.Context, hub *Hub, roomID string, userID string, name string) string {
+	t.Helper()
+	content := []byte("ID3" + name)
+	sum := sha256.Sum256(content)
+	sha := hex.EncodeToString(sum[:])
+	path := filepath.Join(t.TempDir(), sha+".mp3")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write audio file: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := hub.db.ExecContext(ctx, `insert into audio_files (sha256, ext, size_bytes, mime_type, stored_path, uploaded_by_user_id, created_at, missing_at) values (?, 'mp3', ?, 'audio/mpeg', ?, ?, ?, null)`, sha, len(content), path, userID, now); err != nil {
+		t.Fatalf("insert audio file: %v", err)
+	}
+	trackID := name + "-track"
+	var nextOrder int
+	if err := hub.db.QueryRowContext(ctx, `select coalesce(max(display_order) + 1, 0) from room_audio_tracks where room_id = ?`, roomID).Scan(&nextOrder); err != nil {
+		t.Fatalf("next audio order: %v", err)
+	}
+	if _, err := hub.db.ExecContext(ctx, `insert into room_audio_tracks (id, room_id, sha256, original_name, display_order, uploaded_by_user_id, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)`, trackID, roomID, sha, name+".mp3", nextOrder, userID, now, now); err != nil {
+		t.Fatalf("insert audio track: %v", err)
+	}
+	return trackID
 }
 
 func mustJSON(t *testing.T, value any) json.RawMessage {

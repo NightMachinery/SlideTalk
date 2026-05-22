@@ -47,7 +47,7 @@ func TestLoadReadsSelfHostingEnvironment(t *testing.T) {
 	}
 }
 
-func TestLoadFallsBackToDeprecatedSlideMaxBytes(t *testing.T) {
+func TestLoadIgnoresDeprecatedSlideMaxBytes(t *testing.T) {
 	t.Setenv("SLIDETALK_DATA_DIR", filepath.Join(t.TempDir(), "data"))
 	t.Setenv("SLIDETALK_SLIDE_MAX_BYTES", "54321")
 
@@ -56,12 +56,12 @@ func TestLoadFallsBackToDeprecatedSlideMaxBytes(t *testing.T) {
 		t.Fatalf("Load returned error: %v", err)
 	}
 
-	if cfg.SlideMaxBytes != 54321 {
-		t.Fatalf("SlideMaxBytes = %d, want deprecated fallback", cfg.SlideMaxBytes)
+	if cfg.SlideMaxBytes != defaultSlideMaxBytes {
+		t.Fatalf("SlideMaxBytes = %d, want default without deprecated fallback", cfg.SlideMaxBytes)
 	}
 }
 
-func TestLoadPrefersNewSlideUploadLimit(t *testing.T) {
+func TestLoadReadsSlideUploadLimit(t *testing.T) {
 	t.Setenv("SLIDETALK_DATA_DIR", filepath.Join(t.TempDir(), "data"))
 	t.Setenv("SLIDETALK_SLIDE_MAX_BYTES", "111")
 	t.Setenv("SLIDETALK_SLIDE_UPLOAD_LIMIT", "222")

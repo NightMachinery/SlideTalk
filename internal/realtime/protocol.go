@@ -40,12 +40,17 @@ const (
 	AudioStatePaused  = "paused"
 	AudioStatePlaying = "playing"
 
-	AudioModeStop      = "stop"
-	AudioModeNext      = "next"
-	AudioModePrevious  = "previous"
-	AudioModeRepeatOne = "repeat-one"
-	AudioModeRepeatAll = "repeat-all"
-	AudioModeShuffle   = "shuffle"
+	AudioModeStop           = "stop"
+	AudioModeNext           = "next"
+	AudioModePrevious       = "previous"
+	AudioModeRepeatOne      = "repeat-one"
+	AudioModeRepeatForward  = "repeat-forward"
+	AudioModeRepeatBackward = "repeat-backward"
+	AudioModeShuffle        = "shuffle"
+
+	RoomModeSlides   = "slides"
+	RoomModeMarkdown = "markdown"
+	RoomModeAudio    = "audio"
 
 	RaiseHandModeOff    = "off"
 	RaiseHandModeManual = "manual"
@@ -92,12 +97,11 @@ type SnapshotRoom struct {
 	ID                        string `json:"id"`
 	Title                     string `json:"title"`
 	HasPassword               bool   `json:"hasPassword"`
-	NoSlideMode               bool   `json:"noSlideMode"`
 	AllowParticipantMarkdown  bool   `json:"allowParticipantMarkdown"`
 	RaiseHandMode             string `json:"raiseHandMode"`
 	SlidePage                 int    `json:"slidePage"`
 	SharedNavigationEnabled   bool   `json:"sharedNavigationEnabled"`
-	AudioOnlyMode             bool   `json:"audioOnlyMode"`
+	RoomMode                  string `json:"roomMode"`
 	AllowAudienceAudioAccess  bool   `json:"allowAudienceAudioAccess"`
 	AllowAudienceAudioControl bool   `json:"allowAudienceAudioControl"`
 }

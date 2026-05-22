@@ -106,7 +106,7 @@ describe('connectRealtime', () => {
 describe('normalizeRoomSnapshot', () => {
   it('converts null snapshot collections to empty arrays', () => {
     const snapshot = normalizeRoomSnapshot({
-      room: { id: 'room-one', title: 'Live', hasPassword: false, noSlideMode: false, allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
+      room: { id: 'room-one', title: 'Live', hasPassword: false, roomMode: 'slides', allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
       caller: { userId: 'user-one', role: 'mod', isAdmin: false },
       participants: null,
       observers: null,
@@ -125,9 +125,28 @@ describe('normalizeRoomSnapshot', () => {
     expect(snapshot.hands).toEqual([]);
   });
 
+  it('defaults missing room mode to slides', () => {
+    const snapshot = normalizeRoomSnapshot({
+      room: { id: 'room-one', title: 'Live', hasPassword: false, allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
+      caller: { userId: 'user-one', role: 'mod', isAdmin: false },
+      participants: [],
+      observers: [],
+      currentTurn: { currentSpeakerUserId: '', nextSpeakerUserId: '' },
+      timer: { state: 'stopped', durationSeconds: 0, startedAt: null, serverNow: '2026-05-22T00:00:00Z' },
+      hands: [],
+      slide: null,
+      markdown: '',
+      markdownUpdatedByUserId: '',
+      markdownUpdatedByName: '',
+      markdownUpdatedAt: ''
+    });
+
+    expect(snapshot.room.roomMode).toBe('slides');
+  });
+
   it('preserves slide MIME metadata during normalization', () => {
     const snapshot = normalizeRoomSnapshot({
-      room: { id: 'room-one', title: 'Live', hasPassword: false, noSlideMode: false, allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
+      room: { id: 'room-one', title: 'Live', hasPassword: false, roomMode: 'slides', allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
       caller: { userId: 'user-one', role: 'mod', isAdmin: false },
       participants: [],
       observers: [],

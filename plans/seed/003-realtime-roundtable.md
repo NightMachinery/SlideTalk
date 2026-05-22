@@ -44,7 +44,7 @@ Errors:
 
 Include:
 
-- Room: `id`, `title`, `noSlideMode`, `allowParticipantMarkdown`.
+- Room: `id`, `title`, `roomMode`, `allowParticipantMarkdown`.
 - Caller: `userId`, `role`, `isAdmin`.
 - Participants: ordered non-kicked members with role `mod` or `participant`.
 - Observers: ordered non-kicked members with role `observer`.

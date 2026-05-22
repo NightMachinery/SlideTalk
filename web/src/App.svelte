@@ -25,6 +25,7 @@
   import { connectRealtime, normalizeRoomSnapshot, type RealtimeConnection, type RealtimeEvent, type RoomSnapshot } from './lib/realtime';
   import { roomIdFromInput } from './lib/roomLink';
   import Roundtable from './lib/room/Roundtable.svelte';
+  import SelectMenu from './lib/room/SelectMenu.svelte';
 
   let user = $state<User | null>(null);
   let room = $state<RoomDetails | null>(null);
@@ -39,6 +40,7 @@
   let confirmDemoteAll = $state(false);
   let createTitle = $state('');
   let createPassword = $state('');
+  let createMode = $state<'slides' | 'markdown' | 'audio'>('slides');
   let joinRoomId = $state('');
   let joinPassword = $state('');
   let joinMigrationId = $state('');
@@ -139,10 +141,11 @@
 
   async function submitCreateRoom() {
     await run(async () => {
-      const details = await createRoom(createTitle, createPassword);
+      const details = await createRoom(createTitle, createPassword, createMode);
       await activateRoom(details, `Created ${details.room.title}.`);
       createTitle = '';
       createPassword = '';
+      createMode = 'slides';
     });
   }
 
@@ -394,6 +397,17 @@
           Optional password
           <input bind:value={createPassword} type="password" placeholder="Leave empty for open rooms" disabled={needsProfile} />
         </label>
+        <SelectMenu
+          label="Starting mode"
+          value={createMode}
+          disabled={needsProfile}
+          options={[
+            { value: 'slides', label: 'Slides' },
+            { value: 'markdown', label: 'Markdown' },
+            { value: 'audio', label: 'Audio' }
+          ]}
+          onChange={(value) => (createMode = value as 'slides' | 'markdown' | 'audio')}
+        />
         <button type="submit" disabled={busy || needsProfile || createTitle.trim() === ''}>
           Create room
         </button>

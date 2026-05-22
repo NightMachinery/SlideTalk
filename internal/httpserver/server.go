@@ -264,11 +264,12 @@ func (s *appServer) postRoom(w http.ResponseWriter, r *http.Request, user auth.U
 	var input struct {
 		Title    string `json:"title"`
 		Password string `json:"password"`
+		RoomMode string `json:"roomMode"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	room, err := s.rooms.Create(r.Context(), user.ID, rooms.CreateInput{Title: input.Title, Password: input.Password})
+	room, err := s.rooms.Create(r.Context(), user.ID, rooms.CreateInput{Title: input.Title, Password: input.Password, RoomMode: input.RoomMode})
 	if err != nil {
 		writeRoomError(w, err)
 		return
@@ -346,10 +347,9 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 		Title                     *string `json:"title"`
 		Password                  *string `json:"password"`
 		PasswordAction            string  `json:"passwordAction"`
-		NoSlideMode               *bool   `json:"noSlideMode"`
+		RoomMode                  *string `json:"roomMode"`
 		AllowParticipantMarkdown  *bool   `json:"allowParticipantMarkdown"`
 		SharedNavigationEnabled   *bool   `json:"sharedNavigationEnabled"`
-		AudioOnlyMode             *bool   `json:"audioOnlyMode"`
 		AllowAudienceAudioAccess  *bool   `json:"allowAudienceAudioAccess"`
 		AllowAudienceAudioControl *bool   `json:"allowAudienceAudioControl"`
 		RaiseHandMode             *string `json:"raiseHandMode"`
@@ -359,10 +359,9 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 	}
 	settings := rooms.SettingsInput{
 		Title:                     input.Title,
-		NoSlideMode:               input.NoSlideMode,
+		RoomMode:                  input.RoomMode,
 		AllowParticipantMarkdown:  input.AllowParticipantMarkdown,
 		SharedNavigationEnabled:   input.SharedNavigationEnabled,
-		AudioOnlyMode:             input.AudioOnlyMode,
 		AllowAudienceAudioAccess:  input.AllowAudienceAudioAccess,
 		AllowAudienceAudioControl: input.AllowAudienceAudioControl,
 		RaiseHandMode:             input.RaiseHandMode,
@@ -651,14 +650,14 @@ func (s *appServer) getRoomAudioFile(w http.ResponseWriter, r *http.Request, use
 		writeRoomError(w, err)
 		return
 	}
-	if details.Membership.Role == rooms.RoleObserver {
+	if details.Membership.Role != rooms.RoleMod {
 		snapshot, err := s.hub.Snapshot(r.Context(), roomID, user.ID)
 		if err != nil {
 			writeRoomError(w, err)
 			return
 		}
 		if !snapshot.Room.AllowAudienceAudioAccess {
-			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio downloads are not enabled for observers.")
+			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio downloads are not enabled for this room.")
 			return
 		}
 	}
@@ -808,7 +807,7 @@ func writeRoomError(w http.ResponseWriter, err error) {
 		writeProblem(w, http.StatusBadRequest, "Bad Request", "Set a display name before using rooms.")
 	case errors.Is(err, rooms.ErrInvalidTitle):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
-	case errors.Is(err, rooms.ErrInvalidRaiseHandMode):
+	case errors.Is(err, rooms.ErrInvalidRaiseHandMode), errors.Is(err, rooms.ErrInvalidRoomMode):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, rooms.ErrNotModerator):
 		writeProblem(w, http.StatusForbidden, "Forbidden", "Only room moderators can create migration links.")

@@ -12,12 +12,11 @@ export type RoomSnapshot = {
     id: string;
     title: string;
     hasPassword: boolean;
-    noSlideMode: boolean;
+    roomMode: 'slides' | 'markdown' | 'audio';
     allowParticipantMarkdown: boolean;
     raiseHandMode: 'off' | 'manual' | 'queue';
     slidePage: number;
     sharedNavigationEnabled: boolean;
-    audioOnlyMode: boolean;
     allowAudienceAudioAccess: boolean;
     allowAudienceAudioControl: boolean;
   };
@@ -66,7 +65,7 @@ export type RoomSnapshot = {
     positionSeconds: number;
     startedAt: string | null;
     serverNow: string;
-    playbackMode: 'stop' | 'next' | 'previous' | 'repeat-one' | 'repeat-all' | 'shuffle';
+    playbackMode: 'stop' | 'next' | 'previous' | 'repeat-one' | 'repeat-forward' | 'repeat-backward' | 'shuffle';
   };
   markdown: string;
   markdownUpdatedByUserId: string;
@@ -94,6 +93,12 @@ type RoomSnapshotWire = Omit<RoomSnapshot, 'participants' | 'observers' | 'hands
 export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot {
   return {
     ...snapshot,
+    room: {
+      ...snapshot.room,
+      roomMode: snapshot.room.roomMode ?? 'slides',
+      allowAudienceAudioAccess: snapshot.room.allowAudienceAudioAccess ?? false,
+      allowAudienceAudioControl: snapshot.room.allowAudienceAudioControl ?? false
+    },
     participants: snapshot.participants ?? [],
     observers: snapshot.observers ?? [],
     hands: snapshot.hands ?? [],
@@ -145,9 +150,8 @@ export type RealtimeCommand =
       payload: {
         raiseHandMode?: 'off' | 'manual' | 'queue';
         sharedNavigationEnabled?: boolean;
-        noSlideMode?: boolean;
+        roomMode?: 'slides' | 'markdown' | 'audio';
         allowParticipantMarkdown?: boolean;
-        audioOnlyMode?: boolean;
         allowAudienceAudioAccess?: boolean;
         allowAudienceAudioControl?: boolean;
       };

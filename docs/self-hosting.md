@@ -100,7 +100,7 @@ The room-link copy control uses `navigator.clipboard` when the browser allows it
 
 The Go server adds security headers to responses, including `nosniff`, `no-referrer`, a valid Permissions Policy, and a Content Security Policy that allows same-origin app assets, blob workers for PDF rendering, and WebSocket connections. The generated Caddy block replaces stale `Permissions-Policy` values so older `browsing-topics` entries do not trigger browser console warnings.
 
-JSON request bodies are capped by the server. PDF, PNG, JPEG, WebP, and GIF slide uploads are capped by `SLIDETALK_SLIDE_UPLOAD_LIMIT`, which defaults to 200 MiB. The deprecated `SLIDETALK_SLIDE_MAX_BYTES` name is still accepted only when the new variable is unset.
+JSON request bodies are capped by the server. PDF, PNG, JPEG, WebP, and GIF slide uploads are capped by `SLIDETALK_SLIDE_UPLOAD_LIMIT`, which defaults to 200 MiB.
 
 Audio uploads are capped for non-admin users by `SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT`, which defaults to 50 MiB. Site admins can upload larger audio files after a browser confirmation. Slide and audio uploads are rejected when retaining the upload would leave less free disk space than `SLIDETALK_MIN_FREE_SPACE`, which defaults to 0.5 GiB. Room audio tracks are cleaned after room age exceeds `SLIDETALK_AUDIO_FILES_GC_AFTER`, which defaults to 7 days.
 

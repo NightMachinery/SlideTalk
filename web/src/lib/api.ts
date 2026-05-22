@@ -52,10 +52,9 @@ export type RoomSettingsInput = {
   title?: string;
   password?: string;
   passwordAction?: 'set' | 'clear';
-  noSlideMode?: boolean;
+  roomMode?: 'slides' | 'markdown' | 'audio';
   allowParticipantMarkdown?: boolean;
   sharedNavigationEnabled?: boolean;
-  audioOnlyMode?: boolean;
   allowAudienceAudioAccess?: boolean;
   allowAudienceAudioControl?: boolean;
   raiseHandMode?: 'off' | 'manual' | 'queue';
@@ -107,10 +106,10 @@ export async function demoteAllAdmins(includeSelf: boolean): Promise<void> {
   });
 }
 
-export async function createRoom(title: string, password: string): Promise<RoomDetails> {
+export async function createRoom(title: string, password: string, roomMode: 'slides' | 'markdown' | 'audio' = 'slides'): Promise<RoomDetails> {
   return api('/api/rooms', {
     method: 'POST',
-    body: JSON.stringify({ title, password })
+    body: JSON.stringify({ title, password, roomMode })
   });
 }
 

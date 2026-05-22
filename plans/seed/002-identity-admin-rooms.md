@@ -21,7 +21,7 @@
 SQLite tables:
 
 - `users(id text primary key, token_hash text unique not null, display_name text not null, is_admin integer not null default 0, created_at text not null, updated_at text not null)`
-- `rooms(id text primary key, title text not null, password_hash text, no_slide_mode integer not null default 0, markdown text not null default '', allow_participant_markdown integer not null default 0, created_by_user_id text not null, created_at text not null, updated_at text not null)`
+- `rooms(id text primary key, title text not null, password_hash text, room_mode text not null default 'slides', markdown text not null default '', allow_participant_markdown integer not null default 0, created_by_user_id text not null, created_at text not null, updated_at text not null)`
 - `room_members(room_id text not null, user_id text not null, role text not null, display_order integer not null, joined_at text not null, kicked_at text, primary key(room_id,user_id))`
 
 Allowed member roles: `mod`, `participant`, `observer`.

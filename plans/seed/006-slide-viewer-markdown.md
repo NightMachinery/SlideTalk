@@ -28,7 +28,7 @@ Add to `rooms`:
   - If `modSharedNavigationEnabled` is false, do not update server shared page and do not broadcast page changes.
   - If true, update `rooms.slide_page` and broadcast snapshot.
 - `settings.update`:
-  - Mod only for `sharedNavigationEnabled`, `noSlideMode`, `allowParticipantMarkdown`.
+  - Mod only for `sharedNavigationEnabled`, `roomMode`, `allowParticipantMarkdown`.
 - `markdown.update`:
   - Mod allowed.
   - Participant allowed only if `allowParticipantMarkdown` is true.

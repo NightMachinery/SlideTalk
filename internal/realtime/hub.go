@@ -118,11 +118,10 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		ID                        string
 		Title                     string
 		PasswordHash              sql.NullString
-		NoSlideMode               bool
+		RoomMode                  string
 		AllowParticipantMarkdown  bool
 		SlidePage                 int
 		SharedNavigationEnabled   bool
-		AudioOnlyMode             bool
 		AllowAudienceAudioAccess  bool
 		AllowAudienceAudioControl bool
 		AudioCurrentTrackID       sql.NullString
@@ -140,7 +139,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		TimerStartedAt            sql.NullString
 		RaiseHandMode             string
 	}
-	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.no_slide_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.audio_only_mode, r.allow_audience_audio_access, r.allow_audience_audio_control, r.audio_current_track_id, r.audio_state, r.audio_position_seconds, r.audio_started_at, r.audio_playback_mode, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.NoSlideMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.AudioOnlyMode, &roomRow.AllowAudienceAudioAccess, &roomRow.AllowAudienceAudioControl, &roomRow.AudioCurrentTrackID, &roomRow.AudioState, &roomRow.AudioPositionSeconds, &roomRow.AudioStartedAt, &roomRow.AudioPlaybackMode, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
+	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.room_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.allow_audience_audio_access, r.allow_audience_audio_control, r.audio_current_track_id, r.audio_state, r.audio_position_seconds, r.audio_started_at, r.audio_playback_mode, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.RoomMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.AllowAudienceAudioAccess, &roomRow.AllowAudienceAudioControl, &roomRow.AudioCurrentTrackID, &roomRow.AudioState, &roomRow.AudioPositionSeconds, &roomRow.AudioStartedAt, &roomRow.AudioPlaybackMode, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Snapshot{}, rooms.ErrNotFound
 		}
@@ -155,12 +154,11 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			ID:                        roomRow.ID,
 			Title:                     roomRow.Title,
 			HasPassword:               roomRow.PasswordHash.Valid,
-			NoSlideMode:               roomRow.NoSlideMode,
+			RoomMode:                  roomRow.RoomMode,
 			AllowParticipantMarkdown:  roomRow.AllowParticipantMarkdown,
 			RaiseHandMode:             roomRow.RaiseHandMode,
 			SlidePage:                 roomRow.SlidePage,
 			SharedNavigationEnabled:   roomRow.SharedNavigationEnabled,
-			AudioOnlyMode:             roomRow.AudioOnlyMode,
 			AllowAudienceAudioAccess:  roomRow.AllowAudienceAudioAccess,
 			AllowAudienceAudioControl: roomRow.AllowAudienceAudioControl,
 		},
@@ -430,9 +428,8 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 		var payload struct {
 			RaiseHandMode             *string `json:"raiseHandMode"`
 			SharedNavigationEnabled   *bool   `json:"sharedNavigationEnabled"`
-			NoSlideMode               *bool   `json:"noSlideMode"`
+			RoomMode                  *string `json:"roomMode"`
 			AllowParticipantMarkdown  *bool   `json:"allowParticipantMarkdown"`
-			AudioOnlyMode             *bool   `json:"audioOnlyMode"`
 			AllowAudienceAudioAccess  *bool   `json:"allowAudienceAudioAccess"`
 			AllowAudienceAudioControl *bool   `json:"allowAudienceAudioControl"`
 		}
@@ -452,19 +449,17 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 				return fmt.Errorf("update shared navigation: %w", err)
 			}
 		}
-		if payload.NoSlideMode != nil {
-			if _, err := h.db.ExecContext(ctx, `update rooms set no_slide_mode = ? where id = ?`, *payload.NoSlideMode, roomID); err != nil {
-				return fmt.Errorf("update no slide mode: %w", err)
+		if payload.RoomMode != nil {
+			if !validRoomMode(*payload.RoomMode) {
+				return ErrBadCommand
+			}
+			if _, err := h.db.ExecContext(ctx, `update rooms set room_mode = ? where id = ?`, *payload.RoomMode, roomID); err != nil {
+				return fmt.Errorf("update room mode: %w", err)
 			}
 		}
 		if payload.AllowParticipantMarkdown != nil {
 			if _, err := h.db.ExecContext(ctx, `update rooms set allow_participant_markdown = ? where id = ?`, *payload.AllowParticipantMarkdown, roomID); err != nil {
 				return fmt.Errorf("update participant markdown setting: %w", err)
-			}
-		}
-		if payload.AudioOnlyMode != nil {
-			if _, err := h.db.ExecContext(ctx, `update rooms set audio_only_mode = ? where id = ?`, *payload.AudioOnlyMode, roomID); err != nil {
-				return fmt.Errorf("update audio-only mode: %w", err)
 			}
 		}
 		if payload.AllowAudienceAudioAccess != nil {
@@ -941,10 +936,13 @@ func (h *Hub) advanceAudioEnded(ctx context.Context, roomID string) error {
 	nextID := ""
 	if mode == AudioModeRepeatOne {
 		nextID = currentID
-	} else if len(tracks) > 0 && (mode == AudioModeNext || mode == AudioModeRepeatAll || mode == AudioModePrevious || mode == AudioModeShuffle) {
+	} else if len(tracks) > 0 && (mode == AudioModeNext || mode == AudioModeRepeatForward || mode == AudioModePrevious || mode == AudioModeRepeatBackward || mode == AudioModeShuffle) {
 		nextID = nextAudioTrackID(tracks, currentID, mode)
-		if nextID == "" && mode == AudioModeRepeatAll {
+		if nextID == "" && mode == AudioModeRepeatForward {
 			nextID = tracks[0].ID
+		}
+		if nextID == "" && mode == AudioModeRepeatBackward {
+			nextID = tracks[len(tracks)-1].ID
 		}
 	}
 	if nextID == "" || mode == AudioModeStop {
@@ -990,6 +988,12 @@ func nextAudioTrackID(tracks []SnapshotAudioTrack, currentID string, mode string
 		}
 		return tracks[index-1].ID
 	}
+	if mode == AudioModeRepeatBackward {
+		if index == 0 {
+			return ""
+		}
+		return tracks[index-1].ID
+	}
 	if index+1 >= len(tracks) {
 		return ""
 	}
@@ -1006,11 +1010,15 @@ func currentAudioTrackID(ctx context.Context, db *store.DB, roomID string) strin
 
 func validAudioMode(mode string) bool {
 	switch mode {
-	case AudioModeStop, AudioModeNext, AudioModePrevious, AudioModeRepeatOne, AudioModeRepeatAll, AudioModeShuffle:
+	case AudioModeStop, AudioModeNext, AudioModePrevious, AudioModeRepeatOne, AudioModeRepeatForward, AudioModeRepeatBackward, AudioModeShuffle:
 		return true
 	default:
 		return false
 	}
+}
+
+func validRoomMode(mode string) bool {
+	return mode == RoomModeSlides || mode == RoomModeMarkdown || mode == RoomModeAudio
 }
 
 func rollback(tx *sql.Tx) {

@@ -27,6 +27,7 @@
   import { copyText } from '../clipboard';
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { parseMarkdown } from './markdown';
+  import SelectMenu from './SelectMenu.svelte';
   import { pageFromSharedNavigation } from './slides';
   import {
     defaultShortcutBindings,
@@ -64,6 +65,25 @@
 
   const panelStorageKey = 'slidetalk.roomPanels.v1';
   const shortcutActions: RebindableShortcutAction[] = ['previousSpeaker', 'nextSpeaker', 'toggleTimer', 'previousSlide', 'nextSlide'];
+  const roomModeOptions = [
+    { value: 'slides', label: 'Slides' },
+    { value: 'markdown', label: 'Markdown' },
+    { value: 'audio', label: 'Audio' }
+  ];
+  const finishModeOptions = [
+    { value: 'stop', label: 'Stop' },
+    { value: 'next', label: 'Next' },
+    { value: 'previous', label: 'Previous' },
+    { value: 'repeat-one', label: 'Repeat one' },
+    { value: 'repeat-forward', label: 'Repeat Forward' },
+    { value: 'repeat-backward', label: 'Repeat Backward' },
+    { value: 'shuffle', label: 'Shuffle' }
+  ];
+  const handModeOptions = [
+    { value: 'off', label: 'Off' },
+    { value: 'manual', label: 'Manual' },
+    { value: 'queue', label: 'Queue' }
+  ];
 
   let {
     snapshot,
@@ -134,7 +154,7 @@
   const callerHand = $derived(snapshot.hands.find((hand) => hand.userId === snapshot.caller.userId));
   const canUseHands = $derived(snapshot.caller.role !== 'observer' && snapshot.room.raiseHandMode !== 'off');
   const markdownBlocks = $derived(parseMarkdown(snapshot.markdown || ''));
-  const markdownEditorVisible = $derived(snapshot.room.noSlideMode && canEditMarkdown);
+  const markdownEditorVisible = $derived(snapshot.room.roomMode === 'markdown' && canEditMarkdown);
   const canSeeAudio = $derived(isMod || snapshot.room.allowAudienceAudioAccess);
   const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowAudienceAudioAccess));
   const canControlAudio = $derived(isMod || (snapshot.caller.role !== 'observer' && snapshot.room.allowAudienceAudioControl));
@@ -230,7 +250,7 @@
 
   $effect(() => {
     const slideKey = snapshot.slide?.sha256;
-    if (!slideKey || snapshot.slide?.missing || snapshot.room.noSlideMode || !slideIsPDF) {
+    if (!slideKey || snapshot.slide?.missing || snapshot.room.roomMode !== 'slides' || !slideIsPDF) {
       pdfDocument = null;
       pdfError = '';
       return;
@@ -328,7 +348,7 @@
 
   $effect(() => {
     const slideKey = snapshot.slide?.sha256;
-    if (!slideKey || snapshot.slide?.missing || snapshot.room.noSlideMode || !slideIsImage) {
+    if (!slideKey || snapshot.slide?.missing || snapshot.room.roomMode !== 'slides' || !slideIsImage) {
       if (activeImageObjectUrl) {
         URL.revokeObjectURL(activeImageObjectUrl);
         activeImageObjectUrl = '';
@@ -368,7 +388,7 @@
   });
 
   $effect(() => {
-    if (!pdfDocument || !slideCanvas || snapshot.room.noSlideMode) return;
+    if (!pdfDocument || !slideCanvas || snapshot.room.roomMode !== 'slides') return;
     stageResizeTick;
     let cancelled = false;
     void renderPDFPage(pdfDocument, slideCanvas, localPage).catch((error) => {
@@ -452,10 +472,14 @@
   }
 
   function setRoomBooleanSetting(
-    name: 'sharedNavigationEnabled' | 'noSlideMode' | 'allowParticipantMarkdown' | 'audioOnlyMode' | 'allowAudienceAudioAccess' | 'allowAudienceAudioControl',
+    name: 'sharedNavigationEnabled' | 'allowParticipantMarkdown' | 'allowAudienceAudioAccess' | 'allowAudienceAudioControl',
     value: boolean
   ) {
     send({ type: 'settings.update', payload: { [name]: value } });
+  }
+
+  function setRoomMode(mode: RoomSnapshot['room']['roomMode']) {
+    send({ type: 'settings.update', payload: { roomMode: mode } });
   }
 
   async function saveRoomTitle() {
@@ -632,6 +656,21 @@
     } catch (error) {
       audioError = error instanceof Error ? error.message : 'Audio removal failed.';
     }
+  }
+
+  function downloadAudio(event: MouseEvent, trackId: string, originalName: string) {
+    event.preventDefault();
+    const request = audioFileRequest(snapshot.room.id, trackId);
+    void fetch(request.url, { headers: request.headers })
+      .then((response) => response.blob())
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = originalName;
+        link.click();
+        URL.revokeObjectURL(url);
+      });
   }
 
   function playAudio(trackId = snapshot.audio.currentTrackId || currentAudioTrack?.id || '') {
@@ -834,7 +873,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <section class={['roundtable', panelState.railCollapsed && 'rail-collapsed']} aria-label="Live roundtable">
-  {#if canSeeAudio && !snapshot.room.audioOnlyMode}
+  {#if canSeeAudio && snapshot.room.roomMode !== 'audio'}
     <audio
       bind:this={audioElement}
       src={audioObjectUrl}
@@ -868,8 +907,8 @@
       {/if}
     </div>
 
-    <section class="document-panel" aria-label={snapshot.room.audioOnlyMode ? 'Shared audio' : snapshot.room.noSlideMode ? 'Shared markdown' : 'Slides'}>
-      {#if snapshot.room.audioOnlyMode}
+    <section class="document-panel" aria-label={snapshot.room.roomMode === 'audio' ? 'Shared audio' : snapshot.room.roomMode === 'markdown' ? 'Shared markdown' : 'Slides'}>
+      {#if snapshot.room.roomMode === 'audio'}
         <div class="audio-stage">
           <audio
             bind:this={audioElement}
@@ -885,7 +924,7 @@
           <div class="audio-stage-copy">
             <p class="kicker">Audio mode</p>
             <h3>{currentAudioTrack?.originalName ?? 'No audio selected'}</h3>
-            <p>{currentAudioTrack ? `${formatBytes(currentAudioTrack.sizeBytes)} ${currentAudioTrack.mimeType}` : 'Upload a track from the Audio panel.'}</p>
+            <p>{currentAudioTrack ? `${formatBytes(currentAudioTrack.sizeBytes)} ${currentAudioTrack.mimeType}` : 'Upload a track below to start listening.'}</p>
           </div>
           <div class="audio-stage-controls">
             <button type="button" disabled={!canControlAudio || !currentAudioTrack} onclick={() => snapshot.audio.state === 'playing' ? pauseAudio() : playAudio()}>
@@ -912,11 +951,69 @@
           {#if audioBlocked}
             <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
           {/if}
+          <div class="audio-stage-manage">
+            {#if isMod}
+              <SelectMenu
+                label="Finish"
+                value={snapshot.audio.playbackMode}
+                options={finishModeOptions}
+                onChange={(value) => setAudioMode(value as RoomSnapshot['audio']['playbackMode'])}
+              />
+            {/if}
+            <div class="audio-track-list">
+              {#each snapshot.audio.tracks as track, index (track.id)}
+                <article class={['audio-track', track.id === snapshot.audio.currentTrackId && 'current-audio-track']}>
+                  <button type="button" disabled={!canControlAudio} onclick={() => selectAudio(track.id)}>
+                    {track.originalName}
+                  </button>
+                  <span>{formatBytes(track.sizeBytes)} · {track.mimeType}</span>
+                  <div class="settings-actions">
+                    {#if isMod}
+                      <button type="button" disabled={index === 0} onclick={() => moveAudioTrack(index, -1)}>Up</button>
+                      <button type="button" disabled={index === snapshot.audio.tracks.length - 1} onclick={() => moveAudioTrack(index, 1)}>Down</button>
+                    {/if}
+                    <a class="download-link" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => downloadAudio(event, track.id, track.originalName)}>Download</a>
+                    {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
+                      <button class="danger-button" type="button" onclick={() => deleteAudioTrack(track.id)}>
+                        <Trash2 size={16} /> Remove
+                      </button>
+                    {/if}
+                  </div>
+                </article>
+              {/each}
+            </div>
+            {#if canUploadAudio}
+              <form class="audio-upload" onsubmit={(event) => { event.preventDefault(); submitAudioUpload(); }}>
+                <label>
+                  Audio file
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    disabled={audioBusy}
+                    onchange={(event) => {
+                      audioFile = event.currentTarget.files?.[0] ?? null;
+                      audioMessage = '';
+                      audioError = '';
+                    }}
+                  />
+                </label>
+                <button type="submit" disabled={audioBusy || !audioFile}>
+                  <Upload size={16} /> {audioBusy ? 'Working' : 'Upload audio'}
+                </button>
+                {#if audioBusy || audioProgress > 0}
+                  <progress max="100" value={audioProgress}>{audioProgress}%</progress>
+                {/if}
+              </form>
+            {/if}
+            {#if audioMessage}
+              <p class="upload-message">{audioMessage}</p>
+            {/if}
+          </div>
           {#if audioError}
             <p class="upload-error" role="alert">{audioError}</p>
           {/if}
         </div>
-      {:else if snapshot.room.noSlideMode}
+      {:else if snapshot.room.roomMode === 'markdown'}
         <div class="markdown-panel">
           <div class="document-toolbar">
             <div>
@@ -987,6 +1084,36 @@
             <div class="empty-document">
               <FileText size={34} />
               <p>{snapshot.slide?.missing ? 'The attached slide file is missing.' : 'Upload a slide file to show slides here.'}</p>
+              {#if canManageSlides}
+                <form class="slide-upload stage-upload" onsubmit={(event) => { event.preventDefault(); submitSlideUpload(); }}>
+                  <label>
+                    Slide file
+                    <input
+                      type="file"
+                      accept="application/pdf,image/png,image/jpeg,image/webp,image/gif,.pdf,.png,.jpg,.jpeg,.webp,.gif"
+                      disabled={slideBusy}
+                      onchange={(event) => {
+                        slideFile = event.currentTarget.files?.[0] ?? null;
+                        slideMessage = '';
+                        slideError = '';
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Expiration
+                    <input type="datetime-local" bind:value={slideExpiresAt} disabled={slideBusy} />
+                  </label>
+                  <button type="submit" disabled={slideBusy || !slideFile}>
+                    <Upload size={16} /> {slideBusy ? 'Working' : 'Upload slide'}
+                  </button>
+                  {#if slideBusy || slideProgress > 0}
+                    <progress max="100" value={slideProgress}>{slideProgress}%</progress>
+                  {/if}
+                  {#if slideMessage}
+                    <p class="upload-message">{slideMessage}</p>
+                  {/if}
+                </form>
+              {/if}
             </div>
           {/if}
           {#if pdfError}
@@ -1193,7 +1320,7 @@
       {/if}
     </section>
 
-    {#if canSeeAudio}
+    {#if canSeeAudio && snapshot.room.roomMode !== 'audio'}
       <section class="rail-panel">
         <button class="list-toggle" type="button" onclick={() => togglePanel('audio')} aria-expanded={!panelState.audio}>
           <Music size={19} />
@@ -1219,17 +1346,12 @@
               </div>
             </div>
             {#if isMod}
-              <label class="compact-field">
-                Finish
-                <select value={snapshot.audio.playbackMode} onchange={(event) => setAudioMode(event.currentTarget.value as RoomSnapshot['audio']['playbackMode'])}>
-                  <option value="stop">Stop</option>
-                  <option value="next">Next</option>
-                  <option value="previous">Previous</option>
-                  <option value="repeat-one">Repeat one</option>
-                  <option value="repeat-all">Repeat all</option>
-                  <option value="shuffle">Shuffle</option>
-                </select>
-              </label>
+              <SelectMenu
+                label="Finish"
+                value={snapshot.audio.playbackMode}
+                options={finishModeOptions}
+                onChange={(value) => setAudioMode(value as RoomSnapshot['audio']['playbackMode'])}
+              />
             {/if}
             <div class="audio-track-list">
               {#each snapshot.audio.tracks as track, index (track.id)}
@@ -1243,20 +1365,7 @@
                       <button type="button" disabled={index === 0} onclick={() => moveAudioTrack(index, -1)}>Up</button>
                       <button type="button" disabled={index === snapshot.audio.tracks.length - 1} onclick={() => moveAudioTrack(index, 1)}>Down</button>
                     {/if}
-                    <a class="download-link" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => {
-                      event.preventDefault();
-                      const request = audioFileRequest(snapshot.room.id, track.id);
-                      void fetch(request.url, { headers: request.headers })
-                        .then((response) => response.blob())
-                        .then((blob) => {
-                          const url = URL.createObjectURL(blob);
-                          const link = document.createElement('a');
-                          link.href = url;
-                          link.download = track.originalName;
-                          link.click();
-                          URL.revokeObjectURL(url);
-                        });
-                    }}>Download</a>
+                    <a class="download-link" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => downloadAudio(event, track.id, track.originalName)}>Download</a>
                     {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
                       <button class="danger-button" type="button" onclick={() => deleteAudioTrack(track.id)}>
                         <Trash2 size={16} /> Remove
@@ -1328,14 +1437,12 @@
                 <button class="danger-button" type="button" disabled={!snapshot.room.hasPassword} onclick={clearRoomPassword}>Clear password</button>
               </div>
             </form>
-            <label class="toggle-field">
-              <input
-                type="checkbox"
-                checked={snapshot.room.noSlideMode}
-                onchange={(event) => setRoomBooleanSetting('noSlideMode', event.currentTarget.checked)}
-              />
-              No-slide markdown mode
-            </label>
+            <SelectMenu
+              label="Mode"
+              value={snapshot.room.roomMode}
+              options={roomModeOptions}
+              onChange={(value) => setRoomMode(value as RoomSnapshot['room']['roomMode'])}
+            />
             <label class="toggle-field">
               <input
                 type="checkbox"
@@ -1355,14 +1462,6 @@
             <label class="toggle-field">
               <input
                 type="checkbox"
-                checked={snapshot.room.audioOnlyMode}
-                onchange={(event) => setRoomBooleanSetting('audioOnlyMode', event.currentTarget.checked)}
-              />
-              Audio-only mode
-            </label>
-            <label class="toggle-field">
-              <input
-                type="checkbox"
                 checked={snapshot.room.allowAudienceAudioAccess}
                 onchange={(event) => setRoomBooleanSetting('allowAudienceAudioAccess', event.currentTarget.checked)}
               />
@@ -1376,14 +1475,12 @@
               />
               Audience audio controls
             </label>
-            <label class="compact-field">
-              Hands
-              <select value={snapshot.room.raiseHandMode} onchange={(event) => setRaiseHandMode(event.currentTarget.value as 'off' | 'manual' | 'queue')}>
-                <option value="off">Off</option>
-                <option value="manual">Manual</option>
-                <option value="queue">Queue</option>
-              </select>
-            </label>
+            <SelectMenu
+              label="Hands"
+              value={snapshot.room.raiseHandMode}
+              options={handModeOptions}
+              onChange={(value) => setRaiseHandMode(value as 'off' | 'manual' | 'queue')}
+            />
             <div class="settings-actions">
               <button type="button" onclick={copyMigrationLink}>
                 <Link2 size={16} /> Copy migration link

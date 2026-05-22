@@ -114,8 +114,6 @@ The Go server reads these environment variables:
 - `SLIDETALK_AUDIO_FILES_GC_AFTER`: delete room audio files after room age, default `7d`
 - `SLIDETALK_MIN_FREE_SPACE`: reject retained uploads that would leave less free disk space, default `0.5GB`
 
-`SLIDETALK_SLIDE_MAX_BYTES` is accepted as a deprecated fallback when `SLIDETALK_SLIDE_UPLOAD_LIMIT` is unset.
-
 On startup, the server creates `~/.slidetalk/admin_token` and `~/.slidetalk/slides` if they do not already exist. Submit that token in the profile panel to promote the current browser identity to site admin.
 
 Runtime data lives under `~/.slidetalk` by default:
@@ -127,7 +125,7 @@ Runtime data lives under `~/.slidetalk` by default:
 
 Room participants fetch an initial room snapshot from `/api/rooms/{roomId}/snapshot`, then connect to `/api/ws` with a one-time room-scoped ticket for live updates. Moderator commands currently support participant ordering, observer queue moves, role changes, kicks, current-speaker navigation, server-timed countdowns, manual or queue-based raised hands, shared slide navigation, markdown updates, room settings, password changes, slide replacement/removal, audio playlist controls, and synchronized audio play/pause/seek.
 
-Room moderators can upload or replace the PDF, PNG, JPEG, WebP, or GIF slide file attached to their room. Room moderators can upload audio files, reorder the audio playlist, choose the end-of-track behavior, and switch the room into audio-only mode. Optional room settings let non-observer participants upload/download audio and separately control playback; observers can see and download audio when audience access is enabled, but cannot upload or control playback. Site admins bypass the audio per-file size limit after a browser confirmation, but all uploads remain subject to the minimum free-space floor.
+Room moderators can upload or replace the PDF, PNG, JPEG, WebP, or GIF slide file attached to their room. Rooms use a single mode setting: slides, markdown, or audio. In audio mode, the shared audio player, playlist, finish behavior, and upload controls move into the main stage instead of a right-side audio rail. Optional room settings let non-observer participants upload/download audio and separately control playback; observers can see and download audio when audience access is enabled, but cannot upload or control playback. Site admins bypass the audio per-file size limit after a browser confirmation, but all uploads remain subject to the minimum free-space floor.
 
 The browser hashes files before upload, the server stores files by SHA-256 and validated extension, and cleanup runs hourly.
 
