@@ -26,6 +26,8 @@
   import { roomIdFromInput } from './lib/roomLink';
   import Roundtable from './lib/room/Roundtable.svelte';
   import SelectMenu from './lib/room/SelectMenu.svelte';
+  import ToastList from './lib/ToastList.svelte';
+  import { addToast } from './lib/toast.svelte';
 
   let user = $state<User | null>(null);
   let room = $state<RoomDetails | null>(null);
@@ -51,7 +53,6 @@
   let pendingMigrationParam = $state('');
   let loading = $state(true);
   let busy = $state(false);
-  let errorMessage = $state('');
   let notice = $state('');
   let shareFallbackText = $state('');
   let removedRoomMessage = $state('');
@@ -90,7 +91,6 @@
 
   async function loadProfile() {
     loading = true;
-    errorMessage = '';
     try {
       user = await getMe();
       displayName = user.displayName;
@@ -99,7 +99,7 @@
         admins = await listAdmins();
       }
     } catch (error) {
-      errorMessage = messageFrom(error);
+      addToast(messageFrom(error));
     } finally {
       loading = false;
     }
@@ -116,7 +116,6 @@
     }
 
     busy = true;
-    errorMessage = '';
     profileStatus = 'Saving...';
     try {
       user = await updateProfile(nextName);
@@ -244,7 +243,6 @@
 
   async function autoOpenRoom(roomInput: string, migrationId: string) {
     busy = true;
-    errorMessage = '';
     notice = '';
     const normalizedRoomId = roomIdFromInput(roomInput, window.location.href);
     joinRoomId = normalizedRoomId;
@@ -266,7 +264,7 @@
         await activateRoom(details, '');
       }
     } catch (error) {
-      errorMessage = messageFrom(error);
+      addToast(messageFrom(error));
     } finally {
       busy = false;
     }
@@ -288,18 +286,17 @@
       await openRealtime(details.room.id);
     } catch (error) {
       connectionStatus = 'disconnected';
-      errorMessage = messageFrom(error);
+      addToast(messageFrom(error));
     }
   }
 
   async function run(task: () => Promise<void>) {
     busy = true;
-    errorMessage = '';
     notice = '';
     try {
       await task();
     } catch (error) {
-      errorMessage = messageFrom(error);
+      addToast(messageFrom(error));
     } finally {
       busy = false;
     }
@@ -374,7 +371,6 @@
           snapshot = null;
           room = null;
           removedRoomMessage = event.message || "You've been removed from that room.";
-          errorMessage = '';
           notice = '';
           pendingRoomParam = '';
           pendingMigrationParam = '';
@@ -382,7 +378,7 @@
           document.title = 'SlideTalk';
         }
         if (event.type === 'error') {
-          errorMessage = event.message ?? 'Realtime command failed.';
+          addToast(event.message ?? 'Realtime command failed.');
         }
       },
       (status) => {
@@ -420,9 +416,6 @@
       <button type="button" onclick={() => (removedRoomMessage = '')}>Return home</button>
     </section>
   {:else if snapshot}
-    {#if errorMessage}
-      <p class="feedback error room-feedback" role="alert">{errorMessage}</p>
-    {/if}
     {#if notice}
       <p class="feedback notice room-feedback" role="status">{notice}</p>
     {/if}
@@ -433,7 +426,7 @@
         send={(command) => {
         const sent = realtime?.send(command) ?? false;
         if (!sent) {
-          errorMessage = 'Live connection is still connecting. Try again in a moment.';
+          addToast('Live connection is still connecting. Try again in a moment.');
         }
       }}
     />
@@ -609,9 +602,6 @@
       </section>
     {/if}
 
-    {#if errorMessage}
-      <p class="feedback error" role="alert">{errorMessage}</p>
-    {/if}
     {#if notice}
       <p class="feedback notice" role="status">{notice}</p>
     {/if}
@@ -642,3 +632,5 @@
     {/if}
   {/if}
 </main>
+
+<ToastList />
