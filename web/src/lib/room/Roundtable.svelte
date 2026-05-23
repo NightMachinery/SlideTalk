@@ -43,6 +43,7 @@
   import { addToast } from '../toast.svelte';
   import { classifyAudioUploadFiles, safeBrowserAudio } from './audioUploadValidation';
   import { loadLocalAudioMute, saveLocalAudioMute } from './localAudioMute';
+  import { onlineCountLabel, sortedByOnline } from './memberDisplay';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
   import { pageFromSharedNavigation } from './slides';
@@ -196,6 +197,10 @@
   const canEditMarkdown = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowParticipantMarkdown));
   const currentSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.currentSpeakerUserId));
   const nextSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.nextSpeakerUserId));
+  const displayedParticipants = $derived(sortedByOnline(snapshot.participants));
+  const displayedObservers = $derived(sortedByOnline(snapshot.observers));
+  const participantCountLabel = $derived(onlineCountLabel(snapshot.participants));
+  const observerCountLabel = $derived(onlineCountLabel(snapshot.observers));
   const callerHand = $derived(snapshot.hands.find((hand) => hand.userId === snapshot.caller.userId));
   const canUseHands = $derived(snapshot.caller.role !== 'observer' && snapshot.room.raiseHandMode !== 'off');
   const markdownBlocks = $derived(parseMarkdown(snapshot.markdown || ''));
@@ -520,8 +525,10 @@
     };
   });
 
-  function moveMember(list: SnapshotMember[], index: number, direction: -1 | 1) {
-    const next = [...list];
+  function moveMember(userId: string, direction: -1 | 1) {
+    const next = [...snapshot.participants];
+    const index = next.findIndex((member) => member.userId === userId);
+    if (index < 0) return;
     const target = index + direction;
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
@@ -534,8 +541,10 @@
     });
   }
 
-  function moveObserver(index: number, direction: -1 | 1) {
+  function moveObserver(userId: string, direction: -1 | 1) {
     const next = [...snapshot.observers];
+    const index = next.findIndex((member) => member.userId === userId);
+    if (index < 0) return;
     const target = index + direction;
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
@@ -720,6 +729,16 @@
   function observerStatus(member: SnapshotMember) {
     if (member.userId === snapshot.caller.userId) return 'You are observing';
     return 'Watching';
+  }
+
+  function canMoveParticipant(userId: string, direction: -1 | 1) {
+    const index = snapshot.participants.findIndex((member) => member.userId === userId);
+    return index >= 0 && index + direction >= 0 && index + direction < snapshot.participants.length;
+  }
+
+  function canMoveObserver(userId: string, direction: -1 | 1) {
+    const index = snapshot.observers.findIndex((member) => member.userId === userId);
+    return index >= 0 && index + direction >= 0 && index + direction < snapshot.observers.length;
   }
 
   function lowerHand(userId: string) {
@@ -1629,11 +1648,11 @@
       <button class="list-toggle" type="button" onclick={() => togglePanel('participants')} aria-expanded={!panelState.participants}>
         <UsersRound size={19} />
         <span>Participants</span>
-        <strong>{snapshot.participants.length}</strong>
+        <strong>{participantCountLabel}</strong>
       </button>
       {#if !panelState.participants}
         <div class="member-list">
-          {#each snapshot.participants as member, index (member.userId)}
+          {#each displayedParticipants as member (member.userId)}
             <article class={['member-row', !member.isOnline && 'offline-row', member.userId === snapshot.currentTurn.currentSpeakerUserId && 'current-speaker-row']}>
               <div class="member-identity">
                 {#if member.userId === snapshot.currentTurn.currentSpeakerUserId}
@@ -1661,8 +1680,8 @@
               </div>
               {#if isMod}
                 <div class="member-actions">
-                  <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveMember(snapshot.participants, index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
-                  <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveMember(snapshot.participants, index, 1)} disabled={index === snapshot.participants.length - 1}><ArrowDown size={16} /></button>
+                  <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveMember(member.userId, -1)} disabled={!canMoveParticipant(member.userId, -1)}><ArrowUp size={16} /></button>
+                  <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveMember(member.userId, 1)} disabled={!canMoveParticipant(member.userId, 1)}><ArrowDown size={16} /></button>
                   {#if member.role === 'mod'}
                     <button type="button" onclick={() => setRole(member.userId, 'participant')}>
                       <Shield size={15} /> Demote
@@ -1689,11 +1708,11 @@
       <button class="list-toggle" type="button" onclick={() => togglePanel('observers')} aria-expanded={!panelState.observers}>
         <Eye size={19} />
         <span>Observers</span>
-        <strong>{snapshot.observers.length}</strong>
+        <strong>{observerCountLabel}</strong>
       </button>
       {#if !panelState.observers}
         <div class="member-list compact">
-          {#each snapshot.observers as member, index (member.userId)}
+          {#each displayedObservers as member (member.userId)}
             <article class={['member-row', 'observer-row', !member.isOnline && 'offline-row']}>
               <div class="member-identity">
                 {#if !member.isOnline}
@@ -1709,8 +1728,8 @@
               {#if isMod || member.userId === snapshot.caller.userId}
                 <div class="member-actions">
                   {#if isMod}
-                    <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveObserver(index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
-                    <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveObserver(index, 1)} disabled={index === snapshot.observers.length - 1}><ArrowDown size={16} /></button>
+                    <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveObserver(member.userId, -1)} disabled={!canMoveObserver(member.userId, -1)}><ArrowUp size={16} /></button>
+                    <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveObserver(member.userId, 1)} disabled={!canMoveObserver(member.userId, 1)}><ArrowDown size={16} /></button>
                   {/if}
                   <button type="button" onclick={() => setRole(member.userId, 'participant')}>Rejoin</button>
                   {#if isMod}
