@@ -139,6 +139,24 @@ build_assets() {
 	run_node_task "pnpm --dir web build"
 }
 
+install_cli() {
+	local install_dir="${SLIDETALK_CLI_INSTALL_DIR:-$HOME/.local/bin}"
+	print -- "Installing slidetalk CLI to ${install_dir}..."
+	mkdir -p "$install_dir"
+	go build -o "${install_dir}/slidetalk" ./cmd/slidetalk
+	if [[ ":$PATH:" != *":${install_dir}:"* ]]; then
+		print -- "Note: ${install_dir} is not on PATH for this shell."
+	fi
+}
+
+write_public_url_marker() {
+	local public_url="$1"
+	local data_dir="${SLIDETALK_DATA_DIR:-$HOME/.slidetalk}"
+	mkdir -p "$data_dir"
+	print -r -- "$public_url" > "${data_dir}/public_url"
+	chmod 600 "${data_dir}/public_url"
+}
+
 prod_build_exists() {
 	[[ -f "$ROOT_DIR/web/dist/index.html" ]]
 }
@@ -289,6 +307,8 @@ setup() {
 	stop_all_sessions
 	install_dependencies
 	build_assets
+	install_cli
+	write_public_url_marker "$public_url"
 	start_prod "$public_url"
 }
 
@@ -300,6 +320,8 @@ redeploy() {
 	fi
 	install_dependencies
 	build_assets
+	install_cli
+	write_public_url_marker "$public_url"
 	start_prod "$public_url"
 }
 
