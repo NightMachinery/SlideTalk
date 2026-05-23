@@ -41,6 +41,7 @@
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { clearSlideCache, gcSlideCache, getCachedSlide, putCachedSlide, slideCacheStats } from '../slideCache';
   import { addToast } from '../toast.svelte';
+  import { loadLocalAudioMute, saveLocalAudioMute } from './localAudioMute';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
   import { pageFromSharedNavigation } from './slides';
@@ -161,6 +162,7 @@
   let audioMessage = $state('');
   let audioBlocked = $state(false);
   let audioMuted = $state(false);
+  let audioMuteRoomId = '';
   let audioPositionDraft = $state(0);
   let audioSeeking = $state(false);
   let audioDuration = $state(0);
@@ -256,6 +258,13 @@
       window.clearInterval(interval);
       window.removeEventListener('resize', resize);
     };
+  });
+
+  $effect(() => {
+    const roomId = snapshot.room.id;
+    if (audioMuteRoomId === roomId) return;
+    audioMuteRoomId = roomId;
+    audioMuted = loadLocalAudioMute(roomId);
   });
 
   $effect(() => {
@@ -1012,6 +1021,11 @@
     send({ type: 'audio.pause' });
   }
 
+  function toggleLocalAudioMute() {
+    audioMuted = !audioMuted;
+    saveLocalAudioMute(snapshot.room.id, audioMuted);
+  }
+
   function seekAudio(value: number) {
     if (!canControlAudio) return;
     const positionSeconds = Math.max(0, Math.floor(value));
@@ -1263,6 +1277,7 @@
   {#if canSeeAudio && snapshot.room.roomMode !== 'audio'}
     <audio
       bind:this={audioElement}
+      bind:muted={audioMuted}
       src={audioObjectUrl}
       onended={() => send({ type: 'audio.ended' })}
       ontimeupdate={() => {
@@ -1362,7 +1377,7 @@
               <span class="seek-buffer" style:--buffer={`${audioBufferedPercent}%`}></span>
             </label>
             <span class="audio-time">{formatDuration(audioPositionDraft || estimatedAudioSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
-            <button type="button" class="icon-button" style={audioMuted ? 'color: var(--color-danger); border-color: var(--color-danger);' : ''} onclick={() => audioMuted = !audioMuted} title={audioMuted ? "Unmute local audio" : "Mute local audio"}>
+            <button type="button" class="icon-button" style={audioMuted ? 'color: var(--color-danger); border-color: var(--color-danger);' : ''} onclick={toggleLocalAudioMute} title={audioMuted ? "Unmute local audio" : "Mute local audio"}>
               {#if audioMuted}
                 <VolumeX size={18} />
               {:else}
@@ -1810,7 +1825,7 @@
                     <Play size={16} /> Play
                   {/if}
                 </button>
-                <button type="button" class="icon-button" style={audioMuted ? 'color: var(--color-danger); border-color: var(--color-danger);' : ''} onclick={() => audioMuted = !audioMuted} title={audioMuted ? "Unmute local audio" : "Mute local audio"}>
+                <button type="button" class="icon-button" style={audioMuted ? 'color: var(--color-danger); border-color: var(--color-danger);' : ''} onclick={toggleLocalAudioMute} title={audioMuted ? "Unmute local audio" : "Mute local audio"}>
                   {#if audioMuted}
                     <VolumeX size={16} /> Muted
                   {:else}
