@@ -620,12 +620,25 @@ func (r *limitReader) Read(p []byte) (int, error) {
 
 func mediaFor(originalName string, mimeType string) (mediaType, error) {
 	mime := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
-	if mime == "" || mime == octetMIME || !strings.HasPrefix(mime, "audio/") {
-		return mediaType{}, ErrUnsupportedFile
-	}
 	ext := strings.TrimPrefix(filepath.Ext(strings.ToLower(strings.TrimSpace(originalName))), ".")
 	if ext == "" {
 		ext = "audio"
+	}
+	switch {
+	case mime == "" || mime == octetMIME:
+		fallback, ok := audioMIMEForExtension(ext)
+		if !ok {
+			return mediaType{}, ErrUnsupportedFile
+		}
+		mime = fallback
+	case mime == "application/ogg" && audioExtension(ext):
+		mime = "audio/ogg"
+	case strings.HasPrefix(mime, "audio/"):
+		mime = normalizeAudioMIME(ext, mime)
+	case (mime == "video/mp4" || mime == "application/mp4") && mp4AudioExtension(ext):
+		mime = "audio/mp4"
+	default:
+		return mediaType{}, ErrUnsupportedFile
 	}
 	return mediaType{ext: ext, mime: mime}, nil
 }
@@ -639,7 +652,49 @@ func (m mediaType) matchesDetected(detected string) bool {
 	if detected == "" || detected == octetMIME {
 		return true
 	}
+	if detected == "video/mp4" && mp4AudioExtension(m.ext) {
+		return true
+	}
 	return strings.HasPrefix(detected, "audio/") || detected == "application/ogg"
+}
+
+func normalizeAudioMIME(ext string, mime string) string {
+	if (mime == "audio/m4a" || mime == "audio/x-m4a" || mime == "audio/aac") && mp4AudioExtension(ext) {
+		return "audio/mp4"
+	}
+	return mime
+}
+
+func audioMIMEForExtension(ext string) (string, bool) {
+	switch ext {
+	case "mp3":
+		return "audio/mpeg", true
+	case "m4a", "m4b":
+		return "audio/mp4", true
+	case "aac":
+		return "audio/aac", true
+	case "ogg", "oga":
+		return "audio/ogg", true
+	case "opus":
+		return "audio/opus", true
+	case "wav":
+		return "audio/wav", true
+	case "flac":
+		return "audio/flac", true
+	case "webm", "weba":
+		return "audio/webm", true
+	default:
+		return "", false
+	}
+}
+
+func audioExtension(ext string) bool {
+	_, ok := audioMIMEForExtension(ext)
+	return ok
+}
+
+func mp4AudioExtension(ext string) bool {
+	return ext == "m4a" || ext == "m4b"
 }
 
 type contentDetector struct {

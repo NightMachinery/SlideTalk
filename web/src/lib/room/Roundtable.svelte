@@ -41,6 +41,7 @@
   import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { clearSlideCache, gcSlideCache, getCachedSlide, putCachedSlide, slideCacheStats } from '../slideCache';
   import { addToast } from '../toast.svelte';
+  import { classifyAudioUploadFiles, safeBrowserAudio } from './audioUploadValidation';
   import { loadLocalAudioMute, saveLocalAudioMute } from './localAudioMute';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
@@ -913,7 +914,16 @@
     audioUploadIndex = 0;
     audioMessage = 'Preparing audio...';
     try {
-      for (const [index, file] of audioFiles.entries()) {
+      const { supported, unsupported } = await classifyAudioUploadFiles(audioFiles);
+      if (unsupported.length > 0) {
+        addToast(`Skipped unsupported audio file${unsupported.length === 1 ? '' : 's'}: ${unsupported.map((file) => file.name).join(', ')}`);
+      }
+      if (supported.length === 0) {
+        audioFiles = [];
+        audioMessage = 'No supported audio files selected.';
+        return;
+      }
+      for (const [index, file] of supported.entries()) {
         audioUploadIndex = index + 1;
         if (!safeBrowserAudio(file)) {
           const confirmed = await confirmAction({
@@ -934,9 +944,9 @@
           if (!confirmed) continue;
         }
         audioProgress = 0;
-        audioMessage = `Hashing ${index + 1} / ${audioFiles.length}...`;
+        audioMessage = `Hashing ${index + 1} / ${supported.length}...`;
         const [sha256, metadata] = await Promise.all([sha256File(file), readAudioUploadMetadata(file)]);
-        audioMessage = `Uploading ${index + 1} / ${audioFiles.length}...`;
+        audioMessage = `Uploading ${index + 1} / ${supported.length}...`;
         const uploadedTrack = await uploadRoomAudio(
           {
             roomId: snapshot.room.id,
@@ -962,7 +972,7 @@
         audioDownloadProgress = { ...audioDownloadProgress, [uploadedTrack.sha256 || sha256]: 100 };
       }
       audioProgress = 100;
-      audioMessage = audioFiles.length === 1 ? 'Audio uploaded.' : 'Audio files uploaded.';
+      audioMessage = supported.length === 1 ? 'Audio uploaded.' : 'Audio files uploaded.';
       audioFiles = [];
     } catch (error) {
       addToast(errorMessage(error, 'Audio upload failed.'));
@@ -1195,11 +1205,6 @@
     }
     const end = audioElement.buffered.end(audioElement.buffered.length - 1);
     audioBufferedPercent = Math.min(100, Math.round((end / duration) * 100));
-  }
-
-  function safeBrowserAudio(file: File) {
-    const type = file.type.toLowerCase();
-    return ['audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/ogg', 'audio/opus', 'audio/wav', 'audio/flac', 'audio/webm', 'audio/x-m4a'].includes(type);
   }
 
   function defaultExpirationInput() {

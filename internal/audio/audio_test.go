@@ -35,6 +35,63 @@ func TestStoreRejectsNonAudioMIME(t *testing.T) {
 	}
 }
 
+func TestStoreAcceptsM4AAudio(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAudioFixture(t)
+	content := m4aBytes()
+
+	status, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sha256Hex(content),
+		OriginalName: "song.m4a",
+		MIMEType:     "audio/x-m4a",
+		File:         bytes.NewReader(content),
+		IsAdmin:      true,
+	})
+	if err != nil {
+		t.Fatalf("store m4a: %v", err)
+	}
+	if status.MIMEType != "audio/mp4" {
+		t.Fatalf("mime type = %q, want audio/mp4", status.MIMEType)
+	}
+}
+
+func TestStoreAcceptsM4AWhenBrowserSendsOctetStream(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAudioFixture(t)
+	content := m4aBytes()
+
+	if _, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sha256Hex(content),
+		OriginalName: "song.m4a",
+		MIMEType:     "application/octet-stream",
+		File:         bytes.NewReader(content),
+		IsAdmin:      true,
+	}); err != nil {
+		t.Fatalf("store octet-stream m4a: %v", err)
+	}
+}
+
+func TestStoreRejectsVideoMP4WithoutAudioExtension(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAudioFixture(t)
+	content := m4aBytes()
+
+	_, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sha256Hex(content),
+		OriginalName: "clip.mp4",
+		MIMEType:     "video/mp4",
+		File:         bytes.NewReader(content),
+		IsAdmin:      true,
+	})
+
+	if !errors.Is(err, ErrUnsupportedFile) {
+		t.Fatalf("expected unsupported file error, got %v", err)
+	}
+}
+
 func TestStoreAppliesLimitOnlyToNonAdmins(t *testing.T) {
 	ctx := context.Background()
 	fixture := newAudioFixture(t)
@@ -162,4 +219,8 @@ func newAudioFixture(t *testing.T) audioFixture {
 func sha256Hex(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func m4aBytes() []byte {
+	return append([]byte{0, 0, 0, 24}, []byte("ftypM4A \x00\x00\x00\x00M4A mp42isom")...)
 }

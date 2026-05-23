@@ -581,6 +581,24 @@ func TestAudioDownloadIsAvailableToParticipantsByDefault(t *testing.T) {
 	serveJSON(t, server, request, http.StatusForbidden)
 }
 
+func TestAudioUploadAcceptsM4AFromBrowserOctetStream(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	content := testM4ABytes()
+	body, contentType := audioUploadBodyWithFileType(t, roomID, "song.m4a", "application/octet-stream", content, sha256HexTest(content))
+	request := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio", body)
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Content-Type", contentType)
+	upload := serveJSON(t, server, request, http.StatusCreated)
+	var status audio.Status
+	if err := json.Unmarshal(upload.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode audio status: %v", err)
+	}
+	if status.MIMEType != "audio/mp4" {
+		t.Fatalf("mime type = %q, want audio/mp4", status.MIMEType)
+	}
+}
+
 func TestParticipantAudioUploadRequiresAudienceUploadSetting(t *testing.T) {
 	server := newAPITestServer(t)
 	roomID := createAdminRoom(t, server)
@@ -817,6 +835,11 @@ func slideUploadBody(t *testing.T, roomID string, name string, content []byte, s
 
 func audioUploadBody(t *testing.T, roomID string, name string, content []byte, sha string) (*bytes.Buffer, string) {
 	t.Helper()
+	return audioUploadBodyWithFileType(t, roomID, name, "audio/wav", content, sha)
+}
+
+func audioUploadBodyWithFileType(t *testing.T, roomID string, name string, contentType string, content []byte, sha string) (*bytes.Buffer, string) {
+	t.Helper()
 	body := new(bytes.Buffer)
 	writer := multipart.NewWriter(body)
 	fields := map[string]string{
@@ -831,7 +854,7 @@ func audioUploadBody(t *testing.T, roomID string, name string, content []byte, s
 	}
 	header := make(textproto.MIMEHeader)
 	header.Set("Content-Disposition", `form-data; name="file"; filename="`+name+`"`)
-	header.Set("Content-Type", "audio/wav")
+	header.Set("Content-Type", contentType)
 	part, err := writer.CreatePart(header)
 	if err != nil {
 		t.Fatalf("create form file: %v", err)
@@ -843,6 +866,10 @@ func audioUploadBody(t *testing.T, roomID string, name string, content []byte, s
 		t.Fatalf("close writer: %v", err)
 	}
 	return body, writer.FormDataContentType()
+}
+
+func testM4ABytes() []byte {
+	return append([]byte{0, 0, 0, 24}, []byte("ftypM4A \x00\x00\x00\x00M4A mp42isom")...)
 }
 
 func sha256HexTest(content []byte) string {
