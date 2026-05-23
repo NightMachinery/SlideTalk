@@ -120,6 +120,7 @@ type SnapshotMember struct {
 	DisplayName  string `json:"displayName"`
 	Role         string `json:"role"`
 	DisplayOrder int    `json:"displayOrder"`
+	IsOnline     bool   `json:"isOnline"`
 }
 
 // SnapshotTurn describes current and next speakers.

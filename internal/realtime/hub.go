@@ -73,6 +73,18 @@ func (h *Hub) Unregister(client *Client) {
 	}
 }
 
+// IsUserOnline returns true if there is an active client connection for the user in the given room.
+func (h *Hub) IsUserOnline(roomID string, userID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for client := range h.clients {
+		if client.RoomID == roomID && client.UserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
 // IssueTicket returns a one-time WebSocket ticket for a current room member.
 func (h *Hub) IssueTicket(ctx context.Context, roomID string, userID string) (WSTicket, error) {
 	if _, err := h.rooms.GetForUser(ctx, roomID, userID); err != nil {
@@ -208,6 +220,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			DisplayName:  member.DisplayName,
 			Role:         member.Role,
 			DisplayOrder: member.DisplayOrder,
+			IsOnline:     h.IsUserOnline(roomID, member.UserID),
 		}
 		if member.Role == rooms.RoleObserver {
 			snapshot.Observers = append(snapshot.Observers, snapshotMember)

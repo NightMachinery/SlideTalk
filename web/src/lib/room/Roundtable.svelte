@@ -18,6 +18,9 @@
   import Pencil from '@lucide/svelte/icons/pencil';
   import Mic from '@lucide/svelte/icons/mic';
   import Music from '@lucide/svelte/icons/music';
+  import UserX from '@lucide/svelte/icons/user-x';
+  import Volume2 from '@lucide/svelte/icons/volume-2';
+  import VolumeX from '@lucide/svelte/icons/volume-x';
   import Pause from '@lucide/svelte/icons/pause';
   import Play from '@lucide/svelte/icons/play';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
@@ -157,6 +160,7 @@
   let audioUploadIndex = $state(0);
   let audioMessage = $state('');
   let audioBlocked = $state(false);
+  let audioMuted = $state(false);
   let audioPositionDraft = $state(0);
   let audioSeeking = $state(false);
   let audioDuration = $state(0);
@@ -408,8 +412,8 @@
     if (snapshot.audio.state === 'playing') {
       void audioElement.play().then(() => {
         audioBlocked = false;
-      }).catch(() => {
-        audioBlocked = true;
+      }).catch((error) => {
+        if (error.name !== 'AbortError') audioBlocked = true;
       });
     } else if (!audioElement.paused) {
       audioElement.pause();
@@ -796,8 +800,8 @@
         }
       }
       if (wasPlaying || snapshot.audio.state === 'playing') {
-        void audioElement.play().catch(() => {
-          audioBlocked = true;
+        void audioElement.play().catch((error) => {
+          if (error.name !== 'AbortError') audioBlocked = true;
         });
       }
     });
@@ -1309,6 +1313,7 @@
         <div class="audio-stage">
           <audio
             bind:this={audioElement}
+            bind:muted={audioMuted}
             src={audioObjectUrl}
             onended={() => send({ type: 'audio.ended' })}
             ontimeupdate={updateAudioTiming}
@@ -1357,6 +1362,13 @@
               <span class="seek-buffer" style:--buffer={`${audioBufferedPercent}%`}></span>
             </label>
             <span class="audio-time">{formatDuration(audioPositionDraft || estimatedAudioSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
+            <button type="button" class="icon-button" style={audioMuted ? 'color: var(--color-danger); border-color: var(--color-danger);' : ''} onclick={() => audioMuted = !audioMuted} title={audioMuted ? "Unmute local audio" : "Mute local audio"}>
+              {#if audioMuted}
+                <VolumeX size={18} />
+              {:else}
+                <Volume2 size={18} />
+              {/if}
+            </button>
           </div>
           {#if audioBlocked}
             <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
@@ -1602,10 +1614,12 @@
       {#if !panelState.participants}
         <div class="member-list">
           {#each snapshot.participants as member, index (member.userId)}
-            <article class={['member-row', member.userId === snapshot.currentTurn.currentSpeakerUserId && 'current-speaker-row']}>
+            <article class={['member-row', !member.isOnline && 'offline-row', member.userId === snapshot.currentTurn.currentSpeakerUserId && 'current-speaker-row']}>
               <div class="member-identity">
                 {#if member.userId === snapshot.currentTurn.currentSpeakerUserId}
                   <Mic size={18} />
+                {:else if !member.isOnline}
+                  <UserX size={18} />
                 {:else}
                   <UserRound size={18} />
                 {/if}
@@ -1660,9 +1674,13 @@
       {#if !panelState.observers}
         <div class="member-list compact">
           {#each snapshot.observers as member, index (member.userId)}
-            <article class="member-row observer-row">
+            <article class={['member-row', 'observer-row', !member.isOnline && 'offline-row']}>
               <div class="member-identity">
-                <Eye size={18} />
+                {#if !member.isOnline}
+                  <UserX size={18} />
+                {:else}
+                  <Eye size={18} />
+                {/if}
                 <div>
                   <h3>{member.displayName}</h3>
                   <p>{observerStatus(member)}</p>
@@ -1774,6 +1792,7 @@
           <div class="audio-panel" aria-label="Audio">
             <audio
               bind:this={audioElement}
+              bind:muted={audioMuted}
               src={audioObjectUrl}
               onended={() => send({ type: 'audio.ended' })}
               ontimeupdate={updateAudioTiming}
@@ -1789,6 +1808,13 @@
                     <Pause size={16} /> Pause
                   {:else}
                     <Play size={16} /> Play
+                  {/if}
+                </button>
+                <button type="button" class="icon-button" style={audioMuted ? 'color: var(--color-danger); border-color: var(--color-danger);' : ''} onclick={() => audioMuted = !audioMuted} title={audioMuted ? "Unmute local audio" : "Mute local audio"}>
+                  {#if audioMuted}
+                    <VolumeX size={16} /> Muted
+                  {:else}
+                    <Volume2 size={16} /> Mute
                   {/if}
                 </button>
                 {#if audioBlocked}

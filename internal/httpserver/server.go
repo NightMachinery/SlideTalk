@@ -889,7 +889,10 @@ func (s *appServer) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	client := &realtime.Client{RoomID: claims.RoomID, UserID: claims.UserID, Send: make(chan realtime.Event, 16)}
 	s.hub.Register(client)
-	defer s.hub.Unregister(client)
+	defer func() {
+		s.hub.Unregister(client)
+		s.hub.BroadcastSnapshot(context.Background(), claims.RoomID, "")
+	}()
 	s.hub.BroadcastSnapshot(r.Context(), claims.RoomID, "")
 
 	errCh := make(chan error, 1)

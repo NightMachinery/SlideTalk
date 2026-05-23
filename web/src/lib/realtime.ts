@@ -5,6 +5,7 @@ export type SnapshotMember = {
   displayName: string;
   role: 'mod' | 'participant' | 'observer';
   displayOrder: number;
+  isOnline: boolean;
 };
 
 export type RoomSnapshot = {

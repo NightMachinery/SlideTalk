@@ -1025,6 +1025,11 @@ h2 {
   box-shadow: 0 12px 32px oklch(42% 0.08 190 / 0.12);
 }
 
+.offline-row {
+  opacity: 0.55;
+  filter: grayscale(100%);
+}
+
 .current-speaker-row .member-identity svg {
   color: oklch(38% 0.12 188);
 }
