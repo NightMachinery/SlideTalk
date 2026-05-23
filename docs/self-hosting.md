@@ -32,7 +32,7 @@ The default URL is `https://slidetalk.pinky.lilf.ir`. If a URL has no scheme, th
 ./self_host.zsh setup https://talk.example.com
 ```
 
-`setup` stops existing SlideTalk tmux sessions, installs frontend dependencies with pnpm, builds `web/dist`, writes the managed Caddy block, reloads Caddy when it is running, and starts the Go server in tmux.
+`setup` stops existing SlideTalk tmux sessions, installs frontend dependencies with pnpm, builds `web/dist`, installs the `slidetalk` CLI to `~/.local/bin`, writes the managed Caddy block, reloads Caddy when it is running, and starts the Go server in tmux.
 
 The production tmux session is named `slidetalk` by default.
 
@@ -42,7 +42,7 @@ The production tmux session is named `slidetalk` by default.
 ./self_host.zsh redeploy https://talk.example.com
 ```
 
-`redeploy` stops SlideTalk sessions, runs `git pull --ff-only` when the directory is a Git worktree, reinstalls frontend dependencies with a frozen pnpm lockfile, rebuilds assets, updates Caddy, and starts production again.
+`redeploy` stops SlideTalk sessions, runs `git pull --ff-only` when the directory is a Git worktree, reinstalls frontend dependencies with a frozen pnpm lockfile, rebuilds assets, reinstalls the `slidetalk` CLI, updates Caddy, and starts production again.
 
 ## Start And Stop
 
@@ -72,6 +72,7 @@ The server stores runtime data under `~/.slidetalk` by default:
 - Admin bootstrap token: `~/.slidetalk/admin_token`
 - Slides: `~/.slidetalk/slides/`
 - Audio: `~/.slidetalk/audio/`
+- Public URL marker for CLI links: `~/.slidetalk/public_url`
 
 Set `SLIDETALK_DATA_DIR` before running the script to use another data directory. Set `SLIDETALK_ADDR` to change the Go listen address; the default is `127.0.0.1:8097`.
 
@@ -102,9 +103,22 @@ The Go server adds security headers to responses, including `nosniff`, `no-refer
 
 JSON request bodies are capped by the server. PDF, PNG, JPEG, WebP, and GIF slide uploads are capped by `SLIDETALK_SLIDE_UPLOAD_LIMIT`, which defaults to 200 MiB.
 
-Audio uploads are capped for non-admin users by `SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT`, which defaults to 50 MiB. Site admins can upload larger audio files after a browser confirmation. Supported audio formats include MP3, M4A, AAC, Ogg/Opus, WAV, FLAC, and WebM audio. The browser skips clearly unsupported selections before upload to avoid wasting bandwidth, and the server still validates uploaded content. Slide and audio uploads are rejected when retaining the upload would leave less free disk space than `SLIDETALK_MIN_FREE_SPACE`, which defaults to 0.5 GiB. Room audio tracks are cleaned after room age exceeds `SLIDETALK_AUDIO_FILES_GC_AFTER`, which defaults to 7 days.
+Audio uploads are capped for non-admin users by `SLIDETALK_AUDIO_FILE_UPLOAD_LIMIT`, which defaults to 50 MiB. Site admins can upload larger audio files after a browser confirmation. Supported audio formats include MP3, M4A, AAC, Ogg/Opus, WAV, FLAC, and WebM audio. The browser skips clearly unsupported selections before upload to avoid wasting bandwidth, and the server still validates uploaded content. Slide and audio uploads are rejected when retaining the upload would leave less free disk space than `SLIDETALK_MIN_FREE_SPACE`, which defaults to 0.5 GiB. Room uploaded files are cleaned after the room survival deadline, which defaults to `SLIDETALK_ROOM_GC_AFTER=7d`. `SLIDETALK_AUDIO_FILES_GC_AFTER` remains as a deprecated fallback when the room GC variable is not set.
 
 Browsers keep downloaded audio blobs in IndexedDB so playback can resume from cached files after refresh. That browser cache is local to each client and self-prunes entries older than 30 days, then trims oldest cached audio beyond 1 GiB or 30 files. Browsers also keep local mute preferences in localStorage per room, so muting one room does not mute another. Server-side audio download links include durable room-track bearer tokens for external download managers and remain valid until the track is removed.
+
+## CLI
+
+`setup` and `redeploy` install a local operator command:
+
+```bash
+slidetalk ls [--sort=size|created-date|creator-name|online-count]
+slidetalk rm ROOM_ID... [-y]
+```
+
+`slidetalk ls` reads the configured SQLite database and prints room metadata, storage estimates, links, and password status. Passwords are shown only as `open` or `protected`; existing and future room passwords remain bcrypt-hashed and are not recoverable by the CLI.
+
+`slidetalk rm` force-expires uploaded files for the selected rooms. Before deleting anything, it shows the room IDs, room file references that will be removed, physical files eligible for deletion, and bytes that would be freed. Physical files still referenced by other rooms are kept. Pass `-y` to skip the confirmation prompt.
 
 Admin-token submissions, invalid room-password attempts, and WebSocket ticket creation are rate-limited.
 
