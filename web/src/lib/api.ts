@@ -13,6 +13,8 @@ export type Room = {
   id: string;
   title: string;
   hasPassword: boolean;
+  expiresAt?: string | null;
+  neverExpires?: boolean;
 };
 
 export type Membership = {
@@ -61,6 +63,9 @@ export type RoomSettingsInput = {
   allowAudienceAudioUpload?: boolean;
   allowAudienceAudioControl?: boolean;
   raiseHandMode?: 'off' | 'manual' | 'queue';
+  showAudioStarCounts?: boolean;
+  expiresAt?: string;
+  neverExpires?: boolean;
 };
 
 const tokenKey = 'slidetalk.authToken';

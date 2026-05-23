@@ -1025,6 +1025,11 @@ h2 {
   box-shadow: 0 12px 32px oklch(42% 0.08 190 / 0.12);
 }
 
+.self-row {
+  border-color: oklch(62% 0.14 145);
+  box-shadow: inset 4px 0 0 oklch(62% 0.14 145);
+}
+
 .offline-row {
   opacity: 0.55;
   filter: grayscale(100%);
@@ -1634,6 +1639,23 @@ code {
   color: oklch(24% 0.018 245);
   font-size: 0.86rem;
   font-weight: 760;
+}
+
+.icon-button span {
+  margin-left: 2px;
+  color: inherit;
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.starred-track-button {
+  color: oklch(43% 0.13 82);
+  background: oklch(93% 0.08 88);
+}
+
+.icon-text-button.active-filter {
+  color: oklch(25% 0.08 90);
+  background: oklch(91% 0.08 88);
 }
 
 .audio-upload progress {

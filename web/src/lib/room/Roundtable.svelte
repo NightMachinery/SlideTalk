@@ -27,6 +27,7 @@
   import Save from '@lucide/svelte/icons/save';
   import Settings from '@lucide/svelte/icons/settings';
   import Shield from '@lucide/svelte/icons/shield';
+  import Star from '@lucide/svelte/icons/star';
   import Timer from '@lucide/svelte/icons/timer';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Upload from '@lucide/svelte/icons/upload';
@@ -43,7 +44,7 @@
   import { addToast } from '../toast.svelte';
   import { classifyAudioUploadFiles, safeBrowserAudio } from './audioUploadValidation';
   import { loadLocalAudioMute, saveLocalAudioMute } from './localAudioMute';
-  import { onlineCountLabel, sortedByOnline } from './memberDisplay';
+  import { displayNameForRoom, onlineCountLabel, sortedByOnline } from './memberDisplay';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
   import { pageFromSharedNavigation } from './slides';
@@ -158,6 +159,7 @@
   let audioObjectUrl = $state('');
   let activeAudioObjectUrl = '';
   let activeAudioTrackId = '';
+  let activeAudioSourceKey = '';
   let audioBusy = $state(false);
   let audioProgress = $state(0);
   let audioUploadIndex = $state(0);
@@ -179,6 +181,8 @@
   let audioUploaderDraft = $state('');
   let audioCacheUsage = $state<CacheStats>({ entries: 0, bytes: 0 });
   let slideCacheUsage = $state<CacheStats>({ entries: 0, bytes: 0 });
+  let starredOnly = $state(false);
+  let retentionDraft = $state('');
   let cacheBusy = $state(false);
   let cacheMessage = $state('');
   let confirmDialog = $state<{
@@ -199,6 +203,7 @@
   const nextSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.nextSpeakerUserId));
   const displayedParticipants = $derived(sortedByOnline(snapshot.participants));
   const displayedObservers = $derived(sortedByOnline(snapshot.observers));
+  const allRoomMembers = $derived([...snapshot.participants, ...snapshot.observers]);
   const participantCountLabel = $derived(onlineCountLabel(snapshot.participants));
   const observerCountLabel = $derived(onlineCountLabel(snapshot.observers));
   const callerHand = $derived(snapshot.hands.find((hand) => hand.userId === snapshot.caller.userId));
@@ -209,6 +214,7 @@
   const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowAudienceAudioUpload));
   const canControlAudio = $derived(isMod || (snapshot.caller.role !== 'observer' && snapshot.room.allowAudienceAudioControl));
   const currentAudioTrack = $derived(snapshot.audio.tracks.find((track) => track.id === snapshot.audio.currentTrackId) ?? snapshot.audio.tracks[0]);
+  const displayedAudioTracks = $derived(starredOnly ? snapshot.audio.tracks.filter((track) => track.starredByCaller) : snapshot.audio.tracks);
   const slideMimeType = $derived(snapshot.slide?.mimeType || 'application/pdf');
   const slideIsPDF = $derived(slideMimeType === 'application/pdf');
   const slideIsImage = $derived(slideMimeType.startsWith('image/'));
@@ -320,6 +326,10 @@
   });
 
   $effect(() => {
+    retentionDraft = snapshot.room.expiresAt ? new Date(snapshot.room.expiresAt).toISOString().slice(0, 16) : '';
+  });
+
+  $effect(() => {
     const slideKey = snapshot.slide?.sha256;
     if (!slideKey || snapshot.slide?.missing || snapshot.room.roomMode !== 'slides' || !slideIsPDF) {
       pdfDocument = null;
@@ -374,6 +384,7 @@
   $effect(() => {
     const trackID = snapshot.audio.currentTrackId;
     if (!trackID || !canSeeAudio) {
+      activeAudioSourceKey = '';
       if (activeAudioObjectUrl) {
         URL.revokeObjectURL(activeAudioObjectUrl);
         activeAudioObjectUrl = '';
@@ -382,6 +393,10 @@
       activeAudioTrackId = '';
       return;
     }
+    const track = snapshot.audio.tracks.find((item) => item.id === trackID);
+    const sourceKey = `${snapshot.room.id}:${trackID}:${track?.sha256 ?? ''}:${track?.missing ?? false}`;
+    if (sourceKey === activeAudioSourceKey) return;
+    activeAudioSourceKey = sourceKey;
 
     let cancelled = false;
     let nextBlobUrl = '';
@@ -394,7 +409,6 @@
     });
 
     async function loadAudioSource() {
-      const track = snapshot.audio.tracks.find((item) => item.id === trackID);
       if (!track) return;
       const cached = await getCachedAudio(track.sha256);
       if (cancelled || activeAudioTrackId !== trackID) return;
@@ -720,6 +734,7 @@
   }
 
   function participantStatus(member: SnapshotMember) {
+    if (member.userId === snapshot.caller.userId) return 'This is you';
     if (member.userId === snapshot.currentTurn.currentSpeakerUserId) return 'Speaking now';
     if (member.userId === snapshot.currentTurn.nextSpeakerUserId) return 'Up next';
     if (raisedHandFor(member.userId)) return 'Hand raised';
@@ -729,6 +744,15 @@
   function observerStatus(member: SnapshotMember) {
     if (member.userId === snapshot.caller.userId) return 'You are observing';
     return 'Watching';
+  }
+
+  function memberDisplayName(member: SnapshotMember | undefined) {
+    if (!member) return 'None';
+    return displayNameForRoom(member, allRoomMembers);
+  }
+
+  function handDisplayName(userId: string, fallback: string) {
+    return memberDisplayName(allRoomMembers.find((member) => member.userId === userId) ?? ({ userId, displayName: fallback, role: 'participant', displayOrder: 0, isOnline: false } as SnapshotMember));
   }
 
   function canMoveParticipant(userId: string, direction: -1 | 1) {
@@ -1076,8 +1100,23 @@
   }
 
   function setAudioMode(mode: RoomSnapshot['audio']['playbackMode']) {
-    if (!isMod) return;
+    if (!canControlAudio) return;
     send({ type: 'audio.mode', payload: { mode } });
+  }
+
+  function toggleAudioStar(track: RoomSnapshot['audio']['tracks'][number]) {
+    if (snapshot.caller.role === 'observer') return;
+    send({ type: 'audio.star', payload: { trackId: track.id, starred: !track.starredByCaller } });
+  }
+
+  async function saveRoomRetention(neverExpires = false) {
+    settingsMessage = '';
+    try {
+      await updateRoomSettings(snapshot.room.id, neverExpires ? { neverExpires: true } : { expiresAt: new Date(retentionDraft).toISOString() });
+      settingsMessage = neverExpires ? 'Room set to never expire.' : 'Room expiration updated.';
+    } catch (error) {
+      addToast(errorMessage(error, 'Room expiration update failed.'));
+    }
   }
 
   function toggleTrackFromCard(event: Event, track: RoomSnapshot['audio']['tracks'][number]) {
@@ -1331,8 +1370,8 @@
       {/if}
 
       <div class="top-timer-speakers" aria-label="Turn summary">
-        <span><em>Now:</em> <strong>{currentSpeaker?.displayName || 'None'}</strong></span>
-        <span><em>Next:</em> <strong>{nextSpeaker?.displayName || 'None'}</strong></span>
+        <span><em>Now:</em> <strong>{memberDisplayName(currentSpeaker)}</strong></span>
+        <span><em>Next:</em> <strong>{memberDisplayName(nextSpeaker)}</strong></span>
       </div>
 
       <div class="top-room-actions">
@@ -1413,7 +1452,7 @@
             <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
           {/if}
           <div class="audio-stage-manage">
-            {#if isMod}
+            {#if canControlAudio}
               <SelectMenu
                 label="Finish"
                 value={snapshot.audio.playbackMode}
@@ -1421,8 +1460,13 @@
                 onChange={(value) => setAudioMode(value as RoomSnapshot['audio']['playbackMode'])}
               />
             {/if}
+            <div class="settings-actions">
+              <button class={['icon-text-button', starredOnly && 'active-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
+                <Star size={16} /> Starred
+              </button>
+            </div>
             <div class="audio-track-list">
-              {#each snapshot.audio.tracks as track, index (track.id)}
+              {#each displayedAudioTracks as track, index (track.id)}
                 <div
                   class={["audio-track", track.id === snapshot.audio.currentTrackId && 'current-audio-track']}
                   role="button"
@@ -1443,9 +1487,15 @@
                     {/if}
                   </div>
                   <div class="settings-actions">
+                    <button class={['icon-button', track.starredByCaller && 'starred-track-button']} type="button" title={track.starredByCaller ? 'Unstar' : 'Star'} aria-label={track.starredByCaller ? 'Unstar' : 'Star'} onclick={(event) => { event.stopPropagation(); toggleAudioStar(track); }}>
+                      <Star size={16} />
+                      {#if snapshot.room.showAudioStarCounts && (track.starCount ?? 0) > 0}
+                        <span>{track.starCount}</span>
+                      {/if}
+                    </button>
                     {#if isMod}
-                      <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={index === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(index, -1); }}><ArrowUp size={16} /></button>
-                      <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={index === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(index, 1); }}><ArrowDown size={16} /></button>
+                      <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), -1); }}><ArrowUp size={16} /></button>
+                      <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), 1); }}><ArrowDown size={16} /></button>
                     {/if}
                     {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
                       <button class="icon-button" type="button" title="Rename" aria-label="Rename" onclick={(event) => { event.stopPropagation(); startRenameAudio(track); }}><Pencil size={16} /></button>
@@ -1635,7 +1685,7 @@
         </div>
         {#each snapshot.hands as hand (hand.userId)}
           <span>
-            {hand.displayName}
+            {handDisplayName(hand.userId, hand.displayName)}
             {#if isMod}
               <button type="button" onclick={() => lowerHand(hand.userId)}>Lower</button>
             {/if}
@@ -1653,7 +1703,7 @@
       {#if !panelState.participants}
         <div class="member-list">
           {#each displayedParticipants as member (member.userId)}
-            <article class={['member-row', !member.isOnline && 'offline-row', member.userId === snapshot.currentTurn.currentSpeakerUserId && 'current-speaker-row']}>
+            <article class={['member-row', !member.isOnline && 'offline-row', member.userId === snapshot.currentTurn.currentSpeakerUserId && 'current-speaker-row', member.userId === snapshot.caller.userId && 'self-row']}>
               <div class="member-identity">
                 {#if member.userId === snapshot.currentTurn.currentSpeakerUserId}
                   <Mic size={18} />
@@ -1663,16 +1713,16 @@
                   <UserRound size={18} />
                 {/if}
                 <div>
-                  <h3>{member.displayName}</h3>
+                  <h3>{memberDisplayName(member)}</h3>
                   <p>{participantStatus(member)}</p>
                 </div>
                 {#if raisedHandFor(member.userId)}
                   {#if canLowerHandFor(member.userId)}
-                    <button class="hand-row-button" type="button" title={`Lower ${member.displayName}'s hand`} aria-label={`Lower ${member.displayName}'s hand`} onclick={() => lowerHand(member.userId)}>
+                    <button class="hand-row-button" type="button" title={`Lower ${memberDisplayName(member)}'s hand`} aria-label={`Lower ${memberDisplayName(member)}'s hand`} onclick={() => lowerHand(member.userId)}>
                       <Hand size={15} />
                     </button>
                   {:else}
-                    <span class="hand-row-indicator" title={`${member.displayName} has a raised hand`} aria-label={`${member.displayName} has a raised hand`}>
+                    <span class="hand-row-indicator" title={`${memberDisplayName(member)} has a raised hand`} aria-label={`${memberDisplayName(member)} has a raised hand`}>
                       <Hand size={15} />
                     </span>
                   {/if}
@@ -1713,7 +1763,7 @@
       {#if !panelState.observers}
         <div class="member-list compact">
           {#each displayedObservers as member (member.userId)}
-            <article class={['member-row', 'observer-row', !member.isOnline && 'offline-row']}>
+            <article class={['member-row', 'observer-row', !member.isOnline && 'offline-row', member.userId === snapshot.caller.userId && 'self-row']}>
               <div class="member-identity">
                 {#if !member.isOnline}
                   <UserX size={18} />
@@ -1721,7 +1771,7 @@
                   <Eye size={18} />
                 {/if}
                 <div>
-                  <h3>{member.displayName}</h3>
+                  <h3>{memberDisplayName(member)}</h3>
                   <p>{observerStatus(member)}</p>
                 </div>
               </div>
@@ -1861,7 +1911,7 @@
                 {/if}
               </div>
             </div>
-            {#if isMod}
+            {#if canControlAudio}
               <SelectMenu
                 label="Finish"
                 value={snapshot.audio.playbackMode}
@@ -1869,8 +1919,13 @@
                 onChange={(value) => setAudioMode(value as RoomSnapshot['audio']['playbackMode'])}
               />
             {/if}
+            <div class="settings-actions">
+              <button class={['icon-text-button', starredOnly && 'active-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
+                <Star size={16} /> Starred
+              </button>
+            </div>
             <div class="audio-track-list">
-              {#each snapshot.audio.tracks as track, index (track.id)}
+              {#each displayedAudioTracks as track, index (track.id)}
                 <div
                   class={["audio-track", track.id === snapshot.audio.currentTrackId && 'current-audio-track']}
                   role="button"
@@ -1891,9 +1946,15 @@
                     {/if}
                   </div>
                   <div class="settings-actions">
+                    <button class={['icon-button', track.starredByCaller && 'starred-track-button']} type="button" title={track.starredByCaller ? 'Unstar' : 'Star'} aria-label={track.starredByCaller ? 'Unstar' : 'Star'} onclick={(event) => { event.stopPropagation(); toggleAudioStar(track); }}>
+                      <Star size={16} />
+                      {#if snapshot.room.showAudioStarCounts && (track.starCount ?? 0) > 0}
+                        <span>{track.starCount}</span>
+                      {/if}
+                    </button>
                     {#if isMod}
-                      <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={index === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(index, -1); }}><ArrowUp size={16} /></button>
-                      <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={index === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(index, 1); }}><ArrowDown size={16} /></button>
+                      <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), -1); }}><ArrowUp size={16} /></button>
+                      <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), 1); }}><ArrowDown size={16} /></button>
                     {/if}
                     {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
                       <button class="icon-button" type="button" title="Rename" aria-label="Rename" onclick={(event) => { event.stopPropagation(); startRenameAudio(track); }}><Pencil size={16} /></button>
@@ -2016,6 +2077,14 @@
               />
               Audience audio controls
             </label>
+            <label class="toggle-field">
+              <input
+                type="checkbox"
+                checked={snapshot.room.showAudioStarCounts}
+                onchange={(event) => send({ type: 'settings.update', payload: { showAudioStarCounts: event.currentTarget.checked } })}
+              />
+              Show audio star counts
+            </label>
             <SelectMenu
               label="Hands"
               value={snapshot.room.raiseHandMode}
@@ -2050,6 +2119,24 @@
       {#if !panelState.cache}
         <div class="cache-panel" aria-label="Local cache">
           <p class="cache-limit">Local browser cache limit: {formatCacheLimit()}</p>
+          <p class="cache-limit">
+            Room uploads expire:
+            {snapshot.room.neverExpires ? 'never' : snapshot.room.expiresAt ? new Date(snapshot.room.expiresAt).toLocaleString() : 'not set'}
+          </p>
+          {#if isMod}
+            <form class="settings-form" onsubmit={(event) => { event.preventDefault(); saveRoomRetention(false); }}>
+              <label>
+                Room survival
+                <input type="datetime-local" bind:value={retentionDraft} />
+              </label>
+              <div class="settings-actions">
+                <button type="submit" disabled={retentionDraft === ''}>Save survival</button>
+                {#if snapshot.caller.isAdmin}
+                  <button type="button" onclick={() => saveRoomRetention(true)}>Never expire</button>
+                {/if}
+              </div>
+            </form>
+          {/if}
           <div class="cache-usage-grid">
             <div>
               <span>Audio</span>

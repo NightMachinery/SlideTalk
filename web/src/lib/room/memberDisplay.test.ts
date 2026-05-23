@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { onlineCount, onlineCountLabel, sortedByOnline } from './memberDisplay';
+import { displayNameForRoom, onlineCount, onlineCountLabel, sortedByOnline } from './memberDisplay';
 import type { SnapshotMember } from '../realtime';
 
 function member(userId: string, displayOrder: number, isOnline: boolean): SnapshotMember {
@@ -32,5 +32,16 @@ describe('member display helpers', () => {
 
     expect(onlineCount(members)).toBe(2);
     expect(onlineCountLabel(members)).toBe('2/3');
+  });
+
+  it('adds stable suffixes only to duplicate display names', () => {
+    const first = { ...member('first', 2, false), displayName: 'Ada' };
+    const second = { ...member('second', 1, true), displayName: 'Grace' };
+    const third = { ...member('third', 0, true), displayName: 'Ada' };
+    const members = [first, second, third];
+
+    expect(displayNameForRoom(first, members)).toBe('Ada 2');
+    expect(displayNameForRoom(second, members)).toBe('Grace');
+    expect(displayNameForRoom(third, members)).toBe('Ada 1');
   });
 });
