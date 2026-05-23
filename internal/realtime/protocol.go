@@ -32,6 +32,7 @@ const (
 	CommandAudioReorder   = "audio.reorder"
 	CommandAudioMode      = "audio.mode"
 	CommandAudioEnded     = "audio.ended"
+	CommandAudioStar      = "audio.star"
 )
 
 const (
@@ -105,6 +106,9 @@ type SnapshotRoom struct {
 	RoomMode                  string `json:"roomMode"`
 	AllowAudienceAudioUpload  bool   `json:"allowAudienceAudioUpload"`
 	AllowAudienceAudioControl bool   `json:"allowAudienceAudioControl"`
+	ShowAudioStarCounts       bool   `json:"showAudioStarCounts"`
+	ExpiresAt                 string `json:"expiresAt"`
+	NeverExpires              bool   `json:"neverExpires"`
 }
 
 // SnapshotCaller identifies the receiving user.
@@ -180,6 +184,8 @@ type SnapshotAudioTrack struct {
 	UploaderDisplayName string `json:"uploaderDisplayName"`
 	DisplayOrder        int    `json:"displayOrder"`
 	Missing             bool   `json:"missing"`
+	StarredByCaller     bool   `json:"starredByCaller"`
+	StarCount           int    `json:"starCount,omitempty"`
 }
 
 // WSTicket is a short-lived room-scoped connection token.

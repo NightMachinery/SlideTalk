@@ -379,6 +379,9 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 		AllowAudienceAudioUpload  *bool   `json:"allowAudienceAudioUpload"`
 		AllowAudienceAudioControl *bool   `json:"allowAudienceAudioControl"`
 		RaiseHandMode             *string `json:"raiseHandMode"`
+		ShowAudioStarCounts       *bool   `json:"showAudioStarCounts"`
+		ExpiresAt                 *string `json:"expiresAt"`
+		NeverExpires              *bool   `json:"neverExpires"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -410,6 +413,29 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 	if err != nil {
 		writeRoomError(w, err)
 		return
+	}
+	if input.ExpiresAt != nil || input.NeverExpires != nil {
+		never := input.NeverExpires != nil && *input.NeverExpires
+		var expiresAt time.Time
+		if !never {
+			if input.ExpiresAt == nil {
+				writeProblem(w, http.StatusBadRequest, "Bad Request", "Room expiration must be an RFC3339 timestamp.")
+				return
+			}
+			var err error
+			expiresAt, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(*input.ExpiresAt))
+			if err != nil {
+				writeProblem(w, http.StatusBadRequest, "Bad Request", "Room expiration must be an RFC3339 timestamp.")
+				return
+			}
+		}
+		if err := s.rooms.UpdateRetention(r.Context(), roomID, user.ID, user.IsAdmin, expiresAt, never); err != nil {
+			writeRoomError(w, err)
+			return
+		}
+		if updated, err := s.rooms.GetForUser(r.Context(), roomID, user.ID); err == nil {
+			room = updated.Room
+		}
 	}
 	if s.hub != nil {
 		s.hub.BroadcastSnapshot(r.Context(), roomID, "")
@@ -944,6 +970,8 @@ func writeRoomError(w http.ResponseWriter, err error) {
 	case errors.Is(err, rooms.ErrInvalidTitle):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, rooms.ErrInvalidRaiseHandMode), errors.Is(err, rooms.ErrInvalidRoomMode):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
+	case errors.Is(err, rooms.ErrInvalidRetention):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, rooms.ErrNotModerator):
 		writeProblem(w, http.StatusForbidden, "Forbidden", "Only room moderators can create migration links.")

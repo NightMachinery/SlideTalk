@@ -16,6 +16,7 @@ const (
 	defaultSlideMaxBytes       = 200 * 1024 * 1024
 	defaultAudioMaxBytes       = 50 * 1024 * 1024
 	defaultAudioFilesGCAfter   = 7 * 24 * time.Hour
+	defaultRoomGCAfter         = 7 * 24 * time.Hour
 	defaultAudioDriftThreshold = 3 * time.Second
 	defaultMinFreeSpaceBytes   = 512 * 1024 * 1024
 )
@@ -29,6 +30,7 @@ type Config struct {
 	SlideMaxBytes       int64
 	AudioMaxBytes       int64
 	AudioFilesGCAfter   time.Duration
+	RoomGCAfter         time.Duration
 	AudioDriftThreshold time.Duration
 	MinFreeSpaceBytes   int64
 }
@@ -73,6 +75,16 @@ func Load() (Config, error) {
 		}
 		gcAfter = parsed
 	}
+	roomGCAfter := defaultRoomGCAfter
+	if raw := os.Getenv("SLIDETALK_ROOM_GC_AFTER"); raw != "" {
+		parsed, err := parseDuration(raw)
+		if err != nil {
+			return Config{}, err
+		}
+		roomGCAfter = parsed
+	} else if raw := os.Getenv("SLIDETALK_AUDIO_FILES_GC_AFTER"); raw != "" {
+		roomGCAfter = gcAfter
+	}
 	audioDriftThreshold := defaultAudioDriftThreshold
 	if raw := os.Getenv("SLIDETALK_AUDIO_DRIFT_THRESHOLD"); raw != "" {
 		parsed, err := parseDuration(raw)
@@ -98,6 +110,7 @@ func Load() (Config, error) {
 		SlideMaxBytes:       maxBytes,
 		AudioMaxBytes:       audioMaxBytes,
 		AudioFilesGCAfter:   gcAfter,
+		RoomGCAfter:         roomGCAfter,
 		AudioDriftThreshold: audioDriftThreshold,
 		MinFreeSpaceBytes:   minFree,
 	}, nil

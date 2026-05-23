@@ -2,7 +2,9 @@ package rooms
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/NightMachinery/SlideTalk/internal/auth"
 	"github.com/NightMachinery/SlideTalk/internal/store"
@@ -47,6 +49,75 @@ func TestCreateRoomDefaultsHandRaiseModeToManual(t *testing.T) {
 	}
 	if mode != "manual" {
 		t.Fatalf("raise hand mode = %q, want manual", mode)
+	}
+}
+
+func TestCreateRoomDefaultsExpirationInFuture(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	user := namedUser(t, ctx, authService, "creator-token", "Ada")
+	service := NewService(db)
+
+	room, err := service.Create(ctx, user.ID, CreateInput{Title: "Weekly roundtable"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+
+	var raw string
+	if err := db.QueryRowContext(ctx, `select expires_at from rooms where id = ?`, room.ID).Scan(&raw); err != nil {
+		t.Fatalf("read room expiration: %v", err)
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		t.Fatalf("parse expiration: %v", err)
+	}
+	remaining := time.Until(expiresAt)
+	if remaining < 6*24*time.Hour || remaining > 8*24*time.Hour {
+		t.Fatalf("expiration remaining = %v, want about 7 days", remaining)
+	}
+}
+
+func TestUpdateRetentionEnforcesModAndAdminLimits(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	mod := namedUser(t, ctx, authService, "creator-token", "Ada")
+	participant := namedUser(t, ctx, authService, "guest-token", "Grace")
+	service := NewService(db)
+	room, err := service.Create(ctx, mod.ID, CreateInput{Title: "Retention"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+	if _, err := service.Join(ctx, room.ID, participant.ID, JoinInput{}); err != nil {
+		t.Fatalf("join room: %v", err)
+	}
+
+	if err := service.UpdateRetention(ctx, room.ID, participant.ID, false, time.Now().UTC().Add(3*24*time.Hour), false); !errors.Is(err, ErrNotModerator) {
+		t.Fatalf("participant retention update error = %v, want not moderator", err)
+	}
+	if err := service.UpdateRetention(ctx, room.ID, mod.ID, false, time.Now().UTC().Add(11*24*time.Hour), false); !errors.Is(err, ErrInvalidRetention) {
+		t.Fatalf("mod over-extension error = %v, want invalid retention", err)
+	}
+	if err := service.UpdateRetention(ctx, room.ID, mod.ID, false, time.Now().UTC().Add(9*24*time.Hour), false); err != nil {
+		t.Fatalf("mod retention extension: %v", err)
+	}
+	if err := service.UpdateRetention(ctx, room.ID, mod.ID, false, time.Now().UTC().Add(2*24*time.Hour), false); !errors.Is(err, ErrInvalidRetention) {
+		t.Fatalf("mod shortening error = %v, want invalid retention", err)
+	}
+	if err := service.UpdateRetention(ctx, room.ID, mod.ID, true, time.Now().UTC().Add(23*time.Hour), false); !errors.Is(err, ErrInvalidRetention) {
+		t.Fatalf("admin too-short retention error = %v, want invalid retention", err)
+	}
+	if err := service.UpdateRetention(ctx, room.ID, mod.ID, true, time.Time{}, true); err != nil {
+		t.Fatalf("admin never-expire retention: %v", err)
+	}
+
+	var expiresAt any
+	if err := db.QueryRowContext(ctx, `select expires_at from rooms where id = ?`, room.ID).Scan(&expiresAt); err != nil {
+		t.Fatalf("read expiration: %v", err)
+	}
+	if expiresAt != nil {
+		t.Fatalf("expires_at = %#v, want null", expiresAt)
 	}
 }
 

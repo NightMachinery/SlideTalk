@@ -301,7 +301,7 @@ func (s *Service) RemoveRoomSlide(ctx context.Context, roomID string) error {
 // Cleanup deletes expired room references and files that no unexpired references need.
 func (s *Service) Cleanup(ctx context.Context, at time.Time) error {
 	now := at.UTC().Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, `delete from room_slides where expires_at <= ?`, now); err != nil {
+	if _, err := s.db.ExecContext(ctx, `delete from room_slides where expires_at <= ? or room_id in (select id from rooms where expires_at is not null and expires_at <= ?)`, now, now); err != nil {
 		return fmt.Errorf("delete expired slide references: %w", err)
 	}
 	rows, err := s.db.QueryContext(

@@ -25,23 +25,38 @@ const (
 	RoomModeSlides   = "slides"
 	RoomModeMarkdown = "markdown"
 	RoomModeAudio    = "audio"
+
+	DefaultRoomRetention  = 7 * 24 * time.Hour
+	MaxModeratorRetention = 10 * 24 * time.Hour
+	MinAdminRetention     = 24 * time.Hour
 )
 
 // Service provides room operations.
 type Service struct {
-	db *store.DB
+	db               *store.DB
+	defaultRetention time.Duration
 }
 
 // NewService creates a room service.
 func NewService(db *store.DB) *Service {
-	return &Service{db: db}
+	return NewServiceWithRetention(db, DefaultRoomRetention)
+}
+
+// NewServiceWithRetention creates a room service with a configurable new-room retention period.
+func NewServiceWithRetention(db *store.DB, defaultRetention time.Duration) *Service {
+	if defaultRetention <= 0 {
+		defaultRetention = DefaultRoomRetention
+	}
+	return &Service{db: db, defaultRetention: defaultRetention}
 }
 
 // Room is public room metadata.
 type Room struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	HasPassword bool   `json:"hasPassword"`
+	ID           string  `json:"id"`
+	Title        string  `json:"title"`
+	HasPassword  bool    `json:"hasPassword"`
+	ExpiresAt    *string `json:"expiresAt"`
+	NeverExpires bool    `json:"neverExpires"`
 }
 
 // Membership describes the caller's room membership.
@@ -124,6 +139,7 @@ func (s *Service) Create(ctx context.Context, creatorUserID string, input Create
 		return Room{}, err
 	}
 	now := nowText()
+	expiresAt := time.Now().UTC().Add(s.defaultRetention).Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Room{}, fmt.Errorf("begin create room: %w", err)
@@ -131,12 +147,13 @@ func (s *Service) Create(ctx context.Context, creatorUserID string, input Create
 	defer rollback(tx)
 	if _, err := tx.ExecContext(
 		ctx,
-		`insert into rooms (id, title, password_hash, room_mode, markdown, allow_participant_markdown, created_by_user_id, created_at, updated_at)
-		 values (?, ?, ?, ?, '', 0, ?, ?, ?)`,
+		`insert into rooms (id, title, password_hash, room_mode, markdown, allow_participant_markdown, expires_at, created_by_user_id, created_at, updated_at)
+		 values (?, ?, ?, ?, '', 0, ?, ?, ?, ?)`,
 		id,
 		title,
 		nullableString(passwordHash),
 		roomMode,
+		expiresAt,
 		creatorUserID,
 		now,
 		now,
@@ -156,7 +173,7 @@ func (s *Service) Create(ctx context.Context, creatorUserID string, input Create
 	if err := tx.Commit(); err != nil {
 		return Room{}, fmt.Errorf("commit create room: %w", err)
 	}
-	return Room{ID: id, Title: title, HasPassword: passwordHash != ""}, nil
+	return Room{ID: id, Title: title, HasPassword: passwordHash != "", ExpiresAt: &expiresAt}, nil
 }
 
 // IssueMigrationLink creates a time-limited room migration bearer secret.
@@ -263,7 +280,8 @@ func (s *Service) Join(ctx context.Context, roomID string, userID string, input 
 func (s *Service) GetForUser(ctx context.Context, roomID string, userID string) (Details, error) {
 	var details Details
 	var passwordHash sql.NullString
-	err := s.db.QueryRowContext(ctx, `select id, title, password_hash from rooms where id = ?`, roomID).Scan(&details.Room.ID, &details.Room.Title, &passwordHash)
+	var expiresAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `select id, title, password_hash, expires_at from rooms where id = ?`, roomID).Scan(&details.Room.ID, &details.Room.Title, &passwordHash, &expiresAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Details{}, ErrNotFound
@@ -271,6 +289,11 @@ func (s *Service) GetForUser(ctx context.Context, roomID string, userID string) 
 		return Details{}, fmt.Errorf("read room: %w", err)
 	}
 	details.Room.HasPassword = passwordHash.Valid
+	if expiresAt.Valid {
+		details.Room.ExpiresAt = &expiresAt.String
+	} else {
+		details.Room.NeverExpires = true
+	}
 	var kickedAt sql.NullString
 	err = s.db.QueryRowContext(ctx, `select room_id, user_id, role, display_order, kicked_at from room_members where room_id = ? and user_id = ?`, roomID, userID).Scan(&details.Membership.RoomID, &details.Membership.UserID, &details.Membership.Role, &details.Membership.DisplayOrder, &kickedAt)
 	if err != nil {
@@ -362,17 +385,79 @@ func (s *Service) UpdateSettings(ctx context.Context, roomID string, input Setti
 
 	var room Room
 	var passwordHash sql.NullString
-	if err := tx.QueryRowContext(ctx, `select id, title, password_hash from rooms where id = ?`, roomID).Scan(&room.ID, &room.Title, &passwordHash); err != nil {
+	var expiresAt sql.NullString
+	if err := tx.QueryRowContext(ctx, `select id, title, password_hash, expires_at from rooms where id = ?`, roomID).Scan(&room.ID, &room.Title, &passwordHash, &expiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Room{}, ErrNotFound
 		}
 		return Room{}, fmt.Errorf("read updated room: %w", err)
 	}
 	room.HasPassword = passwordHash.Valid
+	if expiresAt.Valid {
+		room.ExpiresAt = &expiresAt.String
+	} else {
+		room.NeverExpires = true
+	}
 	if err := tx.Commit(); err != nil {
 		return Room{}, fmt.Errorf("commit room settings: %w", err)
 	}
 	return room, nil
+}
+
+// UpdateRetention changes when a room's uploaded content is eligible for cleanup.
+func (s *Service) UpdateRetention(ctx context.Context, roomID string, requesterUserID string, requesterIsAdmin bool, expiresAt time.Time, neverExpires bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin update retention: %w", err)
+	}
+	defer rollback(tx)
+	role, err := memberRole(ctx, tx, roomID, requesterUserID)
+	if err != nil {
+		return err
+	}
+	if role != RoleMod {
+		return ErrNotModerator
+	}
+	var current sql.NullString
+	if err := tx.QueryRowContext(ctx, `select expires_at from rooms where id = ?`, roomID).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("read room retention: %w", err)
+	}
+	now := time.Now().UTC()
+	if neverExpires {
+		if !requesterIsAdmin {
+			return ErrInvalidRetention
+		}
+		if _, err := tx.ExecContext(ctx, `update rooms set expires_at = null, updated_at = ? where id = ?`, now.Format(time.RFC3339Nano), roomID); err != nil {
+			return fmt.Errorf("set room never expires: %w", err)
+		}
+		return tx.Commit()
+	}
+	expiresAt = expiresAt.UTC()
+	if requesterIsAdmin {
+		if expiresAt.Before(now.Add(MinAdminRetention)) {
+			return ErrInvalidRetention
+		}
+	} else {
+		if expiresAt.After(now.Add(MaxModeratorRetention)) {
+			return ErrInvalidRetention
+		}
+		if current.Valid {
+			currentTime, err := time.Parse(time.RFC3339Nano, current.String)
+			if err != nil {
+				return ErrInvalidRetention
+			}
+			if expiresAt.Before(currentTime) {
+				return ErrInvalidRetention
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `update rooms set expires_at = ?, updated_at = ? where id = ?`, expiresAt.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), roomID); err != nil {
+		return fmt.Errorf("update room retention: %w", err)
+	}
+	return tx.Commit()
 }
 
 // ListMembers returns non-kicked room members in display order.
@@ -576,6 +661,7 @@ var (
 	ErrLastMod              = errors.New("cannot remove the last moderator")
 	ErrInvalidRaiseHandMode = errors.New("invalid raise hand mode")
 	ErrNotModerator         = errors.New("not a room moderator")
+	ErrInvalidRetention     = errors.New("invalid room retention")
 )
 
 func validRoomMode(mode string) bool {

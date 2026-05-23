@@ -436,13 +436,18 @@ func (s *Service) RemoveTrack(ctx context.Context, roomID string, trackID string
 	return nil
 }
 
-// Cleanup deletes audio tracks for rooms older than gcAfter and removes orphaned files.
+// Cleanup deletes audio tracks for expired rooms and removes orphaned files.
 func (s *Service) Cleanup(ctx context.Context, at time.Time, gcAfter time.Duration) error {
-	cutoff := at.UTC().Add(-gcAfter).Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, `delete from audio_download_tokens where room_id in (select id from rooms where created_at <= ?)`, cutoff); err != nil {
+	now := at.UTC().Format(time.RFC3339Nano)
+	fallbackCutoff := at.UTC().Add(-gcAfter).Format(time.RFC3339Nano)
+	expiredRooms := `select id from rooms where (expires_at is not null and expires_at <= ?) or (expires_at is null and created_at <= ?)`
+	if _, err := s.db.ExecContext(ctx, `delete from audio_download_tokens where room_id in (`+expiredRooms+`)`, now, fallbackCutoff); err != nil {
 		return fmt.Errorf("delete expired audio download tokens: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `delete from room_audio_tracks where room_id in (select id from rooms where created_at <= ?)`, cutoff); err != nil {
+	if _, err := s.db.ExecContext(ctx, `delete from room_audio_track_stars where room_id in (`+expiredRooms+`)`, now, fallbackCutoff); err != nil {
+		return fmt.Errorf("delete expired audio stars: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `delete from room_audio_tracks where room_id in (`+expiredRooms+`)`, now, fallbackCutoff); err != nil {
 		return fmt.Errorf("delete expired room audio tracks: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx, `select af.sha256, af.stored_path from audio_files af where not exists (select 1 from room_audio_tracks rat where rat.sha256 = af.sha256)`)

@@ -39,6 +39,7 @@ type TicketClaims struct {
 
 // NewHub creates a realtime hub.
 func NewHub(db *store.DB, authService *auth.Service, roomService *rooms.Service) *Hub {
+	_, _ = db.ExecContext(context.Background(), `delete from room_online_members`)
 	return &Hub{
 		db:       db,
 		auth:     authService,
@@ -61,6 +62,7 @@ func (h *Hub) Register(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.clients[client] = true
+	_, _ = h.db.ExecContext(context.Background(), `insert into room_online_members (room_id, user_id, connection_count, updated_at) values (?, ?, 1, ?) on conflict(room_id, user_id) do update set connection_count = connection_count + 1, updated_at = excluded.updated_at`, client.RoomID, client.UserID, time.Now().UTC().Format(time.RFC3339Nano))
 }
 
 // Unregister removes a socket client from the hub.
@@ -70,6 +72,8 @@ func (h *Hub) Unregister(client *Client) {
 	if h.clients[client] {
 		delete(h.clients, client)
 		close(client.Send)
+		_, _ = h.db.ExecContext(context.Background(), `update room_online_members set connection_count = max(connection_count - 1, 0), updated_at = ? where room_id = ? and user_id = ?`, time.Now().UTC().Format(time.RFC3339Nano), client.RoomID, client.UserID)
+		_, _ = h.db.ExecContext(context.Background(), `delete from room_online_members where connection_count <= 0`)
 	}
 }
 
@@ -136,6 +140,8 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		SharedNavigationEnabled   bool
 		AllowAudienceAudioUpload  bool
 		AllowAudienceAudioControl bool
+		ShowAudioStarCounts       bool
+		ExpiresAt                 sql.NullString
 		AudioCurrentTrackID       sql.NullString
 		AudioState                string
 		AudioPositionSeconds      int
@@ -151,7 +157,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		TimerStartedAt            sql.NullString
 		RaiseHandMode             string
 	}
-	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.room_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.allow_audience_audio_upload, r.allow_audience_audio_control, r.audio_current_track_id, r.audio_state, r.audio_position_seconds, r.audio_started_at, r.audio_playback_mode, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.RoomMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.AllowAudienceAudioUpload, &roomRow.AllowAudienceAudioControl, &roomRow.AudioCurrentTrackID, &roomRow.AudioState, &roomRow.AudioPositionSeconds, &roomRow.AudioStartedAt, &roomRow.AudioPlaybackMode, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
+	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.room_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.allow_audience_audio_upload, r.allow_audience_audio_control, r.show_audio_star_counts, r.expires_at, r.audio_current_track_id, r.audio_state, r.audio_position_seconds, r.audio_started_at, r.audio_playback_mode, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.RoomMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.AllowAudienceAudioUpload, &roomRow.AllowAudienceAudioControl, &roomRow.ShowAudioStarCounts, &roomRow.ExpiresAt, &roomRow.AudioCurrentTrackID, &roomRow.AudioState, &roomRow.AudioPositionSeconds, &roomRow.AudioStartedAt, &roomRow.AudioPlaybackMode, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Snapshot{}, rooms.ErrNotFound
 		}
@@ -173,6 +179,8 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			SharedNavigationEnabled:   roomRow.SharedNavigationEnabled,
 			AllowAudienceAudioUpload:  roomRow.AllowAudienceAudioUpload,
 			AllowAudienceAudioControl: roomRow.AllowAudienceAudioControl,
+			ShowAudioStarCounts:       roomRow.ShowAudioStarCounts,
+			NeverExpires:              !roomRow.ExpiresAt.Valid,
 		},
 		Caller: SnapshotCaller{
 			UserID:  callerUserID,
@@ -198,6 +206,9 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 	}
 	if roomRow.AudioCurrentTrackID.Valid {
 		snapshot.Audio.CurrentTrackID = roomRow.AudioCurrentTrackID.String
+	}
+	if roomRow.ExpiresAt.Valid {
+		snapshot.Room.ExpiresAt = roomRow.ExpiresAt.String
 	}
 	if roomRow.AudioStartedAt.Valid {
 		snapshot.Audio.StartedAt = &roomRow.AudioStartedAt.String
@@ -244,7 +255,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		return Snapshot{}, err
 	}
 	snapshot.Slide = slide
-	audioTracks, err := h.listAudioTracks(ctx, roomID)
+	audioTracks, err := h.listAudioTracks(ctx, roomID, callerUserID, roomRow.ShowAudioStarCounts)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -447,6 +458,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			AllowParticipantMarkdown  *bool   `json:"allowParticipantMarkdown"`
 			AllowAudienceAudioUpload  *bool   `json:"allowAudienceAudioUpload"`
 			AllowAudienceAudioControl *bool   `json:"allowAudienceAudioControl"`
+			ShowAudioStarCounts       *bool   `json:"showAudioStarCounts"`
 		}
 		if err := json.Unmarshal(command.Payload, &payload); err != nil {
 			return ErrBadCommand
@@ -485,6 +497,11 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 		if payload.AllowAudienceAudioControl != nil {
 			if _, err := h.db.ExecContext(ctx, `update rooms set allow_audience_audio_control = ? where id = ?`, *payload.AllowAudienceAudioControl, roomID); err != nil {
 				return fmt.Errorf("update audience audio control: %w", err)
+			}
+		}
+		if payload.ShowAudioStarCounts != nil {
+			if _, err := h.db.ExecContext(ctx, `update rooms set show_audio_star_counts = ? where id = ?`, *payload.ShowAudioStarCounts, roomID); err != nil {
+				return fmt.Errorf("update audio star count setting: %w", err)
 			}
 		}
 		if payload.RaiseHandMode != nil && *payload.RaiseHandMode == RaiseHandModeOff {
@@ -571,8 +588,8 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return err
 		}
 	case CommandAudioMode:
-		if !isMod {
-			return ErrForbidden
+		if err := h.requireAudioControl(ctx, roomID, details.Membership.Role, isMod); err != nil {
+			return err
 		}
 		var payload struct {
 			Mode string `json:"mode"`
@@ -585,6 +602,20 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 		}
 	case CommandAudioEnded:
 		if err := h.advanceAudioEnded(ctx, roomID); err != nil {
+			return err
+		}
+	case CommandAudioStar:
+		var payload struct {
+			TrackID string `json:"trackId"`
+			Starred bool   `json:"starred"`
+		}
+		if err := json.Unmarshal(command.Payload, &payload); err != nil || payload.TrackID == "" {
+			return ErrBadCommand
+		}
+		if details.Membership.Role == rooms.RoleObserver {
+			return ErrForbidden
+		}
+		if err := h.setAudioStar(ctx, roomID, payload.TrackID, callerUserID, payload.Starred); err != nil {
 			return err
 		}
 	default:
@@ -822,7 +853,7 @@ func (h *Hub) roomSlide(ctx context.Context, roomID string) (*SnapshotSlide, err
 	return &slide, nil
 }
 
-func (h *Hub) listAudioTracks(ctx context.Context, roomID string) ([]SnapshotAudioTrack, error) {
+func (h *Hub) listAudioTracks(ctx context.Context, roomID string, callerUserID string, showStarCounts bool) ([]SnapshotAudioTrack, error) {
 	rows, err := h.db.QueryContext(ctx, `select rat.id, rat.sha256, rat.original_name, rat.title, af.metadata_title, af.mime_type, af.size_bytes, af.duration_seconds, af.cover_path, rat.uploaded_by_user_id, u.display_name, rat.uploader_display_name, rat.display_order, af.stored_path, af.missing_at
 		from room_audio_tracks rat join audio_files af on af.sha256 = rat.sha256
 		left join users u on u.id = rat.uploaded_by_user_id
@@ -856,6 +887,49 @@ func (h *Hub) listAudioTracks(ctx context.Context, roomID string) ([]SnapshotAud
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate snapshot audio: %w", err)
+	}
+	if callerUserID != "" && len(tracks) > 0 {
+		starredRows, err := h.db.QueryContext(ctx, `select track_id from room_audio_track_stars where room_id = ? and user_id = ?`, roomID, callerUserID)
+		if err != nil {
+			return nil, fmt.Errorf("list caller audio stars: %w", err)
+		}
+		starred := map[string]bool{}
+		for starredRows.Next() {
+			var trackID string
+			if err := starredRows.Scan(&trackID); err != nil {
+				_ = starredRows.Close()
+				return nil, fmt.Errorf("scan caller audio star: %w", err)
+			}
+			starred[trackID] = true
+		}
+		if err := starredRows.Close(); err != nil {
+			return nil, fmt.Errorf("close caller audio stars: %w", err)
+		}
+		for index := range tracks {
+			tracks[index].StarredByCaller = starred[tracks[index].ID]
+		}
+	}
+	if showStarCounts && len(tracks) > 0 {
+		countRows, err := h.db.QueryContext(ctx, `select track_id, count(*) from room_audio_track_stars where room_id = ? group by track_id`, roomID)
+		if err != nil {
+			return nil, fmt.Errorf("list audio star counts: %w", err)
+		}
+		counts := map[string]int{}
+		for countRows.Next() {
+			var trackID string
+			var count int
+			if err := countRows.Scan(&trackID, &count); err != nil {
+				_ = countRows.Close()
+				return nil, fmt.Errorf("scan audio star count: %w", err)
+			}
+			counts[trackID] = count
+		}
+		if err := countRows.Close(); err != nil {
+			return nil, fmt.Errorf("close audio star counts: %w", err)
+		}
+		for index := range tracks {
+			tracks[index].StarCount = counts[tracks[index].ID]
+		}
 	}
 	return tracks, nil
 }
@@ -907,7 +981,7 @@ func (h *Hub) currentAudioPosition(ctx context.Context, roomID string) (int, err
 }
 
 func (h *Hub) reorderAudio(ctx context.Context, roomID string, trackIDs []string) error {
-	existing, err := h.listAudioTracks(ctx, roomID)
+	existing, err := h.listAudioTracks(ctx, roomID, "", false)
 	if err != nil {
 		return err
 	}
@@ -942,7 +1016,7 @@ func (h *Hub) reorderAudio(ctx context.Context, roomID string, trackIDs []string
 }
 
 func (h *Hub) advanceAudioEnded(ctx context.Context, roomID string) error {
-	tracks, err := h.listAudioTracks(ctx, roomID)
+	tracks, err := h.listAudioTracks(ctx, roomID, "", false)
 	if err != nil {
 		return err
 	}
@@ -972,6 +1046,22 @@ func (h *Hub) advanceAudioEnded(ctx context.Context, roomID string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := h.db.ExecContext(ctx, `update rooms set audio_current_track_id = ?, audio_state = ?, audio_position_seconds = 0, audio_started_at = ? where id = ?`, nextID, AudioStatePlaying, now, roomID); err != nil {
 		return fmt.Errorf("advance ended audio: %w", err)
+	}
+	return nil
+}
+
+func (h *Hub) setAudioStar(ctx context.Context, roomID string, trackID string, userID string, starred bool) error {
+	if err := h.ensureAudioTrack(ctx, roomID, trackID); err != nil {
+		return err
+	}
+	if starred {
+		if _, err := h.db.ExecContext(ctx, `insert into room_audio_track_stars (room_id, track_id, user_id, starred_at) values (?, ?, ?, ?) on conflict(room_id, track_id, user_id) do nothing`, roomID, trackID, userID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("star audio track: %w", err)
+		}
+		return nil
+	}
+	if _, err := h.db.ExecContext(ctx, `delete from room_audio_track_stars where room_id = ? and track_id = ? and user_id = ?`, roomID, trackID, userID); err != nil {
+		return fmt.Errorf("unstar audio track: %w", err)
 	}
 	return nil
 }

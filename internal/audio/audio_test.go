@@ -142,7 +142,7 @@ func TestStoreRejectsWhenDiskFloorWouldBeViolated(t *testing.T) {
 	}
 }
 
-func TestCleanupRemovesTracksAWeekAfterRoomCreation(t *testing.T) {
+func TestCleanupRemovesTracksAfterRoomExpiration(t *testing.T) {
 	ctx := context.Background()
 	fixture := newAudioFixture(t)
 	content := []byte("ID3old audio")
@@ -157,8 +157,8 @@ func TestCleanupRemovesTracksAWeekAfterRoomCreation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("store audio: %v", err)
 	}
-	if _, err := fixture.db.ExecContext(ctx, `update rooms set created_at = ? where id = ?`, time.Now().UTC().Add(-8*24*time.Hour).Format(time.RFC3339Nano), fixture.room.ID); err != nil {
-		t.Fatalf("age room: %v", err)
+	if _, err := fixture.db.ExecContext(ctx, `update rooms set expires_at = ? where id = ?`, time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano), fixture.room.ID); err != nil {
+		t.Fatalf("expire room: %v", err)
 	}
 
 	if err := fixture.service.Cleanup(ctx, time.Now().UTC(), 7*24*time.Hour); err != nil {

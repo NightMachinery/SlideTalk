@@ -537,6 +537,76 @@ func TestRepeatBackwardWrapsToLastTrack(t *testing.T) {
 	}
 }
 
+func TestAudioTrackStarsArePrivateWithOptionalCounts(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	trackID := insertAudioTrack(t, ctx, hub, roomID, modID, "first")
+
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandAudioStar,
+		Payload: mustJSON(t, map[string]any{"trackId": trackID, "starred": true}),
+	}); err != nil {
+		t.Fatalf("star track: %v", err)
+	}
+
+	modSnapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("mod snapshot: %v", err)
+	}
+	if modSnapshot.Audio.Tracks[0].StarredByCaller {
+		t.Fatal("mod sees participant private star as caller star")
+	}
+	if modSnapshot.Audio.Tracks[0].StarCount != 0 {
+		t.Fatalf("star count = %d, want hidden zero", modSnapshot.Audio.Tracks[0].StarCount)
+	}
+	participantSnapshot, err := hub.Snapshot(ctx, roomID, participantID)
+	if err != nil {
+		t.Fatalf("participant snapshot: %v", err)
+	}
+	if !participantSnapshot.Audio.Tracks[0].StarredByCaller {
+		t.Fatal("participant does not see own star")
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSettingsUpdate,
+		Payload: mustJSON(t, map[string]any{"showAudioStarCounts": true}),
+	}); err != nil {
+		t.Fatalf("show star counts: %v", err)
+	}
+	modSnapshot, err = hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("mod snapshot after count setting: %v", err)
+	}
+	if modSnapshot.Audio.Tracks[0].StarCount != 1 {
+		t.Fatalf("star count = %d, want 1", modSnapshot.Audio.Tracks[0].StarCount)
+	}
+}
+
+func TestParticipantWithAudioControlCanSetFinishMode(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandSettingsUpdate,
+		Payload: mustJSON(t, map[string]any{"allowAudienceAudioControl": true}),
+	}); err != nil {
+		t.Fatalf("enable audience audio control: %v", err)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandAudioMode,
+		Payload: mustJSON(t, map[string]string{"mode": AudioModeShuffle}),
+	}); err != nil {
+		t.Fatalf("participant set audio mode: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Audio.PlaybackMode != AudioModeShuffle {
+		t.Fatalf("playback mode = %q, want shuffle", snapshot.Audio.PlaybackMode)
+	}
+}
+
 func setupRealtimeTest(t *testing.T) (*Hub, *auth.Service, *rooms.Service, string, string, string) {
 	t.Helper()
 	ctx := context.Background()

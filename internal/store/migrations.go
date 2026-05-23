@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"slices"
+	"time"
 )
 
 // Migrate applies the seed schema.
@@ -42,6 +43,8 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			timer_duration_seconds integer not null default 0,
 			timer_started_at text,
 			raise_hand_mode text not null default 'manual',
+			expires_at text,
+			show_audio_star_counts integer not null default 0,
 			created_by_user_id text not null,
 			created_at text not null,
 			updated_at text not null,
@@ -131,6 +134,17 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			foreign key(created_by_user_id) references users(id)
 		)`,
 		`create index if not exists idx_audio_download_tokens_track on audio_download_tokens (room_id, track_id)`,
+		`create table if not exists room_audio_track_stars (
+			room_id text not null,
+			track_id text not null,
+			user_id text not null,
+			starred_at text not null,
+			primary key(room_id, track_id, user_id),
+			foreign key(room_id) references rooms(id),
+			foreign key(track_id) references room_audio_tracks(id),
+			foreign key(user_id) references users(id)
+		)`,
+		`create index if not exists idx_room_audio_track_stars_track on room_audio_track_stars (room_id, track_id)`,
 		`create table if not exists room_migration_links (
 			migration_id_hash text primary key,
 			room_id text not null,
@@ -141,6 +155,13 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			foreign key(created_by_user_id) references users(id)
 		)`,
 		`create index if not exists idx_room_migration_links_room_id on room_migration_links (room_id)`,
+		`create table if not exists room_online_members (
+			room_id text not null,
+			user_id text not null,
+			connection_count integer not null default 0,
+			updated_at text not null,
+			primary key(room_id, user_id)
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
@@ -151,6 +172,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	hadRoomExpiresAt := slices.Contains(roomColumns, "expires_at")
 	alterStatements := map[string]string{
 		"current_speaker_user_id":      `alter table rooms add column current_speaker_user_id text`,
 		"room_mode":                    `alter table rooms add column room_mode text not null default 'slides'`,
@@ -170,6 +192,8 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		"audio_playback_mode":          `alter table rooms add column audio_playback_mode text not null default 'stop'`,
 		"markdown_updated_by_user_id":  `alter table rooms add column markdown_updated_by_user_id text`,
 		"markdown_updated_at":          `alter table rooms add column markdown_updated_at text`,
+		"expires_at":                   `alter table rooms add column expires_at text`,
+		"show_audio_star_counts":       `alter table rooms add column show_audio_star_counts integer not null default 0`,
 	}
 	for column, statement := range alterStatements {
 		if !slices.Contains(roomColumns, column) {
@@ -191,6 +215,54 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		"uploader_display_name": `alter table room_audio_tracks add column uploader_display_name text not null default ''`,
 	}); err != nil {
 		return err
+	}
+	if !hadRoomExpiresAt {
+		if err := backfillRoomExpirations(ctx, db, 7*24*time.Hour); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func backfillRoomExpirations(ctx context.Context, db *sql.DB, defaultAfter time.Duration) error {
+	rows, err := db.QueryContext(ctx, `select id, created_at from rooms where expires_at is null`)
+	if err != nil {
+		return fmt.Errorf("list rooms for expiration backfill: %w", err)
+	}
+	defer rows.Close()
+	type room struct {
+		id        string
+		createdAt string
+	}
+	var rooms []room
+	for rows.Next() {
+		var item room
+		if err := rows.Scan(&item.id, &item.createdAt); err != nil {
+			return fmt.Errorf("scan room expiration backfill: %w", err)
+		}
+		rooms = append(rooms, item)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate room expiration backfill: %w", err)
+	}
+	for _, item := range rooms {
+		createdAt, err := time.Parse(time.RFC3339Nano, item.createdAt)
+		if err != nil {
+			createdAt = time.Now().UTC()
+		}
+		expiresAt := createdAt.Add(defaultAfter)
+		var slideExpires sql.NullString
+		if err := db.QueryRowContext(ctx, `select max(expires_at) from room_slides where room_id = ?`, item.id).Scan(&slideExpires); err != nil {
+			return fmt.Errorf("read slide expiration backfill: %w", err)
+		}
+		if slideExpires.Valid {
+			if parsed, err := time.Parse(time.RFC3339Nano, slideExpires.String); err == nil && parsed.After(expiresAt) {
+				expiresAt = parsed
+			}
+		}
+		if _, err := db.ExecContext(ctx, `update rooms set expires_at = ? where id = ?`, expiresAt.UTC().Format(time.RFC3339Nano), item.id); err != nil {
+			return fmt.Errorf("write room expiration backfill: %w", err)
+		}
 	}
 	return nil
 }
