@@ -198,6 +198,7 @@
   const isMod = $derived(snapshot.caller.role === 'mod');
   const canManageSlides = $derived(isMod);
   const canChangeSlideExpiration = $derived(isMod && snapshot.caller.isAdmin);
+  const canManageRetention = $derived(isMod || snapshot.caller.isAdmin);
   const canEditMarkdown = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowParticipantMarkdown));
   const currentSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.currentSpeakerUserId));
   const nextSpeaker = $derived(snapshot.participants.find((member) => member.userId === snapshot.currentTurn.nextSpeakerUserId));
@@ -2123,7 +2124,7 @@
             Room uploads expire:
             {snapshot.room.neverExpires ? 'never' : snapshot.room.expiresAt ? new Date(snapshot.room.expiresAt).toLocaleString() : 'not set'}
           </p>
-          {#if isMod}
+          {#if canManageRetention}
             <form class="settings-form" onsubmit={(event) => { event.preventDefault(); saveRoomRetention(false); }}>
               <label>
                 Room survival

@@ -684,6 +684,69 @@ func TestAudioMetadataPatchAllowsModUploaderNameAndUploaderTitle(t *testing.T) {
 	}
 }
 
+func TestAdminParticipantCanPatchRoomRetention(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	createAdminUser(t, server, "retention-admin", "Grace")
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "retention-admin"), http.StatusOK)
+
+	expiresAt := time.Now().UTC().Add(14 * 24 * time.Hour).Format(time.RFC3339Nano)
+	response := serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", `{"expiresAt":"`+expiresAt+`"}`, "retention-admin"), http.StatusOK)
+	if !strings.Contains(response.Body.String(), `"expiresAt":"`+expiresAt+`"`) {
+		t.Fatalf("retention update response missing expiration: %s", response.Body.String())
+	}
+
+	response = serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", `{"neverExpires":true}`, "retention-admin"), http.StatusOK)
+	if !strings.Contains(response.Body.String(), `"neverExpires":true`) {
+		t.Fatalf("never-expire response missing flag: %s", response.Body.String())
+	}
+}
+
+func TestAdminParticipantCannotPatchModeratorRoomSettings(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	createAdminUser(t, server, "retention-admin", "Grace")
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "retention-admin"), http.StatusOK)
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", `{"title":"Admin rename","neverExpires":true}`, "retention-admin"), http.StatusForbidden)
+}
+
+func TestRoomRetentionErrorsReturnSpecificProblemDetails(t *testing.T) {
+	server := newAPITestServer(t)
+	roomID := createAdminRoom(t, server)
+	createAdminUser(t, server, "retention-admin", "Grace")
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "retention-admin"), http.StatusOK)
+
+	tooSoon := time.Now().UTC().Add(23 * time.Hour).Format(time.RFC3339Nano)
+	response := serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", `{"expiresAt":"`+tooSoon+`"}`, "retention-admin"), http.StatusBadRequest)
+	if !strings.Contains(response.Body.String(), "Site admins must keep room survival at least 24 hours from now.") {
+		t.Fatalf("too-soon retention detail = %s", response.Body.String())
+	}
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Morgan"}`, "mod"), http.StatusOK)
+	create := serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms", `{"title":"Moderator retention","password":""}`, "mod"), http.StatusCreated)
+	modRoomID := extractRoomID(t, create.Body.String())
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+modRoomID+"/settings", `{"expiresAt":"`+time.Now().UTC().Add(9*24*time.Hour).Format(time.RFC3339Nano)+`"}`, "mod"), http.StatusOK)
+	shorter := time.Now().UTC().Add(2 * 24 * time.Hour).Format(time.RFC3339Nano)
+	response = serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+modRoomID+"/settings", `{"expiresAt":"`+shorter+`"}`, "mod"), http.StatusBadRequest)
+	if !strings.Contains(response.Body.String(), "Room moderators can only prolong room survival, not shorten it.") {
+		t.Fatalf("shortening retention detail = %s", response.Body.String())
+	}
+
+	response = serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+modRoomID+"/settings", `{"expiresAt":"`+time.Now().UTC().Add(11*24*time.Hour).Format(time.RFC3339Nano)+`"}`, "mod"), http.StatusBadRequest)
+	if !strings.Contains(response.Body.String(), "Room moderators can prolong room survival up to 10 days from now.") {
+		t.Fatalf("too-long retention detail = %s", response.Body.String())
+	}
+
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Pat"}`, "participant"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "participant"), http.StatusOK)
+	response = serveJSON(t, server, apiRequest(http.MethodPatch, "/api/rooms/"+roomID+"/settings", `{"neverExpires":true}`, "participant"), http.StatusBadRequest)
+	if !strings.Contains(response.Body.String(), "Only site admins can set rooms to never expire.") {
+		t.Fatalf("admin-only retention detail = %s", response.Body.String())
+	}
+}
+
 func newAPITestServer(t *testing.T) http.Handler {
 	t.Helper()
 	return newAPITestServerWithDataDir(t, t.TempDir())

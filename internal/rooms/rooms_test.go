@@ -96,17 +96,17 @@ func TestUpdateRetentionEnforcesModAndAdminLimits(t *testing.T) {
 	if err := service.UpdateRetention(ctx, room.ID, participant.ID, false, time.Now().UTC().Add(3*24*time.Hour), false); !errors.Is(err, ErrNotModerator) {
 		t.Fatalf("participant retention update error = %v, want not moderator", err)
 	}
-	if err := service.UpdateRetention(ctx, room.ID, mod.ID, false, time.Now().UTC().Add(11*24*time.Hour), false); !errors.Is(err, ErrInvalidRetention) {
-		t.Fatalf("mod over-extension error = %v, want invalid retention", err)
+	if err := service.UpdateRetention(ctx, room.ID, mod.ID, false, time.Now().UTC().Add(11*24*time.Hour), false); !errors.Is(err, ErrRetentionTooLong) {
+		t.Fatalf("mod over-extension error = %v, want retention too long", err)
 	}
 	if err := service.UpdateRetention(ctx, room.ID, mod.ID, false, time.Now().UTC().Add(9*24*time.Hour), false); err != nil {
 		t.Fatalf("mod retention extension: %v", err)
 	}
-	if err := service.UpdateRetention(ctx, room.ID, mod.ID, false, time.Now().UTC().Add(2*24*time.Hour), false); !errors.Is(err, ErrInvalidRetention) {
-		t.Fatalf("mod shortening error = %v, want invalid retention", err)
+	if err := service.UpdateRetention(ctx, room.ID, mod.ID, false, time.Now().UTC().Add(2*24*time.Hour), false); !errors.Is(err, ErrRetentionShortening) {
+		t.Fatalf("mod shortening error = %v, want retention shortening", err)
 	}
-	if err := service.UpdateRetention(ctx, room.ID, mod.ID, true, time.Now().UTC().Add(23*time.Hour), false); !errors.Is(err, ErrInvalidRetention) {
-		t.Fatalf("admin too-short retention error = %v, want invalid retention", err)
+	if err := service.UpdateRetention(ctx, room.ID, mod.ID, true, time.Now().UTC().Add(23*time.Hour), false); !errors.Is(err, ErrRetentionTooSoon) {
+		t.Fatalf("admin too-short retention error = %v, want retention too soon", err)
 	}
 	if err := service.UpdateRetention(ctx, room.ID, mod.ID, true, time.Time{}, true); err != nil {
 		t.Fatalf("admin never-expire retention: %v", err)
@@ -118,6 +118,58 @@ func TestUpdateRetentionEnforcesModAndAdminLimits(t *testing.T) {
 	}
 	if expiresAt != nil {
 		t.Fatalf("expires_at = %#v, want null", expiresAt)
+	}
+}
+
+func TestAdminParticipantCanUpdateRetention(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	mod := namedUser(t, ctx, authService, "creator-token", "Ada")
+	adminParticipant := namedUser(t, ctx, authService, "admin-token", "Grace")
+	service := NewService(db)
+	room, err := service.Create(ctx, mod.ID, CreateInput{Title: "Retention"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+	if _, err := service.Join(ctx, room.ID, adminParticipant.ID, JoinInput{}); err != nil {
+		t.Fatalf("join room: %v", err)
+	}
+
+	newExpiresAt := time.Now().UTC().Add(14 * 24 * time.Hour)
+	if err := service.UpdateRetention(ctx, room.ID, adminParticipant.ID, true, newExpiresAt, false); err != nil {
+		t.Fatalf("admin participant retention update: %v", err)
+	}
+	if err := service.UpdateRetention(ctx, room.ID, adminParticipant.ID, true, time.Time{}, true); err != nil {
+		t.Fatalf("admin participant never-expire retention: %v", err)
+	}
+
+	var expiresAt any
+	if err := db.QueryRowContext(ctx, `select expires_at from rooms where id = ?`, room.ID).Scan(&expiresAt); err != nil {
+		t.Fatalf("read expiration: %v", err)
+	}
+	if expiresAt != nil {
+		t.Fatalf("expires_at = %#v, want null", expiresAt)
+	}
+}
+
+func TestNonAdminParticipantCannotSetNeverExpire(t *testing.T) {
+	ctx := context.Background()
+	db := openRoomsTestDB(t)
+	authService := auth.NewService(db, t.TempDir())
+	mod := namedUser(t, ctx, authService, "creator-token", "Ada")
+	participant := namedUser(t, ctx, authService, "guest-token", "Grace")
+	service := NewService(db)
+	room, err := service.Create(ctx, mod.ID, CreateInput{Title: "Retention"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+	if _, err := service.Join(ctx, room.ID, participant.ID, JoinInput{}); err != nil {
+		t.Fatalf("join room: %v", err)
+	}
+
+	if err := service.UpdateRetention(ctx, room.ID, participant.ID, false, time.Time{}, true); !errors.Is(err, ErrRetentionAdminOnly) {
+		t.Fatalf("participant never-expire error = %v, want admin-only retention", err)
 	}
 }
 

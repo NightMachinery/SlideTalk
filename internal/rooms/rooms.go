@@ -415,9 +415,6 @@ func (s *Service) UpdateRetention(ctx context.Context, roomID string, requesterU
 	if err != nil {
 		return err
 	}
-	if role != RoleMod {
-		return ErrNotModerator
-	}
 	var current sql.NullString
 	if err := tx.QueryRowContext(ctx, `select expires_at from rooms where id = ?`, roomID).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -428,21 +425,24 @@ func (s *Service) UpdateRetention(ctx context.Context, roomID string, requesterU
 	now := time.Now().UTC()
 	if neverExpires {
 		if !requesterIsAdmin {
-			return ErrInvalidRetention
+			return ErrRetentionAdminOnly
 		}
 		if _, err := tx.ExecContext(ctx, `update rooms set expires_at = null, updated_at = ? where id = ?`, now.Format(time.RFC3339Nano), roomID); err != nil {
 			return fmt.Errorf("set room never expires: %w", err)
 		}
 		return tx.Commit()
 	}
+	if role != RoleMod && !requesterIsAdmin {
+		return ErrNotModerator
+	}
 	expiresAt = expiresAt.UTC()
 	if requesterIsAdmin {
 		if expiresAt.Before(now.Add(MinAdminRetention)) {
-			return ErrInvalidRetention
+			return ErrRetentionTooSoon
 		}
 	} else {
 		if expiresAt.After(now.Add(MaxModeratorRetention)) {
-			return ErrInvalidRetention
+			return ErrRetentionTooLong
 		}
 		if current.Valid {
 			currentTime, err := time.Parse(time.RFC3339Nano, current.String)
@@ -450,7 +450,7 @@ func (s *Service) UpdateRetention(ctx context.Context, roomID string, requesterU
 				return ErrInvalidRetention
 			}
 			if expiresAt.Before(currentTime) {
-				return ErrInvalidRetention
+				return ErrRetentionShortening
 			}
 		}
 	}
@@ -662,6 +662,10 @@ var (
 	ErrInvalidRaiseHandMode = errors.New("invalid raise hand mode")
 	ErrNotModerator         = errors.New("not a room moderator")
 	ErrInvalidRetention     = errors.New("invalid room retention")
+	ErrRetentionAdminOnly   = errors.New("only site admins can set rooms to never expire")
+	ErrRetentionTooSoon     = errors.New("room survival is too soon")
+	ErrRetentionTooLong     = errors.New("room survival is too long")
+	ErrRetentionShortening  = errors.New("room survival cannot be shortened by moderators")
 )
 
 func validRoomMode(mode string) bool {

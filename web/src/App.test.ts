@@ -62,7 +62,7 @@ function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }) {
+function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }, snapshot = roomSnapshot) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     const method = init?.method ?? 'GET';
@@ -77,7 +77,7 @@ function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }) 
       return response([{ id: user.id, displayName: user.displayName, createdAt: '2026-05-21T00:00:00Z' }]);
     }
     if (url === '/api/rooms/room-one') return response(roomDetails);
-    if (url === '/api/rooms/room-one/snapshot') return response(roomSnapshot);
+    if (url === '/api/rooms/room-one/snapshot') return response(snapshot);
     if (url === '/api/rooms/room-one/ws-ticket') return response({ ticket: 'ticket-one', expiresAt: '2026-05-21T00:01:00Z' });
 
     throw new Error(`Unhandled request: ${method} ${url}`);
@@ -189,5 +189,30 @@ describe('App landing polish', () => {
     expect(screen.queryByText('Planning Circle')).toBeNull();
     expect(window.location.search).toBe('');
     expect(TestWebSocket.sockets).toHaveLength(1);
+  });
+
+  it('shows room retention controls to admin participants', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'admin-one', displayName: 'Ada', isAdmin: true },
+      {
+        ...roomSnapshot,
+        room: {
+          ...roomSnapshot.room,
+          expiresAt: '2026-05-28T00:00:00Z',
+          neverExpires: false
+        },
+        caller: { userId: 'admin-one', role: 'participant', isAdmin: true }
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+
+    expect(await screen.findByText('Room survival')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Never expire' })).toBeTruthy();
   });
 });

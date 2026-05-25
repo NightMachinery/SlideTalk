@@ -366,9 +366,6 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	roomID := roomIDFromContext(r.Context())
-	if !s.requireRoomMod(w, r, user, roomID) {
-		return
-	}
 	var input struct {
 		Title                     *string `json:"title"`
 		Password                  *string `json:"password"`
@@ -384,6 +381,26 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 		NeverExpires              *bool   `json:"neverExpires"`
 	}
 	if !decodeJSON(w, r, &input) {
+		return
+	}
+	hasRetention := input.ExpiresAt != nil || input.NeverExpires != nil
+	hasModeratorSettings := input.Title != nil ||
+		input.Password != nil ||
+		strings.TrimSpace(input.PasswordAction) != "" ||
+		input.RoomMode != nil ||
+		input.AllowParticipantMarkdown != nil ||
+		input.SharedNavigationEnabled != nil ||
+		input.AllowAudienceAudioUpload != nil ||
+		input.AllowAudienceAudioControl != nil ||
+		input.RaiseHandMode != nil ||
+		input.ShowAudioStarCounts != nil
+	details, err := s.rooms.GetForUser(r.Context(), roomID, user.ID)
+	if err != nil {
+		writeRoomError(w, err)
+		return
+	}
+	if (!hasRetention || hasModeratorSettings) && details.Membership.Role != rooms.RoleMod {
+		writeProblem(w, http.StatusForbidden, "Forbidden", "Only room moderators can change room settings.")
 		return
 	}
 	settings := rooms.SettingsInput{
@@ -409,12 +426,16 @@ func (s *appServer) patchRoomSettings(w http.ResponseWriter, r *http.Request, us
 		writeProblem(w, http.StatusBadRequest, "Bad Request", "Password action must be set or clear.")
 		return
 	}
-	room, err := s.rooms.UpdateSettings(r.Context(), roomID, settings)
-	if err != nil {
-		writeRoomError(w, err)
-		return
+	room := details.Room
+	if hasModeratorSettings {
+		var err error
+		room, err = s.rooms.UpdateSettings(r.Context(), roomID, settings)
+		if err != nil {
+			writeRoomError(w, err)
+			return
+		}
 	}
-	if input.ExpiresAt != nil || input.NeverExpires != nil {
+	if hasRetention {
 		never := input.NeverExpires != nil && *input.NeverExpires
 		var expiresAt time.Time
 		if !never {
@@ -971,6 +992,14 @@ func writeRoomError(w http.ResponseWriter, err error) {
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, rooms.ErrInvalidRaiseHandMode), errors.Is(err, rooms.ErrInvalidRoomMode):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
+	case errors.Is(err, rooms.ErrRetentionAdminOnly):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Only site admins can set rooms to never expire.")
+	case errors.Is(err, rooms.ErrRetentionTooSoon):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Site admins must keep room survival at least 24 hours from now.")
+	case errors.Is(err, rooms.ErrRetentionTooLong):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Room moderators can prolong room survival up to 10 days from now.")
+	case errors.Is(err, rooms.ErrRetentionShortening):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Room moderators can only prolong room survival, not shorten it.")
 	case errors.Is(err, rooms.ErrInvalidRetention):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, rooms.ErrNotModerator):
