@@ -51,6 +51,16 @@ class TestWebSocket {
     this.sent.push(message);
   }
 
+  open() {
+    this.readyState = TestWebSocket.OPEN;
+    this.onopen?.(new Event('open'));
+  }
+
+  disconnect() {
+    this.readyState = TestWebSocket.CLOSED;
+    this.onclose?.(new CloseEvent('close'));
+  }
+
   close() {
     this.readyState = TestWebSocket.CLOSED;
     this.onclose?.(new CloseEvent('close'));
@@ -280,5 +290,89 @@ describe('App landing polish', () => {
 
     expect(screen.queryByRole('button', { name: /Grace audio upload/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Grace audio control/ })).toBeNull();
+  });
+
+  it('dedupes offline command notifications until realtime reconnects', async () => {
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('request-one');
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+        participants: [
+          { userId: 'mod-one', displayName: 'Ada', role: 'mod', displayOrder: 0, isOnline: true, allowAudioUpload: false, allowAudioControl: false },
+          { userId: 'participant-one', displayName: 'Grace', role: 'participant', displayOrder: 1, isOnline: true, allowAudioUpload: false, allowAudioControl: false }
+        ]
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(TestWebSocket.sockets).toHaveLength(1));
+    TestWebSocket.sockets[0].disconnect();
+    await fireEvent.click(screen.getByRole('button', { name: /Participants/ }));
+    const moveDown = (await screen.findAllByRole('button', { name: 'Move down' })).find((button) => !button.hasAttribute('disabled'));
+    expect(moveDown).toBeTruthy();
+    await fireEvent.click(moveDown as HTMLElement);
+    await fireEvent.click(moveDown as HTMLElement);
+
+    expect(screen.getAllByText('Live connection is offline. Changes will work after it reconnects.')).toHaveLength(1);
+
+    await waitFor(() => expect(TestWebSocket.sockets.length).toBeGreaterThan(1));
+    TestWebSocket.sockets[1].open();
+    TestWebSocket.sockets[1].disconnect();
+    await fireEvent.click(moveDown as HTMLElement);
+
+    expect(screen.getAllByText('Live connection is offline. Changes will work after it reconnects.')).toHaveLength(2);
+  });
+
+  it('shows only user-initiated realtime command errors', async () => {
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('request-one');
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+        participants: [
+          { userId: 'mod-one', displayName: 'Ada', role: 'mod', displayOrder: 0, isOnline: true, allowAudioUpload: false, allowAudioControl: false },
+          { userId: 'participant-one', displayName: 'Grace', role: 'participant', displayOrder: 1, isOnline: true, allowAudioUpload: false, allowAudioControl: false }
+        ]
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(TestWebSocket.sockets).toHaveLength(1));
+    await fireEvent.click(screen.getByRole('button', { name: /Participants/ }));
+    const moveDown = (await screen.findAllByRole('button', { name: 'Move down' })).find((button) => !button.hasAttribute('disabled'));
+    expect(moveDown).toBeTruthy();
+    await fireEvent.click(moveDown as HTMLElement);
+
+    TestWebSocket.sockets[0].receive({ type: 'error', requestId: 'background-request', message: 'Background failed.' });
+    expect(screen.queryByText('Background failed.')).toBeNull();
+
+    TestWebSocket.sockets[0].receive({ type: 'error', requestId: 'request-one', message: 'Move failed.' });
+    expect(await screen.findByText('Move failed.')).toBeTruthy();
+  });
+
+  it('shows connection status in the active room top bar', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch({ id: 'user-one', displayName: 'Grace', isAdmin: false }));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(TestWebSocket.sockets.length).toBeGreaterThan(0));
+    expect(await screen.findByLabelText('Live connection connecting')).toBeTruthy();
+    const socket = TestWebSocket.sockets.at(-1);
+    expect(socket).toBeTruthy();
+    socket?.open();
+    expect(await screen.findByLabelText('Live connection connected')).toBeTruthy();
+    socket?.disconnect();
+    expect(await screen.findByLabelText('Live connection disconnected')).toBeTruthy();
   });
 });

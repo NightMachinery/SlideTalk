@@ -114,7 +114,7 @@
     snapshot: RoomSnapshot;
     status: 'connecting' | 'connected' | 'disconnected';
     audioDriftThresholdSeconds?: number;
-    send: (command: RealtimeCommand) => void;
+    send: (command: RealtimeCommand, options?: { notifyOnFailure?: boolean }) => void;
   } = $props();
 
   let panelState = $state<PanelState>({
@@ -1242,6 +1242,12 @@
     return error instanceof Error ? error.message : fallback;
   }
 
+  function connectionStatusLabel() {
+    if (status === 'connected') return 'Live connection connected';
+    if (status === 'connecting') return 'Live connection connecting';
+    return 'Live connection disconnected';
+  }
+
   function formatBytes(bytes: number) {
     if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
     if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -1348,7 +1354,7 @@
       bind:this={audioElement}
       bind:muted={audioMuted}
       src={audioObjectUrl}
-      onended={() => send({ type: 'audio.ended' })}
+      onended={() => send({ type: 'audio.ended' }, { notifyOnFailure: false })}
       ontimeupdate={() => {
         audioPositionDraft = Math.floor(audioElement?.currentTime ?? 0);
       }}
@@ -1381,6 +1387,21 @@
       </div>
 
       <div class="top-room-actions">
+        <span class={['connection-status-icon', status]} title={connectionStatusLabel()} aria-label={connectionStatusLabel()} role="img">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <circle class="connection-ring" cx="12" cy="12" r="8"></circle>
+            {#if status === 'disconnected'}
+              <path class="connection-slash" d="M5 19 19 5"></path>
+              <circle class="connection-core" cx="12" cy="12" r="3"></circle>
+            {:else if status === 'connecting'}
+              <path class="connection-arc" d="M12 4a8 8 0 0 1 8 8"></path>
+              <circle class="connection-core" cx="12" cy="12" r="3"></circle>
+            {:else}
+              <circle class="connection-core" cx="12" cy="12" r="3.4"></circle>
+              <path class="connection-check" d="m8.6 12.2 2.1 2.1 4.8-5"></path>
+            {/if}
+          </svg>
+        </span>
         <button class="top-icon-button" type="button" onclick={copyCurrentRoomLink} title="Copy room link" aria-label="Copy room link">
           <Copy size={16} />
         </button>
@@ -1399,7 +1420,7 @@
             bind:this={audioElement}
             bind:muted={audioMuted}
             src={audioObjectUrl}
-            onended={() => send({ type: 'audio.ended' })}
+            onended={() => send({ type: 'audio.ended' }, { notifyOnFailure: false })}
             ontimeupdate={updateAudioTiming}
             onprogress={updateAudioBuffer}
             onloadedmetadata={updateAudioTiming}
@@ -1911,7 +1932,7 @@
               bind:this={audioElement}
               bind:muted={audioMuted}
               src={audioObjectUrl}
-              onended={() => send({ type: 'audio.ended' })}
+              onended={() => send({ type: 'audio.ended' }, { notifyOnFailure: false })}
               ontimeupdate={updateAudioTiming}
               onprogress={updateAudioBuffer}
               onloadedmetadata={updateAudioTiming}

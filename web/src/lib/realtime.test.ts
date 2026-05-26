@@ -81,8 +81,9 @@ describe('connectRealtime', () => {
     vi.useRealTimers();
   });
 
-  it('does not send commands until the socket is open', async () => {
+  it('returns request ids only when commands are sent', async () => {
     FakeWebSocket.sockets = [];
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('request-one');
 
     const connection = await connectRealtime(
       'room-one',
@@ -94,12 +95,13 @@ describe('connectRealtime', () => {
       }
     );
 
-    expect(connection.send({ type: 'turn.next' })).toBe(false);
+    expect(connection.send({ type: 'turn.next' })).toBeNull();
     expect(FakeWebSocket.sockets[0].sent).toHaveLength(0);
 
     FakeWebSocket.sockets[0].open();
-    expect(connection.send({ type: 'turn.next' })).toBe(true);
+    expect(connection.send({ type: 'turn.next' })).toBe('request-one');
     expect(FakeWebSocket.sockets[0].sent).toHaveLength(1);
+    expect(JSON.parse(FakeWebSocket.sockets[0].sent[0])).toEqual(expect.objectContaining({ requestId: 'request-one' }));
   });
 });
 

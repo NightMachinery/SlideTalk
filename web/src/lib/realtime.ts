@@ -241,7 +241,7 @@ export type RealtimeCommand =
     };
 
 export type RealtimeConnection = {
-  send(command: RealtimeCommand): boolean;
+  send(command: RealtimeCommand): string | null;
   close(): void;
 };
 
@@ -333,10 +333,10 @@ export async function connectRealtime(
 
   return {
     send(command) {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return null;
       const requestId = crypto.randomUUID();
       socket.send(JSON.stringify({ ...command, requestId }));
-      return true;
+      return requestId;
     },
     close() {
       closedByCaller = true;

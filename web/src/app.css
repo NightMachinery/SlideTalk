@@ -1290,8 +1290,70 @@ code {
 }
 
 .top-room-actions {
+  display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
   gap: 6px;
+}
+
+.connection-status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid oklch(82% 0.025 245);
+  border-radius: 7px;
+  color: oklch(42% 0.028 245);
+  background: oklch(96% 0.01 245);
+}
+
+.connection-status-icon svg {
+  display: block;
+}
+
+.connection-status-icon .connection-ring,
+.connection-status-icon .connection-arc,
+.connection-status-icon .connection-check,
+.connection-status-icon .connection-slash {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.connection-status-icon .connection-core {
+  fill: currentColor;
+}
+
+.connection-status-icon.connected {
+  color: oklch(35% 0.105 170);
+  border-color: oklch(76% 0.08 170);
+  background: oklch(92% 0.055 170);
+}
+
+.connection-status-icon.connecting {
+  color: oklch(45% 0.12 78);
+  border-color: oklch(80% 0.09 78);
+  background: oklch(94% 0.045 78);
+}
+
+.connection-status-icon.disconnected {
+  color: oklch(38% 0.13 28);
+  border-color: oklch(80% 0.08 28);
+  background: oklch(94% 0.04 28);
+}
+
+.connection-status-icon.connecting .connection-arc {
+  transform-origin: 12px 12px;
+  animation: connection-spin 1.2s linear infinite;
+}
+
+@keyframes connection-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes timer-ended-pulse {

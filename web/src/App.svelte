@@ -56,6 +56,8 @@
   let notice = $state('');
   let shareFallbackText = $state('');
   let removedRoomMessage = $state('');
+  let offlineCommandToastShown = false;
+  const pendingUserCommandRequestIds = new Set<string>();
 
   const hasDisplayName = $derived(Boolean(user?.displayName.trim()));
   const needsProfile = $derived(Boolean(user && !hasDisplayName));
@@ -81,6 +83,9 @@
       }
     })();
     return () => {
+      realtime?.close();
+      realtime = null;
+      pendingUserCommandRequestIds.clear();
       if (adminMessageTimer !== null) {
         window.clearTimeout(adminMessageTimer);
         adminMessageTimer = null;
@@ -273,6 +278,8 @@
   async function activateRoom(details: RoomDetails, message: string) {
     realtime?.close();
     realtime = null;
+    pendingUserCommandRequestIds.clear();
+    offlineCommandToastShown = false;
     snapshot = null;
     removedRoomMessage = '';
     room = details;
@@ -361,6 +368,7 @@
     realtime = await connectRealtime(
       roomId,
       (event: RealtimeEvent) => {
+        const wasPendingUserCommand = event.requestId ? pendingUserCommandRequestIds.delete(event.requestId) : false;
         if (event.type === 'room.snapshot' && event.payload) {
           snapshot = event.payload;
         }
@@ -378,13 +386,33 @@
           document.title = 'SlideTalk';
         }
         if (event.type === 'error') {
-          addToast(event.message ?? 'Realtime command failed.');
+          if (wasPendingUserCommand) {
+            addToast(event.message ?? 'Realtime command failed.');
+          }
         }
       },
       (status) => {
         connectionStatus = status;
+        if (status === 'connected') {
+          offlineCommandToastShown = false;
+        }
       }
     );
+  }
+
+  function sendRealtimeCommand(command: RealtimeCommand, options: { notifyOnFailure?: boolean } = {}) {
+    const notifyOnFailure = options.notifyOnFailure ?? true;
+    const requestId = realtime?.send(command) ?? null;
+    if (requestId) {
+      if (notifyOnFailure) {
+        pendingUserCommandRequestIds.add(requestId);
+      }
+      return;
+    }
+    if (notifyOnFailure && !offlineCommandToastShown) {
+      offlineCommandToastShown = true;
+      addToast('Live connection is offline. Changes will work after it reconnects.');
+    }
   }
 </script>
 
@@ -423,12 +451,7 @@
         {snapshot}
         status={connectionStatus}
         {audioDriftThresholdSeconds}
-        send={(command) => {
-        const sent = realtime?.send(command) ?? false;
-        if (!sent) {
-          addToast('Live connection is still connecting. Try again in a moment.');
-        }
-      }}
+        send={sendRealtimeCommand}
     />
   {:else}
     <nav class="topbar" aria-label="Primary navigation">
