@@ -607,6 +607,73 @@ func TestParticipantWithAudioControlCanSetFinishMode(t *testing.T) {
 	}
 }
 
+func TestModeratorCanGrantParticipantAudioPermissions(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+
+	err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandPeopleAudioPermission,
+		Payload: mustJSON(t, map[string]any{"userId": participantID, "allowAudioControl": true}),
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-mod permission update error = %v, want forbidden", err)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandPeopleAudioPermission,
+		Payload: mustJSON(t, map[string]any{"userId": participantID, "allowAudioUpload": true, "allowAudioControl": true}),
+	}); err != nil {
+		t.Fatalf("grant participant audio permissions: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snapshot.Participants) < 2 || !snapshot.Participants[1].AllowAudioUpload || !snapshot.Participants[1].AllowAudioControl {
+		t.Fatalf("participant grants not reflected in snapshot: %+v", snapshot.Participants)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandAudioMode,
+		Payload: mustJSON(t, map[string]string{"mode": AudioModeShuffle}),
+	}); err != nil {
+		t.Fatalf("participant with individual control grant set audio mode: %v", err)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandPeopleAudioPermission,
+		Payload: mustJSON(t, map[string]any{"userId": participantID, "allowAudioUpload": false, "allowAudioControl": false}),
+	}); err != nil {
+		t.Fatalf("revoke participant audio permissions: %v", err)
+	}
+	snapshot, err = hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot after revoke: %v", err)
+	}
+	if snapshot.Participants[1].AllowAudioUpload || snapshot.Participants[1].AllowAudioControl {
+		t.Fatalf("participant grants still set after revoke: %+v", snapshot.Participants[1])
+	}
+}
+
+func TestModeratorCannotGrantObserverAudioPermissions(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandPeopleSetRole,
+		Payload: mustJSON(t, map[string]string{"userId": participantID, "role": rooms.RoleObserver}),
+	}); err != nil {
+		t.Fatalf("set observer: %v", err)
+	}
+
+	err := hub.HandleCommand(ctx, roomID, modID, Command{
+		Type:    CommandPeopleAudioPermission,
+		Payload: mustJSON(t, map[string]any{"userId": participantID, "allowAudioControl": true}),
+	})
+	if !errors.Is(err, ErrBadCommand) {
+		t.Fatalf("observer grant error = %v, want bad command", err)
+	}
+}
+
 func setupRealtimeTest(t *testing.T) (*Hub, *auth.Service, *rooms.Service, string, string, string) {
 	t.Helper()
 	ctx := context.Background()

@@ -207,13 +207,14 @@
   const allRoomMembers = $derived([...snapshot.participants, ...snapshot.observers]);
   const participantCountLabel = $derived(onlineCountLabel(snapshot.participants));
   const observerCountLabel = $derived(onlineCountLabel(snapshot.observers));
+  const callerParticipant = $derived(snapshot.participants.find((member) => member.userId === snapshot.caller.userId));
   const callerHand = $derived(snapshot.hands.find((hand) => hand.userId === snapshot.caller.userId));
   const canUseHands = $derived(snapshot.caller.role !== 'observer' && snapshot.room.raiseHandMode !== 'off');
   const markdownBlocks = $derived(parseMarkdown(snapshot.markdown || ''));
   const markdownEditorVisible = $derived(snapshot.room.roomMode === 'markdown' && canEditMarkdown);
   const canSeeAudio = true;
-  const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && snapshot.room.allowAudienceAudioUpload));
-  const canControlAudio = $derived(isMod || (snapshot.caller.role !== 'observer' && snapshot.room.allowAudienceAudioControl));
+  const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && (snapshot.room.allowAudienceAudioUpload || !!callerParticipant?.allowAudioUpload)));
+  const canControlAudio = $derived(isMod || (snapshot.caller.role === 'participant' && (snapshot.room.allowAudienceAudioControl || !!callerParticipant?.allowAudioControl)));
   const currentAudioTrack = $derived(snapshot.audio.tracks.find((track) => track.id === snapshot.audio.currentTrackId) ?? snapshot.audio.tracks[0]);
   const displayedAudioTracks = $derived(starredOnly ? snapshot.audio.tracks.filter((track) => track.starredByCaller) : snapshot.audio.tracks);
   const slideMimeType = $derived(snapshot.slide?.mimeType || 'application/pdf');
@@ -574,6 +575,10 @@
 
   function setRole(userId: string, role: 'mod' | 'participant' | 'observer') {
     send({ type: 'people.setRole', payload: { userId, role } });
+  }
+
+  function setAudioPermission(userId: string, field: 'allowAudioUpload' | 'allowAudioControl', value: boolean) {
+    send({ type: 'people.audioPermission', payload: { userId, [field]: value } });
   }
 
   async function kick(userId: string) {
@@ -1733,6 +1738,28 @@
                 <div class="member-actions">
                   <button class="icon-button" type="button" title="Move up" aria-label="Move up" onclick={() => moveMember(member.userId, -1)} disabled={!canMoveParticipant(member.userId, -1)}><ArrowUp size={16} /></button>
                   <button class="icon-button" type="button" title="Move down" aria-label="Move down" onclick={() => moveMember(member.userId, 1)} disabled={!canMoveParticipant(member.userId, 1)}><ArrowDown size={16} /></button>
+                  {#if member.role === 'participant' && !snapshot.room.allowAudienceAudioUpload}
+                    <button
+                      class={['icon-button', 'permission-button', member.allowAudioUpload && 'active']}
+                      type="button"
+                      title={member.allowAudioUpload ? 'Revoke audio upload' : 'Grant audio upload'}
+                      aria-label={`${member.allowAudioUpload ? 'Revoke' : 'Grant'} ${memberDisplayName(member)} audio upload`}
+                      onclick={() => setAudioPermission(member.userId, 'allowAudioUpload', !member.allowAudioUpload)}
+                    >
+                      <Upload size={16} />
+                    </button>
+                  {/if}
+                  {#if member.role === 'participant' && !snapshot.room.allowAudienceAudioControl}
+                    <button
+                      class={['icon-button', 'permission-button', member.allowAudioControl && 'active']}
+                      type="button"
+                      title={member.allowAudioControl ? 'Revoke audio control' : 'Grant audio control'}
+                      aria-label={`${member.allowAudioControl ? 'Revoke' : 'Grant'} ${memberDisplayName(member)} audio control`}
+                      onclick={() => setAudioPermission(member.userId, 'allowAudioControl', !member.allowAudioControl)}
+                    >
+                      <Volume2 size={16} />
+                    </button>
+                  {/if}
                   {#if member.role === 'mod'}
                     <button type="button" onclick={() => setRole(member.userId, 'participant')}>
                       <Shield size={15} /> Demote

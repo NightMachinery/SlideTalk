@@ -697,7 +697,14 @@ func (s *appServer) postRoomAudio(w http.ResponseWriter, r *http.Request, user a
 			writeRoomError(w, err)
 			return
 		}
-		if !snapshot.Room.AllowAudienceAudioUpload {
+		callerCanUpload := snapshot.Room.AllowAudienceAudioUpload
+		for _, member := range snapshot.Participants {
+			if member.UserID == user.ID && member.AllowAudioUpload {
+				callerCanUpload = true
+				break
+			}
+		}
+		if !callerCanUpload {
 			writeProblem(w, http.StatusForbidden, "Forbidden", "Audio uploads are not enabled for participants.")
 			return
 		}

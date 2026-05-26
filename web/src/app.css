@@ -1090,6 +1090,26 @@ h2 {
   width: auto;
 }
 
+.member-actions .permission-button {
+  min-width: 34px;
+  color: oklch(34% 0.035 245);
+  background: oklch(94% 0.012 245);
+}
+
+.member-actions .permission-button.active {
+  color: oklch(27% 0.11 178);
+  background: oklch(88% 0.08 178);
+  box-shadow: inset 0 0 0 1px oklch(66% 0.12 178);
+}
+
+.member-actions .permission-button:hover:not(:disabled) {
+  background: oklch(90% 0.025 245);
+}
+
+.member-actions .permission-button.active:hover:not(:disabled) {
+  background: oklch(84% 0.09 178);
+}
+
 .hand-row-button,
 .hand-row-indicator {
   display: inline-flex;

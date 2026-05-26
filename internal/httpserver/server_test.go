@@ -621,6 +621,30 @@ func TestParticipantAudioUploadRequiresAudienceUploadSetting(t *testing.T) {
 	serveJSON(t, server, request, http.StatusCreated)
 }
 
+func TestParticipantWithIndividualAudioUploadGrantCanUpload(t *testing.T) {
+	dataDir := t.TempDir()
+	server := newAPITestServerWithDataDir(t, dataDir)
+	roomID := createAdminRoom(t, server)
+	serveJSON(t, server, apiRequest(http.MethodPatch, "/api/me", `{"displayName":"Grace"}`, "participant"), http.StatusOK)
+	serveJSON(t, server, apiRequest(http.MethodPost, "/api/rooms/"+roomID+"/join", `{}`, "participant"), http.StatusOK)
+
+	db, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(context.Background(), `update room_members set allow_audio_upload = 1 where room_id = ? and user_id = (select id from users where display_name = 'Grace')`, roomID); err != nil {
+		t.Fatalf("grant audio upload: %v", err)
+	}
+
+	content := testWAVBytes()
+	body, contentType := audioUploadBody(t, roomID, "participant.wav", content, sha256HexTest(content))
+	request := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/audio", body)
+	request.Header.Set("Authorization", "Bearer participant")
+	request.Header.Set("Content-Type", contentType)
+	serveJSON(t, server, request, http.StatusCreated)
+}
+
 func TestAudioDownloadTokenAllowsExternalDownloadWithoutAuth(t *testing.T) {
 	server := newAPITestServer(t)
 	roomID := createAdminRoom(t, server)

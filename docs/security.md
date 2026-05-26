@@ -44,7 +44,7 @@ Room moderators can upload, replace, or remove the slide file attached to their 
 
 The slide upload path enforces the configured maximum file size with `SLIDETALK_SLIDE_UPLOAD_LIMIT`, validates supported extension and detected content type, preserves the stored MIME type for serving, and rejects hash mismatches.
 
-Audio files are stored under `~/.slidetalk/audio/` by SHA-256 and playlist rows are scoped to rooms. Moderators can upload, reorder, control, edit display metadata, and remove any room audio track. Uploaders can edit their own track title. Room members can see and download room audio by default. Non-observer participants can upload and control playback only when the moderator enables the corresponding room settings. Observers cannot upload or control playback.
+Audio files are stored under `~/.slidetalk/audio/` by SHA-256 and playlist rows are scoped to rooms. Moderators can upload, reorder, control, edit display metadata, and remove any room audio track. Uploaders can edit their own track title. Room members can see and download room audio by default. Non-observer participants can upload and control playback when the moderator enables the corresponding room-wide setting or grants that participant access directly. Observers cannot upload or control playback.
 
 Audio download links use random room-track bearer tokens in the URL so copied links work in external download managers. The server stores only token hashes, never raw tokens or browser auth tokens. These links remain valid until the associated room track is removed, so operators should treat copied audio URLs as room-scoped bearer secrets.
 

@@ -69,10 +69,12 @@ type Membership struct {
 
 // Member is a room member with profile data.
 type Member struct {
-	UserID       string
-	DisplayName  string
-	Role         string
-	DisplayOrder int
+	UserID            string
+	DisplayName       string
+	Role              string
+	DisplayOrder      int
+	AllowAudioUpload  bool
+	AllowAudioControl bool
 }
 
 // Details contains room metadata and caller membership.
@@ -464,7 +466,7 @@ func (s *Service) UpdateRetention(ctx context.Context, roomID string, requesterU
 func (s *Service) ListMembers(ctx context.Context, roomID string) ([]Member, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`select u.id, u.display_name, rm.role, rm.display_order
+		`select u.id, u.display_name, rm.role, rm.display_order, rm.allow_audio_upload, rm.allow_audio_control
 		 from room_members rm
 		 join users u on u.id = rm.user_id
 		 where rm.room_id = ? and rm.kicked_at is null
@@ -478,7 +480,7 @@ func (s *Service) ListMembers(ctx context.Context, roomID string) ([]Member, err
 	var members []Member
 	for rows.Next() {
 		var member Member
-		if err := rows.Scan(&member.UserID, &member.DisplayName, &member.Role, &member.DisplayOrder); err != nil {
+		if err := rows.Scan(&member.UserID, &member.DisplayName, &member.Role, &member.DisplayOrder, &member.AllowAudioUpload, &member.AllowAudioControl); err != nil {
 			return nil, fmt.Errorf("scan member: %w", err)
 		}
 		members = append(members, member)
@@ -511,6 +513,12 @@ func (s *Service) SetRole(ctx context.Context, roomID string, userID string, rol
 		if count <= 1 {
 			return ErrLastMod
 		}
+	}
+	if role == RoleObserver {
+		if _, err := tx.ExecContext(ctx, `update room_members set role = ?, allow_audio_upload = 0, allow_audio_control = 0 where room_id = ? and user_id = ? and kicked_at is null`, role, roomID, userID); err != nil {
+			return fmt.Errorf("update role: %w", err)
+		}
+		return tx.Commit()
 	}
 	if _, err := tx.ExecContext(ctx, `update room_members set role = ? where room_id = ? and user_id = ? and kicked_at is null`, role, roomID, userID); err != nil {
 		return fmt.Errorf("update role: %w", err)
@@ -552,7 +560,7 @@ func (s *Service) Reorder(ctx context.Context, roomID string, participantIDs []s
 		order++
 	}
 	for _, userID := range observerIDs {
-		if _, err := tx.ExecContext(ctx, `update room_members set role = ?, display_order = ? where room_id = ? and user_id = ?`, RoleObserver, order, roomID, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, `update room_members set role = ?, display_order = ?, allow_audio_upload = 0, allow_audio_control = 0 where room_id = ? and user_id = ?`, RoleObserver, order, roomID, userID); err != nil {
 			return fmt.Errorf("update observer order: %w", err)
 		}
 		order++

@@ -6,6 +6,8 @@ export type SnapshotMember = {
   role: 'mod' | 'participant' | 'observer';
   displayOrder: number;
   isOnline: boolean;
+  allowAudioUpload: boolean;
+  allowAudioControl: boolean;
 };
 
 export type RoomSnapshot = {
@@ -100,9 +102,12 @@ type RoomSnapshotWireAudio = Partial<Omit<RoomSnapshot['audio'], 'tracks'>> & {
     Partial<Pick<RoomSnapshot['audio']['tracks'][number], 'title' | 'metadataTitle' | 'durationSeconds' | 'hasCover' | 'uploadedByName' | 'uploaderDisplayName' | 'starredByCaller' | 'starCount'>>)[];
 };
 
+type SnapshotMemberWire = Omit<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl'> &
+  Partial<Pick<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl'>>;
+
 type RoomSnapshotWire = Omit<RoomSnapshot, 'participants' | 'observers' | 'hands' | 'audio'> & {
-  participants?: SnapshotMember[] | null;
-  observers?: SnapshotMember[] | null;
+  participants?: SnapshotMemberWire[] | null;
+  observers?: SnapshotMemberWire[] | null;
   hands?: RoomSnapshot['hands'] | null;
   audio?: RoomSnapshotWireAudio | null;
 };
@@ -119,8 +124,8 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
       expiresAt: snapshot.room.expiresAt ?? '',
       neverExpires: snapshot.room.neverExpires ?? false
     },
-    participants: snapshot.participants ?? [],
-    observers: snapshot.observers ?? [],
+    participants: (snapshot.participants ?? []).map(normalizeSnapshotMember),
+    observers: (snapshot.observers ?? []).map(normalizeSnapshotMember),
     hands: snapshot.hands ?? [],
     audio: {
       tracks: (snapshot.audio?.tracks ?? []).map((track) => ({
@@ -144,6 +149,14 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
   };
 }
 
+function normalizeSnapshotMember(member: SnapshotMemberWire): SnapshotMember {
+  return {
+    ...member,
+    allowAudioUpload: member.allowAudioUpload ?? false,
+    allowAudioControl: member.allowAudioControl ?? false
+  };
+}
+
 export type RealtimeCommand =
   | {
       type: 'people.reorder';
@@ -152,6 +165,10 @@ export type RealtimeCommand =
   | {
       type: 'people.setRole';
       payload: { userId: string; role: 'mod' | 'participant' | 'observer' };
+    }
+  | {
+      type: 'people.audioPermission';
+      payload: { userId: string; allowAudioUpload?: boolean; allowAudioControl?: boolean };
     }
   | {
       type: 'people.kick';

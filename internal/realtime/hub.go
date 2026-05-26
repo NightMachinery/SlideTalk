@@ -227,11 +227,13 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 	}
 	for _, member := range members {
 		snapshotMember := SnapshotMember{
-			UserID:       member.UserID,
-			DisplayName:  member.DisplayName,
-			Role:         member.Role,
-			DisplayOrder: member.DisplayOrder,
-			IsOnline:     h.IsUserOnline(roomID, member.UserID),
+			UserID:            member.UserID,
+			DisplayName:       member.DisplayName,
+			Role:              member.Role,
+			DisplayOrder:      member.DisplayOrder,
+			IsOnline:          h.IsUserOnline(roomID, member.UserID),
+			AllowAudioUpload:  member.AllowAudioUpload,
+			AllowAudioControl: member.AllowAudioControl,
 		}
 		if member.Role == rooms.RoleObserver {
 			snapshot.Observers = append(snapshot.Observers, snapshotMember)
@@ -301,6 +303,21 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return err
 		}
 		if err := h.cleanMemberTurnState(ctx, roomID, payload.UserID); err != nil {
+			return err
+		}
+	case CommandPeopleAudioPermission:
+		if !isMod {
+			return ErrForbidden
+		}
+		var payload struct {
+			UserID            string `json:"userId"`
+			AllowAudioUpload  *bool  `json:"allowAudioUpload"`
+			AllowAudioControl *bool  `json:"allowAudioControl"`
+		}
+		if err := json.Unmarshal(command.Payload, &payload); err != nil || payload.UserID == "" || (payload.AllowAudioUpload == nil && payload.AllowAudioControl == nil) {
+			return ErrBadCommand
+		}
+		if err := h.setMemberAudioPermissions(ctx, roomID, payload.UserID, payload.AllowAudioUpload, payload.AllowAudioControl); err != nil {
 			return err
 		}
 	case CommandPeopleKick:
@@ -510,7 +527,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			}
 		}
 	case CommandAudioPlay:
-		if err := h.requireAudioControl(ctx, roomID, details.Membership.Role, isMod); err != nil {
+		if err := h.requireAudioControl(ctx, roomID, callerUserID, details.Membership.Role, isMod); err != nil {
 			return err
 		}
 		var payload struct {
@@ -534,7 +551,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return fmt.Errorf("play audio: %w", err)
 		}
 	case CommandAudioPause:
-		if err := h.requireAudioControl(ctx, roomID, details.Membership.Role, isMod); err != nil {
+		if err := h.requireAudioControl(ctx, roomID, callerUserID, details.Membership.Role, isMod); err != nil {
 			return err
 		}
 		position, err := h.currentAudioPosition(ctx, roomID)
@@ -545,7 +562,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return fmt.Errorf("pause audio: %w", err)
 		}
 	case CommandAudioSeek:
-		if err := h.requireAudioControl(ctx, roomID, details.Membership.Role, isMod); err != nil {
+		if err := h.requireAudioControl(ctx, roomID, callerUserID, details.Membership.Role, isMod); err != nil {
 			return err
 		}
 		var payload struct {
@@ -559,7 +576,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return fmt.Errorf("seek audio: %w", err)
 		}
 	case CommandAudioSelect:
-		if err := h.requireAudioControl(ctx, roomID, details.Membership.Role, isMod); err != nil {
+		if err := h.requireAudioControl(ctx, roomID, callerUserID, details.Membership.Role, isMod); err != nil {
 			return err
 		}
 		var payload struct {
@@ -588,7 +605,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return err
 		}
 	case CommandAudioMode:
-		if err := h.requireAudioControl(ctx, roomID, details.Membership.Role, isMod); err != nil {
+		if err := h.requireAudioControl(ctx, roomID, callerUserID, details.Membership.Role, isMod); err != nil {
 			return err
 		}
 		var payload struct {
@@ -934,18 +951,43 @@ func (h *Hub) listAudioTracks(ctx context.Context, roomID string, callerUserID s
 	return tracks, nil
 }
 
-func (h *Hub) requireAudioControl(ctx context.Context, roomID string, role string, isMod bool) error {
+func (h *Hub) setMemberAudioPermissions(ctx context.Context, roomID string, userID string, allowUpload *bool, allowControl *bool) error {
+	var role string
+	err := h.db.QueryRowContext(ctx, `select role from room_members where room_id = ? and user_id = ? and kicked_at is null`, roomID, userID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return rooms.ErrNotMember
+	}
+	if err != nil {
+		return fmt.Errorf("read audio permission member: %w", err)
+	}
+	if role == rooms.RoleObserver {
+		return ErrBadCommand
+	}
+	if allowUpload != nil {
+		if _, err := h.db.ExecContext(ctx, `update room_members set allow_audio_upload = ? where room_id = ? and user_id = ? and kicked_at is null`, *allowUpload, roomID, userID); err != nil {
+			return fmt.Errorf("update member audio upload permission: %w", err)
+		}
+	}
+	if allowControl != nil {
+		if _, err := h.db.ExecContext(ctx, `update room_members set allow_audio_control = ? where room_id = ? and user_id = ? and kicked_at is null`, *allowControl, roomID, userID); err != nil {
+			return fmt.Errorf("update member audio control permission: %w", err)
+		}
+	}
+	return nil
+}
+
+func (h *Hub) requireAudioControl(ctx context.Context, roomID string, userID string, role string, isMod bool) error {
 	if isMod {
 		return nil
 	}
 	if role == rooms.RoleObserver {
 		return ErrForbidden
 	}
-	var allow bool
-	if err := h.db.QueryRowContext(ctx, `select allow_audience_audio_control from rooms where id = ?`, roomID).Scan(&allow); err != nil {
+	var allow, personalAllow bool
+	if err := h.db.QueryRowContext(ctx, `select r.allow_audience_audio_control, rm.allow_audio_control from rooms r join room_members rm on rm.room_id = r.id where r.id = ? and rm.user_id = ? and rm.kicked_at is null`, roomID, userID).Scan(&allow, &personalAllow); err != nil {
 		return fmt.Errorf("read audio control setting: %w", err)
 	}
-	if !allow {
+	if !allow && !personalAllow {
 		return ErrForbidden
 	}
 	return nil

@@ -129,7 +129,7 @@ describe('normalizeRoomSnapshot', () => {
     const snapshot = normalizeRoomSnapshot({
       room: { id: 'room-one', title: 'Live', hasPassword: false, allowParticipantMarkdown: false, raiseHandMode: 'off', slidePage: 1, sharedNavigationEnabled: true },
       caller: { userId: 'user-one', role: 'mod', isAdmin: false },
-      participants: [],
+      participants: [{ userId: 'user-one', displayName: 'Ada', role: 'participant', displayOrder: 0, isOnline: true }],
       observers: [],
       currentTurn: { currentSpeakerUserId: '', nextSpeakerUserId: '' },
       timer: { state: 'stopped', durationSeconds: 0, startedAt: null, serverNow: '2026-05-22T00:00:00Z' },
@@ -143,6 +143,8 @@ describe('normalizeRoomSnapshot', () => {
 
     expect(snapshot.room.roomMode).toBe('slides');
     expect(snapshot.room.allowAudienceAudioUpload).toBe(false);
+    expect(snapshot.participants[0].allowAudioUpload).toBe(false);
+    expect(snapshot.participants[0].allowAudioControl).toBe(false);
   });
 
   it('preserves slide MIME metadata during normalization', () => {

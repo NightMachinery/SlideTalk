@@ -55,6 +55,8 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			user_id text not null,
 			role text not null,
 			display_order integer not null,
+			allow_audio_upload integer not null default 0,
+			allow_audio_control integer not null default 0,
 			joined_at text not null,
 			kicked_at text,
 			primary key(room_id, user_id),
@@ -213,6 +215,12 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := addMissingColumns(ctx, db, "room_audio_tracks", map[string]string{
 		"title":                 `alter table room_audio_tracks add column title text not null default ''`,
 		"uploader_display_name": `alter table room_audio_tracks add column uploader_display_name text not null default ''`,
+	}); err != nil {
+		return err
+	}
+	if err := addMissingColumns(ctx, db, "room_members", map[string]string{
+		"allow_audio_upload":  `alter table room_members add column allow_audio_upload integer not null default 0`,
+		"allow_audio_control": `alter table room_members add column allow_audio_control integer not null default 0`,
 	}); err != nil {
 		return err
 	}

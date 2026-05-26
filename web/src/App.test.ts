@@ -41,12 +41,15 @@ class TestWebSocket {
   onclose: ((event: CloseEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
+  sent: string[] = [];
 
   constructor(readonly url: string) {
     TestWebSocket.sockets.push(this);
   }
 
-  send() {}
+  send(message: string) {
+    this.sent.push(message);
+  }
 
   close() {
     this.readyState = TestWebSocket.CLOSED;
@@ -214,5 +217,68 @@ describe('App landing polish', () => {
 
     expect(await screen.findByText('Room survival')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Never expire' })).toBeTruthy();
+  });
+
+  it('lets moderators toggle participant audio grants from participant cards', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+        participants: [
+          { userId: 'mod-one', displayName: 'Ada', role: 'mod', displayOrder: 0, isOnline: true, allowAudioUpload: false, allowAudioControl: false },
+          { userId: 'participant-one', displayName: 'Grace', role: 'participant', displayOrder: 1, isOnline: true, allowAudioUpload: false, allowAudioControl: true }
+        ]
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(TestWebSocket.sockets).toHaveLength(1));
+    await fireEvent.click(screen.getByRole('button', { name: /Participants/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: "Grant Grace audio upload" }));
+    await fireEvent.click(screen.getByRole('button', { name: "Revoke Grace audio control" }));
+
+    expect(TestWebSocket.sockets[0].sent.map((message) => JSON.parse(message))).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'people.audioPermission',
+        payload: { userId: 'participant-one', allowAudioUpload: true }
+      }),
+      expect.objectContaining({
+        type: 'people.audioPermission',
+        payload: { userId: 'participant-one', allowAudioControl: false }
+      })
+    ]));
+  });
+
+  it('hides per-participant audio grant buttons when room-wide settings grant access', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        room: {
+          ...roomSnapshot.room,
+          allowAudienceAudioUpload: true,
+          allowAudienceAudioControl: true
+        },
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+        participants: [
+          { userId: 'mod-one', displayName: 'Ada', role: 'mod', displayOrder: 0, isOnline: true, allowAudioUpload: false, allowAudioControl: false },
+          { userId: 'participant-one', displayName: 'Grace', role: 'participant', displayOrder: 1, isOnline: true, allowAudioUpload: false, allowAudioControl: false }
+        ]
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Participants/ }));
+
+    expect(screen.queryByRole('button', { name: /Grace audio upload/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Grace audio control/ })).toBeNull();
   });
 });
