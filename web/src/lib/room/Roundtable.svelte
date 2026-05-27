@@ -43,7 +43,7 @@
   import { clearSlideCache, gcSlideCache, getCachedSlide, putCachedSlide, slideCacheStats } from '../slideCache';
   import { addToast } from '../toast.svelte';
   import { classifyAudioUploadFiles, safeBrowserAudio } from './audioUploadValidation';
-  import { loadLocalAudioMute, saveLocalAudioMute } from './localAudioMute';
+  import { loadLocalAudioPreferences, saveLocalAudioPreferences } from './localAudioPreferences';
   import { displayNameForRoom, onlineCountLabel, sortedByOnline } from './memberDisplay';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
@@ -166,7 +166,8 @@
   let audioMessage = $state('');
   let audioBlocked = $state(false);
   let audioMuted = $state(false);
-  let audioMuteRoomId = '';
+  let audioVolume = $state(1);
+  let audioPreferencesKey = '';
   let audioPositionDraft = $state(0);
   let audioSeeking = $state(false);
   let audioDuration = $state(0);
@@ -276,9 +277,20 @@
 
   $effect(() => {
     const roomId = snapshot.room.id;
-    if (audioMuteRoomId === roomId) return;
-    audioMuteRoomId = roomId;
-    audioMuted = loadLocalAudioMute(roomId);
+    const userId = snapshot.caller.userId;
+    const preferencesKey = `${roomId}:${userId}`;
+    if (audioPreferencesKey === preferencesKey) return;
+    audioPreferencesKey = preferencesKey;
+    const preferences = loadLocalAudioPreferences(roomId, userId);
+    audioMuted = preferences.muted;
+    audioVolume = preferences.volume;
+  });
+
+  $effect(() => {
+    if (audioElement) {
+      audioElement.muted = audioMuted;
+      audioElement.volume = audioVolume;
+    }
   });
 
   $effect(() => {
@@ -1082,7 +1094,12 @@
 
   function toggleLocalAudioMute() {
     audioMuted = !audioMuted;
-    saveLocalAudioMute(snapshot.room.id, audioMuted);
+    saveLocalAudioPreferences(snapshot.room.id, snapshot.caller.userId, { muted: audioMuted, volume: audioVolume });
+  }
+
+  function setLocalAudioVolume(value: number) {
+    audioVolume = Math.min(1, Math.max(0, value));
+    saveLocalAudioPreferences(snapshot.room.id, snapshot.caller.userId, { muted: audioMuted, volume: audioVolume });
   }
 
   function seekAudio(value: number) {
@@ -1467,13 +1484,26 @@
               <span class="seek-buffer" style:--buffer={`${audioBufferedPercent}%`}></span>
             </label>
             <span class="audio-time">{formatDuration(audioPositionDraft || estimatedAudioSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
-            <button type="button" class="icon-button" style={audioMuted ? 'color: var(--color-danger); border-color: var(--color-danger);' : ''} onclick={toggleLocalAudioMute} title={audioMuted ? "Unmute local audio" : "Mute local audio"}>
-              {#if audioMuted}
-                <VolumeX size={18} />
-              {:else}
-                <Volume2 size={18} />
-              {/if}
-            </button>
+            <div class="local-audio-control">
+              <button type="button" class="icon-button" class:muted={audioMuted} onclick={toggleLocalAudioMute} title={audioMuted ? "Unmute local audio" : "Mute local audio"} aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}>
+                {#if audioMuted}
+                  <VolumeX size={18} />
+                {:else}
+                  <Volume2 size={18} />
+                {/if}
+              </button>
+              <label>
+                <span>Volume</span>
+                <input
+                  aria-label="Local audio volume"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round(audioVolume * 100)}
+                  oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
+                />
+              </label>
+            </div>
           </div>
           {#if audioBlocked}
             <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
@@ -1948,13 +1978,26 @@
                     <Play size={16} /> Play
                   {/if}
                 </button>
-                <button type="button" class="icon-button" style={audioMuted ? 'color: var(--color-danger); border-color: var(--color-danger);' : ''} onclick={toggleLocalAudioMute} title={audioMuted ? "Unmute local audio" : "Mute local audio"}>
-                  {#if audioMuted}
-                    <VolumeX size={16} /> Muted
-                  {:else}
-                    <Volume2 size={16} /> Mute
-                  {/if}
-                </button>
+                <div class="local-audio-control compact">
+                  <button type="button" class="icon-button" class:muted={audioMuted} onclick={toggleLocalAudioMute} title={audioMuted ? "Unmute local audio" : "Mute local audio"} aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}>
+                    {#if audioMuted}
+                      <VolumeX size={16} />
+                    {:else}
+                      <Volume2 size={16} />
+                    {/if}
+                  </button>
+                  <label>
+                    <span>Volume</span>
+                    <input
+                      aria-label="Local audio volume"
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={Math.round(audioVolume * 100)}
+                      oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
+                    />
+                  </label>
+                </div>
                 {#if audioBlocked}
                   <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
                 {/if}

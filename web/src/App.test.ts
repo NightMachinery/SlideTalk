@@ -375,4 +375,42 @@ describe('App landing polish', () => {
     socket?.disconnect();
     expect(await screen.findByLabelText('Live connection disconnected')).toBeTruthy();
   });
+
+  it('loads and saves per-person local audio volume preferences', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    localStorage.setItem('slidetalk.roomAudioPrefs.v1:room-one:user-one', JSON.stringify({ muted: true, volume: 0.35 }));
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'user-one', displayName: 'Grace', isAdmin: false },
+      {
+        ...roomSnapshot,
+        room: {
+          ...roomSnapshot.room,
+          roomMode: 'audio'
+        },
+        audio: {
+          tracks: [],
+          currentTrackId: '',
+          state: 'paused',
+          positionSeconds: 0,
+          startedAt: null,
+          serverNow: '2026-05-21T00:00:00Z',
+          playbackMode: 'stop'
+        }
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    const volume = await screen.findByLabelText('Local audio volume') as HTMLInputElement;
+    const audio = document.querySelector('audio') as HTMLAudioElement;
+    await waitFor(() => expect(volume.value).toBe('35'));
+    expect(audio.muted).toBe(true);
+    expect(audio.volume).toBe(0.35);
+
+    await fireEvent.input(volume, { target: { value: '62' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Unmute local audio' }));
+
+    expect(JSON.parse(localStorage.getItem('slidetalk.roomAudioPrefs.v1:room-one:user-one') ?? '{}')).toEqual({ muted: false, volume: 0.62 });
+  });
 });

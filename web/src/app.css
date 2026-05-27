@@ -1637,6 +1637,10 @@ code {
   text-align: left;
 }
 
+.audio-stage-controls .local-audio-control {
+  flex: 0 1 190px;
+}
+
 .seek-control {
   position: relative;
   display: grid;
@@ -1664,6 +1668,41 @@ code {
   min-width: 112px;
   font-variant-numeric: tabular-nums;
   text-align: center;
+}
+
+.local-audio-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.local-audio-control .icon-button.muted {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.local-audio-control label {
+  display: grid;
+  gap: 3px;
+  min-width: 112px;
+  max-width: 160px;
+  margin: 0;
+  color: oklch(44% 0.026 245);
+  font-size: 0.72rem;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.local-audio-control input[type='range'] {
+  width: 100%;
+  min-width: 0;
+  accent-color: oklch(58% 0.12 185);
+}
+
+.local-audio-control.compact label {
+  min-width: 96px;
+  max-width: 128px;
 }
 
 .audio-track {
