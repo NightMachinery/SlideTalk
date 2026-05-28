@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronLeft from '@lucide/svelte/icons/chevron-left';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import ChevronsLeft from '@lucide/svelte/icons/chevrons-left';
@@ -167,6 +168,10 @@
   let audioBlocked = $state(false);
   let audioMuted = $state(false);
   let audioVolume = $state(1);
+  let localVolumeOpen = $state(false);
+  let localVolumeControlElement = $state<HTMLElement | null>(null);
+  let localVolumeLongPress: number | null = null;
+  let localVolumeSuppressClick = false;
   let audioPreferencesKey = '';
   let audioPositionDraft = $state(0);
   let audioSeeking = $state(false);
@@ -1097,6 +1102,48 @@
     saveLocalAudioPreferences(snapshot.room.id, snapshot.caller.userId, { muted: audioMuted, volume: audioVolume });
   }
 
+  function handleLocalAudioMuteClick() {
+    if (localVolumeSuppressClick) {
+      localVolumeSuppressClick = false;
+      return;
+    }
+    toggleLocalAudioMute();
+  }
+
+  function toggleLocalAudioVolume() {
+    localVolumeOpen = !localVolumeOpen;
+  }
+
+  function startLocalAudioLongPress(event: PointerEvent) {
+    if (event.pointerType === 'mouse') return;
+    clearLocalAudioLongPress();
+    localVolumeLongPress = window.setTimeout(() => {
+      localVolumeOpen = true;
+      localVolumeSuppressClick = true;
+      localVolumeLongPress = null;
+    }, 450);
+  }
+
+  function clearLocalAudioLongPress() {
+    if (localVolumeLongPress === null) return;
+    window.clearTimeout(localVolumeLongPress);
+    localVolumeLongPress = null;
+  }
+
+  function finishLocalAudioPointerPress() {
+    clearLocalAudioLongPress();
+    if (!localVolumeSuppressClick) return;
+    window.setTimeout(() => {
+      localVolumeSuppressClick = false;
+    }, 0);
+  }
+
+  function handleWindowPointerDown(event: PointerEvent) {
+    if (!localVolumeOpen) return;
+    if (localVolumeControlElement?.contains(event.target as Node)) return;
+    localVolumeOpen = false;
+  }
+
   function setLocalAudioVolume(value: number) {
     audioVolume = Math.min(1, Math.max(0, value));
     saveLocalAudioPreferences(snapshot.room.id, snapshot.caller.userId, { muted: audioMuted, volume: audioVolume });
@@ -1232,6 +1279,10 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && localVolumeOpen) {
+      localVolumeOpen = false;
+      return;
+    }
     if (shouldIgnoreShortcut(event)) return;
     const action = resolveShortcutAction(event, shortcutConfig);
     if (!action) return;
@@ -1363,7 +1414,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onpointerdown={handleWindowPointerDown} />
 
 <section class={['roundtable', panelState.railCollapsed && 'rail-collapsed']} aria-label="Live roundtable">
   {#if canSeeAudio && snapshot.room.roomMode !== 'audio'}
@@ -1484,25 +1535,43 @@
               <span class="seek-buffer" style:--buffer={`${audioBufferedPercent}%`}></span>
             </label>
             <span class="audio-time">{formatDuration(audioPositionDraft || estimatedAudioSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
-            <div class="local-audio-control">
-              <button type="button" class="icon-button" class:muted={audioMuted} onclick={toggleLocalAudioMute} title={audioMuted ? "Unmute local audio" : "Mute local audio"} aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}>
+            <div class="local-audio-control" bind:this={localVolumeControlElement}>
+              <button
+                type="button"
+                class="icon-button local-volume-mute"
+                class:muted={audioMuted}
+                onclick={handleLocalAudioMuteClick}
+                onpointerdown={startLocalAudioLongPress}
+                onpointerup={finishLocalAudioPointerPress}
+                onpointercancel={clearLocalAudioLongPress}
+                onpointerleave={clearLocalAudioLongPress}
+                title={audioMuted ? "Unmute local audio" : "Mute local audio"}
+                aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
+              >
                 {#if audioMuted}
                   <VolumeX size={18} />
                 {:else}
                   <Volume2 size={18} />
                 {/if}
               </button>
-              <label>
-                <span>Volume</span>
-                <input
-                  aria-label="Local audio volume"
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round(audioVolume * 100)}
-                  oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
-                />
-              </label>
+              <button type="button" class="local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
+                <ChevronDown size={14} />
+              </button>
+              {#if localVolumeOpen}
+                <div class="local-volume-popover" role="group" aria-label="Local audio volume controls" onpointerdown={(event) => event.stopPropagation()}>
+                  <label>
+                    <span>Volume {Math.round(audioVolume * 100)}%</span>
+                    <input
+                      aria-label="Local audio volume"
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={Math.round(audioVolume * 100)}
+                      oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
+                    />
+                  </label>
+                </div>
+              {/if}
             </div>
           </div>
           {#if audioBlocked}
@@ -1978,25 +2047,43 @@
                     <Play size={16} /> Play
                   {/if}
                 </button>
-                <div class="local-audio-control compact">
-                  <button type="button" class="icon-button" class:muted={audioMuted} onclick={toggleLocalAudioMute} title={audioMuted ? "Unmute local audio" : "Mute local audio"} aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}>
+                <div class="local-audio-control compact" bind:this={localVolumeControlElement}>
+                  <button
+                    type="button"
+                    class="icon-button local-volume-mute"
+                    class:muted={audioMuted}
+                    onclick={handleLocalAudioMuteClick}
+                    onpointerdown={startLocalAudioLongPress}
+                    onpointerup={finishLocalAudioPointerPress}
+                    onpointercancel={clearLocalAudioLongPress}
+                    onpointerleave={clearLocalAudioLongPress}
+                    title={audioMuted ? "Unmute local audio" : "Mute local audio"}
+                    aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
+                  >
                     {#if audioMuted}
                       <VolumeX size={16} />
                     {:else}
                       <Volume2 size={16} />
                     {/if}
                   </button>
-                  <label>
-                    <span>Volume</span>
-                    <input
-                      aria-label="Local audio volume"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(audioVolume * 100)}
-                      oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
-                    />
-                  </label>
+                  <button type="button" class="local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
+                    <ChevronDown size={14} />
+                  </button>
+                  {#if localVolumeOpen}
+                    <div class="local-volume-popover" role="group" aria-label="Local audio volume controls" onpointerdown={(event) => event.stopPropagation()}>
+                      <label>
+                        <span>Volume {Math.round(audioVolume * 100)}%</span>
+                        <input
+                          aria-label="Local audio volume"
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={Math.round(audioVolume * 100)}
+                          oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
+                        />
+                      </label>
+                    </div>
+                  {/if}
                 </div>
                 {#if audioBlocked}
                   <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>

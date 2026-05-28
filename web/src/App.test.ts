@@ -402,14 +402,24 @@ describe('App landing polish', () => {
 
     render(App);
 
-    const volume = await screen.findByLabelText('Local audio volume') as HTMLInputElement;
+    await waitFor(() => expect(screen.queryByLabelText('Local audio volume')).toBeNull());
+    const muteButton = await screen.findByRole('button', { name: 'Unmute local audio' });
+    vi.useFakeTimers();
+    await fireEvent.pointerDown(muteButton, { pointerType: 'touch' });
+    vi.advanceTimersByTime(450);
+    await vi.runOnlyPendingTimersAsync();
+    await fireEvent.pointerUp(muteButton, { pointerType: 'touch' });
+    await vi.runOnlyPendingTimersAsync();
+    vi.useRealTimers();
+
+    const volume = screen.getByLabelText('Local audio volume') as HTMLInputElement;
     const audio = document.querySelector('audio') as HTMLAudioElement;
     await waitFor(() => expect(volume.value).toBe('35'));
     expect(audio.muted).toBe(true);
     expect(audio.volume).toBe(0.35);
 
     await fireEvent.input(volume, { target: { value: '62' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Unmute local audio' }));
+    await fireEvent.click(muteButton);
 
     expect(JSON.parse(localStorage.getItem('slidetalk.roomAudioPrefs.v1:room-one:user-one') ?? '{}')).toEqual({ muted: false, volume: 0.62 });
   });

@@ -1638,7 +1638,7 @@ code {
 }
 
 .audio-stage-controls .local-audio-control {
-  flex: 0 1 190px;
+  flex: 0 0 auto;
 }
 
 .seek-control {
@@ -1671,10 +1671,11 @@ code {
 }
 
 .local-audio-control {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
+  flex: 0 0 auto;
+  isolation: isolate;
 }
 
 .local-audio-control .icon-button.muted {
@@ -1682,11 +1683,64 @@ code {
   border-color: var(--color-danger);
 }
 
-.local-audio-control label {
+.local-audio-control .local-volume-mute {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.local-volume-menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  height: 34px;
+  margin-left: -1px;
+  border: 1px solid oklch(78% 0.024 245);
+  border-left-color: oklch(84% 0.018 245);
+  border-radius: 0 8px 8px 0;
+  background: oklch(98% 0.004 245);
+  color: oklch(38% 0.026 245);
+  cursor: pointer;
+}
+
+.local-volume-menu-button:hover,
+.local-volume-menu-button:focus-visible,
+.local-volume-menu-button.active {
+  border-color: oklch(62% 0.09 190);
+  background: oklch(94% 0.022 190);
+  color: oklch(34% 0.08 190);
+}
+
+.local-volume-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: 168px;
+  padding: 10px 12px;
+  border: 1px solid oklch(82% 0.018 245);
+  border-radius: 8px;
+  background: oklch(99% 0.004 245);
+  box-shadow: 0 14px 34px oklch(35% 0.025 245 / 0.18);
+}
+
+.local-volume-popover::after {
+  position: absolute;
+  right: 13px;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid oklch(82% 0.018 245);
+  border-bottom: 1px solid oklch(82% 0.018 245);
+  background: inherit;
+  content: '';
+  transform: rotate(45deg);
+}
+
+.local-volume-popover label {
   display: grid;
-  gap: 3px;
-  min-width: 112px;
-  max-width: 160px;
+  gap: 6px;
   margin: 0;
   color: oklch(44% 0.026 245);
   font-size: 0.72rem;
@@ -1694,15 +1748,10 @@ code {
   text-transform: uppercase;
 }
 
-.local-audio-control input[type='range'] {
+.local-volume-popover input[type='range'] {
   width: 100%;
   min-width: 0;
   accent-color: oklch(58% 0.12 185);
-}
-
-.local-audio-control.compact label {
-  min-width: 96px;
-  max-width: 128px;
 }
 
 .audio-track {
