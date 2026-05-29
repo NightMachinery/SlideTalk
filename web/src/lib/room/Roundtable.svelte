@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
-  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronLeft from '@lucide/svelte/icons/chevron-left';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import ChevronsLeft from '@lucide/svelte/icons/chevrons-left';
@@ -27,6 +26,7 @@
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Save from '@lucide/svelte/icons/save';
   import Settings from '@lucide/svelte/icons/settings';
+  import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import Shield from '@lucide/svelte/icons/shield';
   import Star from '@lucide/svelte/icons/star';
   import Timer from '@lucide/svelte/icons/timer';
@@ -172,6 +172,9 @@
   let localVolumeControlElement = $state<HTMLElement | null>(null);
   let localVolumeLongPress: number | null = null;
   let localVolumeSuppressClick = false;
+  let localVolumeDragging = false;
+  let localVolumeDragStartY = 0;
+  let localVolumeDragStartVolume = 1;
   let audioPreferencesKey = '';
   let audioPositionDraft = $state(0);
   let audioSeeking = $state(false);
@@ -1117,9 +1120,12 @@
   function startLocalAudioLongPress(event: PointerEvent) {
     if (event.pointerType === 'mouse') return;
     clearLocalAudioLongPress();
+    localVolumeDragStartY = Number.isFinite(event.clientY) ? event.clientY : 0;
+    localVolumeDragStartVolume = audioVolume;
     localVolumeLongPress = window.setTimeout(() => {
       localVolumeOpen = true;
       localVolumeSuppressClick = true;
+      localVolumeDragging = true;
       localVolumeLongPress = null;
     }, 450);
   }
@@ -1132,16 +1138,29 @@
 
   function finishLocalAudioPointerPress() {
     clearLocalAudioLongPress();
+    localVolumeDragging = false;
     if (!localVolumeSuppressClick) return;
     window.setTimeout(() => {
       localVolumeSuppressClick = false;
     }, 0);
   }
 
+  function cancelLocalAudioPointerPress() {
+    if (localVolumeDragging) return;
+    clearLocalAudioLongPress();
+  }
+
   function handleWindowPointerDown(event: PointerEvent) {
     if (!localVolumeOpen) return;
     if (localVolumeControlElement?.contains(event.target as Node)) return;
     localVolumeOpen = false;
+  }
+
+  function handleLocalAudioPointerMove(event: PointerEvent) {
+    if (!localVolumeDragging) return;
+    if (!Number.isFinite(event.clientY)) return;
+    const delta = (localVolumeDragStartY - event.clientY) / 120;
+    setLocalAudioVolume(localVolumeDragStartVolume + delta);
   }
 
   function setLocalAudioVolume(value: number) {
@@ -1414,7 +1433,13 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} onpointerdown={handleWindowPointerDown} />
+<svelte:window
+  onkeydown={handleKeydown}
+  onpointerdown={handleWindowPointerDown}
+  onpointermove={handleLocalAudioPointerMove}
+  onpointerup={finishLocalAudioPointerPress}
+  onpointercancel={finishLocalAudioPointerPress}
+/>
 
 <section class={['roundtable', panelState.railCollapsed && 'rail-collapsed']} aria-label="Live roundtable">
   {#if canSeeAudio && snapshot.room.roomMode !== 'audio'}
@@ -1542,9 +1567,10 @@
                 class:muted={audioMuted}
                 onclick={handleLocalAudioMuteClick}
                 onpointerdown={startLocalAudioLongPress}
+                onpointermove={handleLocalAudioPointerMove}
                 onpointerup={finishLocalAudioPointerPress}
-                onpointercancel={clearLocalAudioLongPress}
-                onpointerleave={clearLocalAudioLongPress}
+                onpointercancel={cancelLocalAudioPointerPress}
+                onpointerleave={cancelLocalAudioPointerPress}
                 title={audioMuted ? "Unmute local audio" : "Mute local audio"}
                 aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
               >
@@ -1554,8 +1580,8 @@
                   <Volume2 size={18} />
                 {/if}
               </button>
-              <button type="button" class="local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
-                <ChevronDown size={14} />
+              <button type="button" class="icon-button local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
+                <SlidersHorizontal size={18} />
               </button>
               {#if localVolumeOpen}
                 <div class="local-volume-popover" role="group" aria-label="Local audio volume controls" onpointerdown={(event) => event.stopPropagation()}>
@@ -2054,9 +2080,10 @@
                     class:muted={audioMuted}
                     onclick={handleLocalAudioMuteClick}
                     onpointerdown={startLocalAudioLongPress}
+                    onpointermove={handleLocalAudioPointerMove}
                     onpointerup={finishLocalAudioPointerPress}
-                    onpointercancel={clearLocalAudioLongPress}
-                    onpointerleave={clearLocalAudioLongPress}
+                    onpointercancel={cancelLocalAudioPointerPress}
+                    onpointerleave={cancelLocalAudioPointerPress}
                     title={audioMuted ? "Unmute local audio" : "Mute local audio"}
                     aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
                   >
@@ -2066,8 +2093,8 @@
                       <Volume2 size={16} />
                     {/if}
                   </button>
-                  <button type="button" class="local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
-                    <ChevronDown size={14} />
+                  <button type="button" class="icon-button local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
+                    <SlidersHorizontal size={16} />
                   </button>
                   {#if localVolumeOpen}
                     <div class="local-volume-popover" role="group" aria-label="Local audio volume controls" onpointerdown={(event) => event.stopPropagation()}>

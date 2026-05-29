@@ -97,6 +97,13 @@ function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }, 
   });
 }
 
+async function firePointer(target: EventTarget, type: string, init: { pointerType: string; clientY: number }) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'pointerType', { value: init.pointerType });
+  Object.defineProperty(event, 'clientY', { value: init.clientY });
+  await fireEvent(target, event);
+}
+
 describe('App landing polish', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -404,19 +411,22 @@ describe('App landing polish', () => {
 
     await waitFor(() => expect(screen.queryByLabelText('Local audio volume')).toBeNull());
     const muteButton = await screen.findByRole('button', { name: 'Unmute local audio' });
+    const volumeButton = screen.getByRole('button', { name: 'Open local audio volume' });
+    expect(volumeButton.classList.contains('icon-button')).toBe(true);
     vi.useFakeTimers();
-    await fireEvent.pointerDown(muteButton, { pointerType: 'touch' });
+    await firePointer(muteButton, 'pointerdown', { pointerType: 'touch', clientY: 200 });
     vi.advanceTimersByTime(450);
     await vi.runOnlyPendingTimersAsync();
-    await fireEvent.pointerUp(muteButton, { pointerType: 'touch' });
+    await firePointer(muteButton, 'pointermove', { pointerType: 'touch', clientY: 176 });
+    await firePointer(muteButton, 'pointerup', { pointerType: 'touch', clientY: 176 });
     await vi.runOnlyPendingTimersAsync();
     vi.useRealTimers();
 
     const volume = screen.getByLabelText('Local audio volume') as HTMLInputElement;
     const audio = document.querySelector('audio') as HTMLAudioElement;
-    await waitFor(() => expect(volume.value).toBe('35'));
+    await waitFor(() => expect(volume.value).toBe('55'));
     expect(audio.muted).toBe(true);
-    expect(audio.volume).toBe(0.35);
+    expect(audio.volume).toBe(0.55);
 
     await fireEvent.input(volume, { target: { value: '62' } });
     await fireEvent.click(muteButton);

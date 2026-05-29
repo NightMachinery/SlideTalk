@@ -1675,6 +1675,7 @@ code {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  z-index: 40;
   isolation: isolate;
 }
 
@@ -1689,19 +1690,11 @@ code {
 }
 
 .local-volume-menu-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  min-width: 24px;
-  height: 34px;
+  width: 38px;
   margin-left: -1px;
   border: 1px solid oklch(78% 0.024 245);
   border-left-color: oklch(84% 0.018 245);
   border-radius: 0 8px 8px 0;
-  background: oklch(98% 0.004 245);
-  color: oklch(38% 0.026 245);
-  cursor: pointer;
 }
 
 .local-volume-menu-button:hover,
@@ -1716,7 +1709,7 @@ code {
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
-  z-index: 30;
+  z-index: 120;
   width: 168px;
   padding: 10px 12px;
   border: 1px solid oklch(82% 0.018 245);
