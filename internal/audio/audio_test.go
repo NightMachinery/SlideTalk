@@ -147,17 +147,18 @@ func TestCleanupRemovesTracksAfterRoomExpiration(t *testing.T) {
 	fixture := newAudioFixture(t)
 	content := []byte("ID3old audio")
 	sum := sha256Hex(content)
-	if _, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+	status, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
 		RoomID:       fixture.room.ID,
 		SHA256:       sum,
 		OriginalName: "old.mp3",
 		MIMEType:     "audio/mpeg",
 		File:         bytes.NewReader(content),
 		IsAdmin:      true,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("store audio: %v", err)
 	}
-	if _, err := fixture.db.ExecContext(ctx, `update rooms set expires_at = ? where id = ?`, time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano), fixture.room.ID); err != nil {
+	if _, err := fixture.db.ExecContext(ctx, `update rooms set expires_at = ?, audio_current_track_id = ?, audio_state = 'playing', audio_position_seconds = 42, audio_started_at = ? where id = ?`, time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano), status.ID, time.Now().UTC().Format(time.RFC3339Nano), fixture.room.ID); err != nil {
 		t.Fatalf("expire room: %v", err)
 	}
 
@@ -167,6 +168,52 @@ func TestCleanupRemovesTracksAfterRoomExpiration(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(fixture.audioDir, sum+".mp3")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected audio file deleted, got %v", err)
+	}
+	var currentTrack any
+	var state string
+	var position int
+	var startedAt any
+	if err := fixture.db.QueryRowContext(ctx, `select audio_current_track_id, audio_state, audio_position_seconds, audio_started_at from rooms where id = ?`, fixture.room.ID).Scan(&currentTrack, &state, &position, &startedAt); err != nil {
+		t.Fatalf("read room audio state: %v", err)
+	}
+	if currentTrack != nil || state != "paused" || position != 0 || startedAt != nil {
+		t.Fatalf("audio state = current %#v state %q position %d startedAt %#v, want cleared paused state", currentTrack, state, position, startedAt)
+	}
+}
+
+func TestCleanupKeepsAudioForNeverExpireRoomPastFallbackCutoff(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAudioFixture(t)
+	content := []byte("ID3kept audio")
+	sum := sha256Hex(content)
+	if _, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sum,
+		OriginalName: "kept.mp3",
+		MIMEType:     "audio/mpeg",
+		File:         bytes.NewReader(content),
+		IsAdmin:      true,
+	}); err != nil {
+		t.Fatalf("store audio: %v", err)
+	}
+	now := time.Now().UTC()
+	if _, err := fixture.db.ExecContext(ctx, `update rooms set expires_at = null, created_at = ? where id = ?`, now.Add(-30*24*time.Hour).Format(time.RFC3339Nano), fixture.room.ID); err != nil {
+		t.Fatalf("mark room never expire: %v", err)
+	}
+
+	if err := fixture.service.Cleanup(ctx, now, 7*24*time.Hour); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(fixture.audioDir, sum+".mp3")); err != nil {
+		t.Fatalf("expected audio file kept, got %v", err)
+	}
+	var tracks int
+	if err := fixture.db.QueryRowContext(ctx, `select count(*) from room_audio_tracks where room_id = ?`, fixture.room.ID).Scan(&tracks); err != nil {
+		t.Fatalf("count audio tracks: %v", err)
+	}
+	if tracks != 1 {
+		t.Fatalf("tracks = %d, want 1", tracks)
 	}
 }
 

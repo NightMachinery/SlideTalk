@@ -14,6 +14,10 @@ export function getCachedAudio(sha256: string): Promise<CachedAudio | null> {
   return audioCache.get(sha256);
 }
 
+export function listCachedAudio(): Promise<CachedAudio[]> {
+  return audioCache.list();
+}
+
 export function putCachedAudio(input: Omit<CachedAudio, 'lastAccessedAt' | 'createdAt'>): Promise<void> {
   return audioCache.put(input);
 }

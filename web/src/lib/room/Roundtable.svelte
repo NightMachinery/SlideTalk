@@ -35,7 +35,7 @@
   import UserRound from '@lucide/svelte/icons/user-round';
   import UsersRound from '@lucide/svelte/icons/users-round';
   import { audioCoverRequest, audioFileRequest, createAudioDownloadLink, createMigrationLink, getSlideStatus, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomAudio, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
-  import { audioCacheStats, audioSubtype, clearAudioCache, fileNameWithoutExtension, gcAudioCache, getCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
+  import { audioCacheStats, audioSubtype, clearAudioCache, fileNameWithoutExtension, gcAudioCache, getCachedAudio, listCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
   import { readAudioUploadMetadata } from '../audioMetadata';
   import { cacheLimits } from '../cacheConstants';
   import { copyText } from '../clipboard';
@@ -954,6 +954,61 @@
       addToast(errorMessage(error, 'Could not clear cache.'));
     } finally {
       cacheBusy = false;
+    }
+  }
+
+  async function restoreCachedAudio() {
+    if (cacheBusy || audioBusy || !isMod || audioCacheUsage.entries === 0) return;
+    cacheBusy = true;
+    audioBusy = true;
+    audioProgress = 0;
+    audioUploadIndex = 0;
+    cacheMessage = '';
+    audioMessage = 'Preparing cached audio...';
+    let uploaded = 0;
+    let skipped = 0;
+    let failed = 0;
+    try {
+      const entries = await listCachedAudio();
+      if (entries.length === 0) {
+        cacheMessage = 'No cached audio to restore.';
+        return;
+      }
+      for (const [index, entry] of entries.entries()) {
+        audioUploadIndex = index + 1;
+        audioProgress = 0;
+        audioMessage = `Restoring ${index + 1} / ${entries.length}...`;
+        try {
+          const file = new File([entry.blob], entry.originalName, { type: entry.mimeType });
+          await uploadRoomAudio(
+            {
+              roomId: snapshot.room.id,
+              sha256: entry.sha256,
+              originalName: entry.originalName,
+              file
+            },
+            (percent) => {
+              audioProgress = percent;
+            }
+          );
+          uploaded += 1;
+          audioDownloaded = { ...audioDownloaded, [entry.sha256]: true };
+          audioDownloadProgress = { ...audioDownloadProgress, [entry.sha256]: 100 };
+        } catch {
+          failed += 1;
+        }
+      }
+      audioProgress = uploaded > 0 ? 100 : 0;
+      audioMessage = uploaded > 0 ? 'Cached audio restored.' : '';
+      skipped = Math.max(entries.length - uploaded - failed, 0);
+      cacheMessage = `${uploaded === 1 ? 'Restored 1 cached audio file.' : `Restored ${uploaded} cached audio files.`} Skipped ${skipped}. Failed ${failed}.`;
+      await refreshCacheUsage();
+    } catch (error) {
+      addToast(errorMessage(error, 'Could not restore cached audio.'));
+      audioMessage = '';
+    } finally {
+      cacheBusy = false;
+      audioBusy = false;
     }
   }
 
@@ -2387,6 +2442,9 @@
           </div>
           <div class="settings-actions">
             <button type="button" disabled={cacheBusy} onclick={() => refreshCacheUsage()}>Refresh</button>
+            {#if isMod && audioCacheUsage.entries > 0}
+              <button type="button" disabled={cacheBusy || audioBusy} onclick={() => restoreCachedAudio()}>Restore cached audio</button>
+            {/if}
             <button type="button" disabled={cacheBusy || audioCacheUsage.entries === 0} onclick={() => clearCache('audio')}>Reset audio</button>
             <button type="button" disabled={cacheBusy || slideCacheUsage.entries === 0} onclick={() => clearCache('slides')}>Reset slides</button>
             <button class="danger-button" type="button" disabled={cacheBusy || audioCacheUsage.entries + slideCacheUsage.entries === 0} onclick={() => clearCache('all')}>Reset all</button>

@@ -19,6 +19,7 @@ export type CacheStats = {
 export type BlobCache = {
   available(): boolean;
   get(sha256: string): Promise<CachedBlobMetadata | null>;
+  list(): Promise<CachedBlobMetadata[]>;
   put(input: Omit<CachedBlobMetadata, 'lastAccessedAt' | 'createdAt'>): Promise<void>;
   gc(now?: number): Promise<void>;
   stats(): Promise<CacheStats>;
@@ -30,6 +31,10 @@ export function cacheStats(entries: Pick<CachedBlobMetadata, 'sizeBytes'>[]): Ca
     entries: entries.length,
     bytes: entries.reduce((sum, entry) => sum + entry.sizeBytes, 0)
   };
+}
+
+export function listCacheEntries<T extends CachedBlobMetadata>(entries: T[]): T[] {
+  return [...entries];
 }
 
 export function selectCacheRemovals(
@@ -84,6 +89,13 @@ export function createBlobCache(dbName: string, storeName: string, limits = cach
       }
       cached.lastAccessedAt = Date.now();
       await request(db.transaction(storeName, 'readwrite').objectStore(storeName).put(cached));
+      db.close();
+      return cached;
+    },
+    async list() {
+      const db = await openDB();
+      if (!db) return [];
+      const cached = listCacheEntries(await entries(db));
       db.close();
       return cached;
     },

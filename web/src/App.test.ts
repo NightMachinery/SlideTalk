@@ -1,6 +1,19 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
+import { audioCacheStats, listCachedAudio } from './lib/audioCache';
+
+vi.mock('./lib/audioCache', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/audioCache')>();
+  return {
+    ...actual,
+    audioCacheStats: vi.fn(async () => ({ entries: 0, bytes: 0 })),
+    slideCacheStats: vi.fn(async () => ({ entries: 0, bytes: 0 })),
+    listCachedAudio: vi.fn(async () => []),
+    gcAudioCache: vi.fn(async () => {}),
+    gcSlideCache: vi.fn(async () => {})
+  };
+});
 
 const roomDetails = {
   room: { id: 'room-one', title: 'Planning Circle', hasPassword: false },
@@ -97,6 +110,53 @@ function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }, 
   });
 }
 
+class TestUploadRequest {
+  static requests: TestUploadRequest[] = [];
+  upload = {
+    onprogress: null as ((event: ProgressEvent) => void) | null
+  };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  status = 201;
+  responseText = JSON.stringify({
+    id: 'restored-track',
+    sha256: 'restored-sha',
+    originalName: 'restored.mp3',
+    title: 'restored.mp3',
+    metadataTitle: '',
+    mimeType: 'audio/mpeg',
+    sizeBytes: 3,
+    durationSeconds: 0,
+    hasCover: false,
+    uploadedByUserId: 'mod-one',
+    alreadyUploaded: false,
+    missing: false
+  });
+  method = '';
+  url = '';
+  headers: Record<string, string> = {};
+  body: FormData | null = null;
+
+  constructor() {
+    TestUploadRequest.requests.push(this);
+  }
+
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+
+  setRequestHeader(name: string, value: string) {
+    this.headers[name] = value;
+  }
+
+  send(body: FormData) {
+    this.body = body;
+    this.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 1 } as ProgressEvent);
+    this.onload?.();
+  }
+}
+
 async function firePointer(target: EventTarget, type: string, init: { pointerType: string; clientY: number; pointerId?: number }) {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, 'pointerType', { value: init.pointerType });
@@ -109,6 +169,9 @@ describe('App landing polish', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.mocked(audioCacheStats).mockResolvedValue({ entries: 0, bytes: 0 });
+    vi.mocked(listCachedAudio).mockResolvedValue([]);
+    TestUploadRequest.requests = [];
     localStorage.clear();
     TestWebSocket.sockets = [];
     window.history.replaceState({}, '', '/');
@@ -235,6 +298,89 @@ describe('App landing polish', () => {
 
     expect(await screen.findByText('Room survival')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Never expire' })).toBeTruthy();
+  });
+
+  it('lets moderators restore cached audio into the current room', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.mocked(listCachedAudio).mockResolvedValue([
+      {
+        sha256: 'cached-sha',
+        blob: new Blob(['ID3'], { type: 'audio/mpeg' }),
+        mimeType: 'audio/mpeg',
+        originalName: 'cached-song.mp3',
+        sizeBytes: 3,
+        lastAccessedAt: 1,
+        createdAt: 1
+      }
+    ]);
+    vi.mocked(audioCacheStats).mockResolvedValue({ entries: 1, bytes: 3 });
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false }
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    vi.stubGlobal('XMLHttpRequest', TestUploadRequest);
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Restore cached audio' }));
+
+    await screen.findByText('Restored 1 cached audio file. Skipped 0. Failed 0.');
+    expect(TestUploadRequest.requests).toHaveLength(1);
+    const request = TestUploadRequest.requests[0];
+    expect(request.method).toBe('POST');
+    expect(request.url).toBe('/api/rooms/room-one/audio');
+    expect(request.headers.Authorization).toBe('Bearer token-one');
+    expect(request.body?.get('sha256')).toBe('cached-sha');
+    expect(request.body?.get('originalName')).toBe('cached-song.mp3');
+    const file = request.body?.get('file') as File;
+    expect(file.name).toBe('cached-song.mp3');
+    expect(file.type).toBe('audio/mpeg');
+  });
+
+  it('does not show cached audio restore to participants with upload grants', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.mocked(listCachedAudio).mockResolvedValue([
+      {
+        sha256: 'cached-sha',
+        blob: new Blob(['ID3'], { type: 'audio/mpeg' }),
+        mimeType: 'audio/mpeg',
+        originalName: 'cached-song.mp3',
+        sizeBytes: 3,
+        lastAccessedAt: 1,
+        createdAt: 1
+      }
+    ]);
+    vi.mocked(audioCacheStats).mockResolvedValue({ entries: 1, bytes: 3 });
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'participant-one', displayName: 'Grace', isAdmin: false },
+      {
+        ...roomSnapshot,
+        room: {
+          ...roomSnapshot.room,
+          allowAudienceAudioUpload: true
+        },
+        caller: { userId: 'participant-one', role: 'participant', isAdmin: false },
+        participants: [
+          { userId: 'participant-one', displayName: 'Grace', role: 'participant', displayOrder: 0, isOnline: true, allowAudioUpload: true, allowAudioControl: false }
+        ]
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+
+    await screen.findByLabelText('Local cache');
+    expect(screen.queryByRole('button', { name: 'Restore cached audio' })).toBeNull();
   });
 
   it('lets moderators toggle participant audio grants from participant cards', async () => {

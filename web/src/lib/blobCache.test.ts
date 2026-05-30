@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cacheStats, selectCacheRemovals, type CachedBlobMetadata } from './blobCache';
+import { cacheStats, listCacheEntries, selectCacheRemovals, type CachedBlobMetadata } from './blobCache';
 import { cacheLimits } from './cacheConstants';
 
 function entry(input: Partial<CachedBlobMetadata> & Pick<CachedBlobMetadata, 'sha256'>): CachedBlobMetadata {
@@ -15,15 +15,21 @@ function entry(input: Partial<CachedBlobMetadata> & Pick<CachedBlobMetadata, 'sh
 }
 
 describe('blob cache policy', () => {
-  it('uses 2 GiB and 200 entries as the shared cache limits', () => {
+  it('uses 2 GiB and 500 entries as the shared cache limits', () => {
     expect(cacheLimits.maxBytes).toBe(2 * 1024 * 1024 * 1024);
-    expect(cacheLimits.maxEntries).toBe(200);
+    expect(cacheLimits.maxEntries).toBe(500);
   });
 
   it('summarizes cache usage', () => {
     const stats = cacheStats([entry({ sha256: 'a', sizeBytes: 120 }), entry({ sha256: 'b', sizeBytes: 80 })]);
 
     expect(stats).toEqual({ entries: 2, bytes: 200 });
+  });
+
+  it('returns cache entries in read order without touching access times', () => {
+    const entries = [entry({ sha256: 'a', lastAccessedAt: 1 }), entry({ sha256: 'b', lastAccessedAt: 2 })];
+
+    expect(listCacheEntries(entries)).toEqual(entries);
   });
 
   it('evicts least recently used entries to satisfy byte and entry limits', () => {
