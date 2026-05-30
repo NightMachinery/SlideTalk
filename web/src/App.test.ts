@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
-import { audioCacheStats, listCachedAudio } from './lib/audioCache';
+import { audioCacheStats, hiddenUploaderDisplayName, listCachedAudio } from './lib/audioCache';
 
 vi.mock('./lib/audioCache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./lib/audioCache')>();
@@ -103,6 +103,7 @@ function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }, 
       return response([{ id: user.id, displayName: user.displayName, createdAt: '2026-05-21T00:00:00Z' }]);
     }
     if (url === '/api/uploads/preflight') return response({ ok: true });
+    if (url === '/api/rooms/room-one/audio/restored-track' && method === 'PATCH') return new Response(null, { status: 204 });
     if (url === '/api/rooms/room-one') return response(roomDetails);
     if (url === '/api/rooms/room-one/snapshot') return response(snapshot);
     if (url === '/api/rooms/room-one/ws-ticket') return response({ ticket: 'ticket-one', expiresAt: '2026-05-21T00:01:00Z' });
@@ -350,6 +351,10 @@ describe('App landing polish', () => {
     const file = request.body?.get('file') as File;
     expect(file.name).toBe('cached-song.mp3');
     expect(file.type).toBe('audio/mpeg');
+    expect(fetch).toHaveBeenCalledWith('/api/rooms/room-one/audio/restored-track', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ uploaderDisplayName: hiddenUploaderDisplayName })
+    }));
   });
 
   it('shows cached audio restore upload errors with file names', async () => {

@@ -35,7 +35,7 @@
   import UserRound from '@lucide/svelte/icons/user-round';
   import UsersRound from '@lucide/svelte/icons/users-round';
   import { audioCoverRequest, audioFileRequest, checkUploadPreflight, createAudioDownloadLink, createMigrationLink, getSlideStatus, insufficientFreeSpaceMessage, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomAudio, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
-  import { audioCacheStats, audioSubtype, clearAudioCache, fileNameWithoutExtension, gcAudioCache, getCachedAudio, listCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
+  import { audioCacheStats, audioSubtype, clearAudioCache, fileNameWithoutExtension, gcAudioCache, getCachedAudio, hiddenUploaderDisplayName, listCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
   import { readAudioUploadMetadata } from '../audioMetadata';
   import { cacheLimits } from '../cacheConstants';
   import { copyText } from '../clipboard';
@@ -990,7 +990,7 @@
         try {
           await checkAudioUploadCapacity(entry.sizeBytes);
           const file = new File([entry.blob], entry.originalName, { type: entry.mimeType });
-          await uploadRoomAudio(
+          const uploadedTrack = await uploadRoomAudio(
             {
               roomId: snapshot.room.id,
               sha256: entry.sha256,
@@ -1001,6 +1001,7 @@
               audioProgress = percent;
             }
           );
+          await updateRoomAudio(snapshot.room.id, uploadedTrack.id, { uploaderDisplayName: hiddenUploaderDisplayName });
           uploaded += 1;
           audioDownloaded = { ...audioDownloaded, [entry.sha256]: true };
           audioDownloadProgress = { ...audioDownloadProgress, [entry.sha256]: 100 };

@@ -2,6 +2,7 @@ import { createBlobCache, type CacheStats, type CachedBlobMetadata } from './blo
 import type { RoomSnapshot } from './realtime';
 
 const audioCache = createBlobCache('slidetalk-audio-cache', 'audio');
+export const hiddenUploaderDisplayName = '__slidetalk_hidden_uploader__';
 
 export type CachedAudio = CachedBlobMetadata;
 export type AudioCacheStats = CacheStats;
@@ -39,6 +40,7 @@ export function trackDisplayTitle(track: RoomSnapshot['audio']['tracks'][number]
 }
 
 export function trackUploaderName(track: RoomSnapshot['audio']['tracks'][number] | undefined) {
+  if (track?.uploaderDisplayName === hiddenUploaderDisplayName) return '';
   return track?.uploaderDisplayName || track?.uploadedByName || track?.uploadedByUserId || '';
 }
 
