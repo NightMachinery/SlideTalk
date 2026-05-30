@@ -317,6 +317,7 @@ describe('App landing polish', () => {
         blob: new Blob(['ID3'], { type: 'audio/mpeg' }),
         mimeType: 'audio/mpeg',
         originalName: 'cached-song.mp3',
+        uploaderDisplayName: 'Grace',
         sizeBytes: 3,
         lastAccessedAt: 1,
         createdAt: 1
@@ -351,6 +352,44 @@ describe('App landing polish', () => {
     const file = request.body?.get('file') as File;
     expect(file.name).toBe('cached-song.mp3');
     expect(file.type).toBe('audio/mpeg');
+    expect(fetch).toHaveBeenCalledWith('/api/rooms/room-one/audio/restored-track', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ uploaderDisplayName: 'Grace' })
+    }));
+  });
+
+  it('keeps uploader hidden when restoring legacy cached audio without uploader metadata', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.mocked(listCachedAudio).mockResolvedValue([
+      {
+        sha256: 'cached-sha',
+        blob: new Blob(['ID3'], { type: 'audio/mpeg' }),
+        mimeType: 'audio/mpeg',
+        originalName: 'cached-song.mp3',
+        sizeBytes: 3,
+        lastAccessedAt: 1,
+        createdAt: 1
+      }
+    ]);
+    vi.mocked(audioCacheStats).mockResolvedValue({ entries: 1, bytes: 3 });
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false }
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    vi.stubGlobal('XMLHttpRequest', TestUploadRequest);
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Restore cached audio' }));
+
+    await screen.findByText('Restored 1 cached audio file. Skipped 0. Failed 0.');
     expect(fetch).toHaveBeenCalledWith('/api/rooms/room-one/audio/restored-track', expect.objectContaining({
       method: 'PATCH',
       body: JSON.stringify({ uploaderDisplayName: hiddenUploaderDisplayName })

@@ -6,6 +6,7 @@ export type CachedBlobMetadata = {
   blob: Blob;
   mimeType: string;
   originalName: string;
+  uploaderDisplayName?: string;
   sizeBytes: number;
   lastAccessedAt: number;
   createdAt: number;

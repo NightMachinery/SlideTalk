@@ -783,6 +783,13 @@
     return memberDisplayName(allRoomMembers.find((member) => member.userId === userId) ?? ({ userId, displayName: fallback, role: 'participant', displayOrder: 0, isOnline: false } as SnapshotMember));
   }
 
+  function callerDisplayName() {
+    return memberDisplayName(
+      allRoomMembers.find((member) => member.userId === snapshot.caller.userId) ??
+        ({ userId: snapshot.caller.userId, displayName: '', role: snapshot.caller.role, displayOrder: 0, isOnline: true } as SnapshotMember)
+    );
+  }
+
   function canMoveParticipant(userId: string, direction: -1 | 1) {
     const index = snapshot.participants.findIndex((member) => member.userId === userId);
     return index >= 0 && index + direction >= 0 && index + direction < snapshot.participants.length;
@@ -926,6 +933,7 @@
       blob,
       mimeType: track.mimeType,
       originalName: track.originalName,
+      uploaderDisplayName: trackUploaderName(track),
       sizeBytes: track.sizeBytes
     });
     audioDownloaded = { ...audioDownloaded, [track.sha256]: true };
@@ -1001,7 +1009,7 @@
               audioProgress = percent;
             }
           );
-          await updateRoomAudio(snapshot.room.id, uploadedTrack.id, { uploaderDisplayName: hiddenUploaderDisplayName });
+          await updateRoomAudio(snapshot.room.id, uploadedTrack.id, { uploaderDisplayName: entry.uploaderDisplayName?.trim() || hiddenUploaderDisplayName });
           uploaded += 1;
           audioDownloaded = { ...audioDownloaded, [entry.sha256]: true };
           audioDownloadProgress = { ...audioDownloadProgress, [entry.sha256]: 100 };
@@ -1128,6 +1136,7 @@
           blob: file,
           mimeType: uploadedTrack.mimeType || file.type,
           originalName: uploadedTrack.originalName || file.name,
+          uploaderDisplayName: callerDisplayName(),
           sizeBytes: uploadedTrack.sizeBytes || file.size
         }).then(() => refreshCacheUsage()).catch(() => {});
         audioDownloaded = { ...audioDownloaded, [uploadedTrack.sha256 || sha256]: true };
