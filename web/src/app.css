@@ -1687,6 +1687,8 @@ code {
 .local-audio-control .local-volume-mute {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+  touch-action: none;
+  user-select: none;
 }
 
 .local-volume-menu-button {

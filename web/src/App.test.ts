@@ -97,10 +97,11 @@ function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }, 
   });
 }
 
-async function firePointer(target: EventTarget, type: string, init: { pointerType: string; clientY: number }) {
+async function firePointer(target: EventTarget, type: string, init: { pointerType: string; clientY: number; pointerId?: number }) {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, 'pointerType', { value: init.pointerType });
   Object.defineProperty(event, 'clientY', { value: init.clientY });
+  Object.defineProperty(event, 'pointerId', { value: init.pointerId ?? 1 });
   await fireEvent(target, event);
 }
 
@@ -413,20 +414,34 @@ describe('App landing polish', () => {
     const muteButton = await screen.findByRole('button', { name: 'Unmute local audio' });
     const volumeButton = screen.getByRole('button', { name: 'Open local audio volume' });
     expect(volumeButton.classList.contains('icon-button')).toBe(true);
+    const setPointerCapture = vi.fn();
+    const releasePointerCapture = vi.fn();
+    Object.defineProperty(muteButton, 'setPointerCapture', { value: setPointerCapture, configurable: true });
+    Object.defineProperty(muteButton, 'releasePointerCapture', { value: releasePointerCapture, configurable: true });
+
     vi.useFakeTimers();
-    await firePointer(muteButton, 'pointerdown', { pointerType: 'touch', clientY: 200 });
+    await firePointer(muteButton, 'pointerdown', { pointerType: 'mouse', clientY: 200, pointerId: 2 });
     vi.advanceTimersByTime(450);
     await vi.runOnlyPendingTimersAsync();
-    await firePointer(muteButton, 'pointermove', { pointerType: 'touch', clientY: 176 });
-    await firePointer(muteButton, 'pointerup', { pointerType: 'touch', clientY: 176 });
+    expect(screen.queryByLabelText('Local audio volume')).toBeNull();
+
+    await firePointer(muteButton, 'pointerdown', { pointerType: 'touch', clientY: 200, pointerId: 7 });
+    expect(setPointerCapture).toHaveBeenCalledWith(7);
+    vi.advanceTimersByTime(450);
+    await vi.runOnlyPendingTimersAsync();
+    await firePointer(muteButton, 'pointermove', { pointerType: 'touch', clientY: 176, pointerId: 7 });
+    const volume = screen.getByLabelText('Local audio volume') as HTMLInputElement;
+    await waitFor(() => expect(volume.value).toBe('55'));
+    await firePointer(muteButton, 'pointermove', { pointerType: 'touch', clientY: 224, pointerId: 7 });
+    await firePointer(muteButton, 'pointerup', { pointerType: 'touch', clientY: 224, pointerId: 7 });
     await vi.runOnlyPendingTimersAsync();
     vi.useRealTimers();
 
-    const volume = screen.getByLabelText('Local audio volume') as HTMLInputElement;
     const audio = document.querySelector('audio') as HTMLAudioElement;
-    await waitFor(() => expect(volume.value).toBe('55'));
+    await waitFor(() => expect(volume.value).toBe('15'));
     expect(audio.muted).toBe(true);
-    expect(audio.volume).toBe(0.55);
+    expect(audio.volume).toBeCloseTo(0.15);
+    expect(releasePointerCapture).toHaveBeenCalledWith(7);
 
     await fireEvent.input(volume, { target: { value: '62' } });
     await fireEvent.click(muteButton);

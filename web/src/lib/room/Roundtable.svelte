@@ -173,6 +173,8 @@
   let localVolumeLongPress: number | null = null;
   let localVolumeSuppressClick = false;
   let localVolumeDragging = false;
+  let localVolumePointerId: number | null = null;
+  let localVolumePointerTarget: HTMLElement | null = null;
   let localVolumeDragStartY = 0;
   let localVolumeDragStartVolume = 1;
   let audioPreferencesKey = '';
@@ -1119,7 +1121,15 @@
 
   function startLocalAudioLongPress(event: PointerEvent) {
     if (event.pointerType === 'mouse') return;
+    event.preventDefault();
     clearLocalAudioLongPress();
+    localVolumePointerId = event.pointerId;
+    localVolumePointerTarget = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    try {
+      localVolumePointerTarget?.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Some browsers can reject capture if the pointer is already gone.
+    }
     localVolumeDragStartY = Number.isFinite(event.clientY) ? event.clientY : 0;
     localVolumeDragStartVolume = audioVolume;
     localVolumeLongPress = window.setTimeout(() => {
@@ -1136,9 +1146,24 @@
     localVolumeLongPress = null;
   }
 
-  function finishLocalAudioPointerPress() {
+  function releaseLocalVolumePointer() {
+    const pointerId = localVolumePointerId;
+    if (pointerId !== null) {
+      try {
+        localVolumePointerTarget?.releasePointerCapture?.(pointerId);
+      } catch {
+        // Capture may already be released by the browser.
+      }
+    }
+    localVolumePointerId = null;
+    localVolumePointerTarget = null;
+  }
+
+  function finishLocalAudioPointerPress(event?: PointerEvent) {
+    if (event && localVolumePointerId !== null && event.pointerId !== localVolumePointerId) return;
     clearLocalAudioLongPress();
     localVolumeDragging = false;
+    releaseLocalVolumePointer();
     if (!localVolumeSuppressClick) return;
     window.setTimeout(() => {
       localVolumeSuppressClick = false;
@@ -1148,6 +1173,7 @@
   function cancelLocalAudioPointerPress() {
     if (localVolumeDragging) return;
     clearLocalAudioLongPress();
+    releaseLocalVolumePointer();
   }
 
   function handleWindowPointerDown(event: PointerEvent) {
@@ -1158,6 +1184,8 @@
 
   function handleLocalAudioPointerMove(event: PointerEvent) {
     if (!localVolumeDragging) return;
+    if (localVolumePointerId !== null && event.pointerId !== localVolumePointerId) return;
+    event.preventDefault();
     if (!Number.isFinite(event.clientY)) return;
     const delta = (localVolumeDragStartY - event.clientY) / 120;
     setLocalAudioVolume(localVolumeDragStartVolume + delta);
@@ -1571,6 +1599,7 @@
                 onpointerup={finishLocalAudioPointerPress}
                 onpointercancel={cancelLocalAudioPointerPress}
                 onpointerleave={cancelLocalAudioPointerPress}
+                onlostpointercapture={finishLocalAudioPointerPress}
                 title={audioMuted ? "Unmute local audio" : "Mute local audio"}
                 aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
               >
@@ -2084,6 +2113,7 @@
                     onpointerup={finishLocalAudioPointerPress}
                     onpointercancel={cancelLocalAudioPointerPress}
                     onpointerleave={cancelLocalAudioPointerPress}
+                    onlostpointercapture={finishLocalAudioPointerPress}
                     title={audioMuted ? "Unmute local audio" : "Mute local audio"}
                     aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
                   >
