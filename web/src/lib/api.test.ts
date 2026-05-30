@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createAudioDownloadLink, createRoom, getRoomSnapshot, updateRoomAudio } from './api';
+import { checkUploadPreflight, createAudioDownloadLink, createRoom, getRoomSnapshot, updateRoomAudio } from './api';
 
 describe('getRoomSnapshot', () => {
   afterEach(() => {
@@ -99,6 +99,20 @@ describe('audio API helpers', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/rooms/room-one/audio/track-one', expect.objectContaining({
       method: 'PATCH',
       body: JSON.stringify({ title: 'New title', uploaderDisplayName: 'Guest' })
+    }));
+  });
+
+  it('checks upload preflight with the file size', async () => {
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await checkUploadPreflight(1234);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/uploads/preflight', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ sizeBytes: 1234 }),
+      headers: expect.objectContaining({ Authorization: 'Bearer token-one' })
     }));
   });
 });

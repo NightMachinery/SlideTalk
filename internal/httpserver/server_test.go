@@ -599,6 +599,16 @@ func TestAudioUploadAcceptsM4AFromBrowserOctetStream(t *testing.T) {
 	}
 }
 
+func TestAudioUploadPreflightRejectsInsufficientFreeSpace(t *testing.T) {
+	server := newAPITestServer(t)
+
+	response := serveJSON(t, server, apiRequest(http.MethodPost, "/api/uploads/preflight", `{"sizeBytes":9223372036854775807}`, "admin"), http.StatusBadRequest)
+
+	if !strings.Contains(response.Body.String(), "The server does not have enough free space. All uploads have been disabled. Contact the server admin to increase storage.") {
+		t.Fatalf("preflight detail = %s", response.Body.String())
+	}
+}
+
 func TestParticipantAudioUploadRequiresAudienceUploadSetting(t *testing.T) {
 	server := newAPITestServer(t)
 	roomID := createAdminRoom(t, server)

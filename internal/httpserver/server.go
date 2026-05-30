@@ -91,6 +91,8 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
+const insufficientFreeSpaceDetail = "The server does not have enough free space. All uploads have been disabled. Contact the server admin to increase storage."
+
 func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/me":
@@ -111,6 +113,8 @@ func (s *appServer) routeAPI(w http.ResponseWriter, r *http.Request) {
 		s.withUser(s.getSlideStatus)(w, withSlideSHA(r, slidePathValue(r.URL.Path)))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/slides":
 		s.withUser(s.postSlide)(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/uploads/preflight":
+		s.withUser(s.postUploadPreflight)(w, r)
 	case r.Method == http.MethodPatch && roomPathValue(r.URL.Path, "/settings") != "":
 		s.withUser(s.patchRoomSettings)(w, withRoomID(r, roomPathValue(r.URL.Path, "/settings")))
 	case r.Method == http.MethodPost && roomPathValue(r.URL.Path, "/migration-link") != "":
@@ -532,6 +536,28 @@ func (s *appServer) postSlide(w http.ResponseWriter, r *http.Request, user auth.
 		s.hub.BroadcastSnapshot(r.Context(), status.RoomID, "")
 	}
 	writeJSON(w, http.StatusCreated, status)
+}
+
+func (s *appServer) postUploadPreflight(w http.ResponseWriter, r *http.Request, _ auth.User) {
+	if s.audio == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", "No API route matches "+r.URL.Path+".")
+		return
+	}
+	var input struct {
+		SizeBytes int64 `json:"sizeBytes"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.SizeBytes < 0 {
+		writeProblem(w, http.StatusBadRequest, "Bad Request", "Upload size is invalid.")
+		return
+	}
+	if err := s.audio.CanStore(input.SizeBytes); err != nil {
+		writeAudioError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *appServer) postRoomSlide(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -1054,7 +1080,9 @@ func (s *appServer) requireRoomMod(w http.ResponseWriter, r *http.Request, user 
 
 func writeSlideError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, slides.ErrUnsupportedFile), errors.Is(err, slides.ErrHashMismatch), errors.Is(err, slides.ErrInvalidHash), errors.Is(err, slides.ErrInvalidExpiry), errors.Is(err, slides.ErrFileRequired), errors.Is(err, slides.ErrTooLarge), errors.Is(err, slides.ErrInsufficientFreeSpace):
+	case errors.Is(err, slides.ErrInsufficientFreeSpace):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", insufficientFreeSpaceDetail)
+	case errors.Is(err, slides.ErrUnsupportedFile), errors.Is(err, slides.ErrHashMismatch), errors.Is(err, slides.ErrInvalidHash), errors.Is(err, slides.ErrInvalidExpiry), errors.Is(err, slides.ErrFileRequired), errors.Is(err, slides.ErrTooLarge):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, slides.ErrNoRoomSlide):
 		writeProblem(w, http.StatusNotFound, "Not Found", "Room has no slide file.")
@@ -1067,7 +1095,9 @@ func writeSlideError(w http.ResponseWriter, err error) {
 
 func writeAudioError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, audio.ErrUnsupportedFile), errors.Is(err, audio.ErrHashMismatch), errors.Is(err, audio.ErrInvalidHash), errors.Is(err, audio.ErrFileRequired), errors.Is(err, audio.ErrTooLarge), errors.Is(err, audio.ErrInsufficientFreeSpace), errors.Is(err, audio.ErrInvalidTrackMetadata):
+	case errors.Is(err, audio.ErrInsufficientFreeSpace):
+		writeProblem(w, http.StatusBadRequest, "Bad Request", insufficientFreeSpaceDetail)
+	case errors.Is(err, audio.ErrUnsupportedFile), errors.Is(err, audio.ErrHashMismatch), errors.Is(err, audio.ErrInvalidHash), errors.Is(err, audio.ErrFileRequired), errors.Is(err, audio.ErrTooLarge), errors.Is(err, audio.ErrInvalidTrackMetadata):
 		writeProblem(w, http.StatusBadRequest, "Bad Request", err.Error())
 	case errors.Is(err, audio.ErrNotTrackUploaderOrMod):
 		writeProblem(w, http.StatusForbidden, "Forbidden", err.Error())

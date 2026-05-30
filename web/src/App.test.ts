@@ -102,6 +102,7 @@ function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }, 
     if (url === '/api/admins') {
       return response([{ id: user.id, displayName: user.displayName, createdAt: '2026-05-21T00:00:00Z' }]);
     }
+    if (url === '/api/uploads/preflight') return response({ ok: true });
     if (url === '/api/rooms/room-one') return response(roomDetails);
     if (url === '/api/rooms/room-one/snapshot') return response(snapshot);
     if (url === '/api/rooms/room-one/ws-ticket') return response({ ticket: 'ticket-one', expiresAt: '2026-05-21T00:01:00Z' });
@@ -366,6 +367,7 @@ describe('App landing polish', () => {
     ]);
     vi.mocked(audioCacheStats).mockResolvedValue({ entries: 1, bytes: 3 });
     TestUploadRequest.responses = [{ status: 400, body: { detail: 'audio hash does not match uploaded file' } }];
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', mockFetch(
       { id: 'mod-one', displayName: 'Ada', isAdmin: false },
       {
@@ -383,6 +385,68 @@ describe('App landing polish', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Restore cached audio' }));
 
     await screen.findByText('Restored 0 cached audio files. Skipped 0. Failed 1. cached-song.mp3: audio hash does not match uploaded file');
+    expect(consoleError).toHaveBeenCalledWith('Cached audio restore failed', expect.objectContaining({
+      sha256: 'cached-sha',
+      originalName: 'cached-song.mp3',
+      error: expect.any(Error)
+    }));
+  });
+
+  it('stops cached audio restore before uploading when the server is out of space', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.mocked(listCachedAudio).mockResolvedValue([
+      {
+        sha256: 'cached-sha-one',
+        blob: new Blob(['ID3'], { type: 'audio/mpeg' }),
+        mimeType: 'audio/mpeg',
+        originalName: 'first.mp3',
+        sizeBytes: 3,
+        lastAccessedAt: 1,
+        createdAt: 1
+      },
+      {
+        sha256: 'cached-sha-two',
+        blob: new Blob(['ID3again'], { type: 'audio/mpeg' }),
+        mimeType: 'audio/mpeg',
+        originalName: 'second.mp3',
+        sizeBytes: 8,
+        lastAccessedAt: 2,
+        createdAt: 2
+      }
+    ]);
+    vi.mocked(audioCacheStats).mockResolvedValue({ entries: 2, bytes: 11 });
+    const baseFetch = mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false }
+      }
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input.toString() === '/api/uploads/preflight') {
+        return new Response(
+          JSON.stringify({ detail: 'The server does not have enough free space. All uploads have been disabled. Contact the server admin to increase storage.' }),
+          { status: 400, headers: { 'Content-Type': 'application/problem+json' } }
+        );
+      }
+      return baseFetch(input, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    vi.stubGlobal('XMLHttpRequest', TestUploadRequest);
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Restore cached audio' }));
+
+    await screen.findByText('The server does not have enough free space. All uploads have been disabled. Contact the server admin to increase storage.');
+    expect(TestUploadRequest.requests).toHaveLength(0);
+    expect(fetchMock).toHaveBeenCalledWith('/api/uploads/preflight', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ sizeBytes: 3 })
+    }));
   });
 
   it('does not show cached audio restore to participants with upload grants', async () => {

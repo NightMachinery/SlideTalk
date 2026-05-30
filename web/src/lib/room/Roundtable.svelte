@@ -34,7 +34,7 @@
   import Upload from '@lucide/svelte/icons/upload';
   import UserRound from '@lucide/svelte/icons/user-round';
   import UsersRound from '@lucide/svelte/icons/users-round';
-  import { audioCoverRequest, audioFileRequest, createAudioDownloadLink, createMigrationLink, getSlideStatus, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomAudio, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
+  import { audioCoverRequest, audioFileRequest, checkUploadPreflight, createAudioDownloadLink, createMigrationLink, getSlideStatus, insufficientFreeSpaceMessage, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomAudio, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
   import { audioCacheStats, audioSubtype, clearAudioCache, fileNameWithoutExtension, gcAudioCache, getCachedAudio, listCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
   import { readAudioUploadMetadata } from '../audioMetadata';
   import { cacheLimits } from '../cacheConstants';
@@ -957,6 +957,14 @@
     }
   }
 
+  function isInsufficientFreeSpaceError(error: unknown) {
+    return errorMessage(error, '') === insufficientFreeSpaceMessage;
+  }
+
+  async function checkAudioUploadCapacity(sizeBytes: number) {
+    await checkUploadPreflight(sizeBytes);
+  }
+
   async function restoreCachedAudio() {
     if (cacheBusy || audioBusy || !isMod || audioCacheUsage.entries === 0) return;
     cacheBusy = true;
@@ -980,6 +988,7 @@
         audioProgress = 0;
         audioMessage = `Restoring ${index + 1} / ${entries.length}...`;
         try {
+          await checkAudioUploadCapacity(entry.sizeBytes);
           const file = new File([entry.blob], entry.originalName, { type: entry.mimeType });
           await uploadRoomAudio(
             {
@@ -996,6 +1005,11 @@
           audioDownloaded = { ...audioDownloaded, [entry.sha256]: true };
           audioDownloadProgress = { ...audioDownloadProgress, [entry.sha256]: 100 };
         } catch (error) {
+          if (isInsufficientFreeSpaceError(error)) {
+            cacheMessage = insufficientFreeSpaceMessage;
+            audioMessage = '';
+            return;
+          }
           failed += 1;
           console.error('Cached audio restore failed', {
             sha256: entry.sha256,
@@ -1063,6 +1077,15 @@
       }
       for (const [index, file] of supported.entries()) {
         audioUploadIndex = index + 1;
+        try {
+          await checkAudioUploadCapacity(file.size);
+        } catch (error) {
+          if (isInsufficientFreeSpaceError(error)) {
+            audioMessage = insufficientFreeSpaceMessage;
+            return;
+          }
+          throw error;
+        }
         if (!safeBrowserAudio(file)) {
           const confirmed = await confirmAction({
             accent: 'warning',
@@ -1113,8 +1136,12 @@
       audioMessage = supported.length === 1 ? 'Audio uploaded.' : 'Audio files uploaded.';
       audioFiles = [];
     } catch (error) {
-      addToast(errorMessage(error, 'Audio upload failed.'));
-      audioMessage = '';
+      if (isInsufficientFreeSpaceError(error)) {
+        audioMessage = insufficientFreeSpaceMessage;
+      } else {
+        addToast(errorMessage(error, 'Audio upload failed.'));
+        audioMessage = '';
+      }
     } finally {
       audioBusy = false;
     }

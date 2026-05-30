@@ -142,6 +142,17 @@ func TestStoreRejectsWhenDiskFloorWouldBeViolated(t *testing.T) {
 	}
 }
 
+func TestCanStoreRejectsWhenDiskFloorWouldBeViolated(t *testing.T) {
+	fixture := newAudioFixture(t)
+	fixture.service.freeSpace = func(string) (int64, error) { return 15, nil }
+
+	err := fixture.service.CanStore(6)
+
+	if !errors.Is(err, ErrInsufficientFreeSpace) {
+		t.Fatalf("error = %v, want insufficient free space", err)
+	}
+}
+
 func TestCleanupRemovesTracksAfterRoomExpiration(t *testing.T) {
 	ctx := context.Background()
 	fixture := newAudioFixture(t)

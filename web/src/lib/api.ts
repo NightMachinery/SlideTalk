@@ -69,6 +69,7 @@ export type RoomSettingsInput = {
 };
 
 const tokenKey = 'slidetalk.authToken';
+export const insufficientFreeSpaceMessage = 'The server does not have enough free space. All uploads have been disabled. Contact the server admin to increase storage.';
 
 export function getAuthToken(): string {
   const existing = localStorage.getItem(tokenKey);
@@ -147,6 +148,13 @@ export async function createMigrationLink(roomId: string): Promise<MigrationLink
   return api(`/api/rooms/${encodeURIComponent(roomId)}/migration-link`, {
     method: 'POST',
     body: JSON.stringify({})
+  });
+}
+
+export async function checkUploadPreflight(sizeBytes: number): Promise<void> {
+  await api('/api/uploads/preflight', {
+    method: 'POST',
+    body: JSON.stringify({ sizeBytes })
   });
 }
 

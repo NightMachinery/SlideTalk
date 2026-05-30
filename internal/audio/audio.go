@@ -125,6 +125,21 @@ func (s *Service) MaxBytes() int64 {
 	return s.maxBytes
 }
 
+// CanStore checks whether retaining an upload of sizeBytes would respect the configured disk floor.
+func (s *Service) CanStore(sizeBytes int64) error {
+	if sizeBytes < 0 {
+		return ErrInsufficientFreeSpace
+	}
+	freeBytes, err := s.freeSpace(s.audioDir)
+	if err != nil {
+		return err
+	}
+	if freeBytes-sizeBytes < s.minFreeBytes {
+		return ErrInsufficientFreeSpace
+	}
+	return nil
+}
+
 // Store validates and stores audio, then appends it to the room playlist.
 func (s *Service) Store(ctx context.Context, userID string, input StoreInput) (Status, error) {
 	sha := strings.ToLower(strings.TrimSpace(input.SHA256))
@@ -540,11 +555,7 @@ func (s *Service) writeFile(sha string, ext string, reader io.Reader, maxBytes i
 	if err != nil {
 		return "", 0, "", err
 	}
-	freeBytes, err := s.freeSpace(s.audioDir)
-	if err != nil {
-		return "", 0, "", err
-	}
-	if freeBytes-written < s.minFreeBytes {
+	if err := s.CanStore(written); err != nil {
 		return "", 0, "", ErrInsufficientFreeSpace
 	}
 	if err := tmp.Close(); err != nil {

@@ -53,6 +53,7 @@ GET /api/rooms/{roomId}
 GET /api/rooms/{roomId}/snapshot
 POST /api/rooms/{roomId}/join
 PATCH /api/rooms/{roomId}/settings
+POST /api/uploads/preflight
 POST /api/rooms/{roomId}/ws-ticket
 POST /api/rooms/{roomId}/slide
 PATCH /api/rooms/{roomId}/slide
@@ -145,7 +146,7 @@ slidetalk rm ROOM_ID -y
 
 `slidetalk ls` shows password status as `open` or `protected`; SlideTalk does not store plaintext room passwords and the CLI does not reveal them. `slidetalk rm` removes the selected room's uploaded slide/audio references and deletes only physical files that no other room still references.
 
-The browser hashes files before upload, extracts supported audio title/duration/cover metadata, the server stores files by SHA-256 and validated extension, and cleanup runs hourly. Room audio is cleaned according to room survival: expired rooms lose their playlist rows and unreferenced audio files, while never-expire rooms keep audio until a moderator removes tracks or an operator removes the room. Room moderators can edit a track's display title and uploader display name; uploaders can edit their own track title.
+The browser checks server upload capacity before sending files, hashes files before upload, extracts supported audio title/duration/cover metadata, the server stores files by SHA-256 and validated extension, and cleanup runs hourly. If the server does not have enough free space to respect `SLIDETALK_MIN_FREE_SPACE`, the client stops the queued upload before sending the next file and tells the room member to contact the server admin. Room audio is cleaned according to room survival: expired rooms lose their playlist rows and unreferenced audio files, while never-expire rooms keep audio until a moderator removes tracks or an operator removes the room. Room moderators can edit a track's display title and uploader display name; uploaders can edit their own track title.
 
 Room moderators can create 24-hour migration links from room settings. A migration ID is a bearer secret that is shown once to the issuing browser, lets the holder join that room even when it has a password, and is stored in SQLite only as a SHA-256 hash.
 
