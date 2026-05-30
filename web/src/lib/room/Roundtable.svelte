@@ -991,11 +991,18 @@
         cacheMessage = 'No cached audio to restore.';
         return;
       }
+      const roomAudioHashes = new Set(snapshot.audio.tracks.map((track) => track.sha256));
       for (const [index, entry] of entries.entries()) {
         audioUploadIndex = index + 1;
         audioProgress = 0;
         audioMessage = `Restoring ${index + 1} / ${entries.length}...`;
         try {
+          if (roomAudioHashes.has(entry.sha256)) {
+            skipped += 1;
+            audioDownloaded = { ...audioDownloaded, [entry.sha256]: true };
+            audioDownloadProgress = { ...audioDownloadProgress, [entry.sha256]: 100 };
+            continue;
+          }
           await checkAudioUploadCapacity(entry.sizeBytes);
           const file = new File([entry.blob], entry.originalName, { type: entry.mimeType });
           const uploadedTrack = await uploadRoomAudio(
@@ -1011,6 +1018,7 @@
           );
           await updateRoomAudio(snapshot.room.id, uploadedTrack.id, { uploaderDisplayName: entry.uploaderDisplayName?.trim() || hiddenUploaderDisplayName });
           uploaded += 1;
+          roomAudioHashes.add(entry.sha256);
           audioDownloaded = { ...audioDownloaded, [entry.sha256]: true };
           audioDownloadProgress = { ...audioDownloadProgress, [entry.sha256]: 100 };
         } catch (error) {
@@ -1034,7 +1042,6 @@
       }
       audioProgress = uploaded > 0 ? 100 : 0;
       audioMessage = uploaded > 0 ? 'Cached audio restored.' : '';
-      skipped = Math.max(entries.length - uploaded - failed, 0);
       const moreFailures = failed > failureDetails.length ? ` ${failed - failureDetails.length} more failed.` : '';
       cacheMessage = `${uploaded === 1 ? 'Restored 1 cached audio file.' : `Restored ${uploaded} cached audio files.`} Skipped ${skipped}. Failed ${failed}.${failureDetails.length > 0 ? ` ${failureDetails.join(' ')}` : ''}${moreFailures}`;
       await refreshCacheUsage();

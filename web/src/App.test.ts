@@ -396,6 +396,66 @@ describe('App landing polish', () => {
     }));
   });
 
+  it('skips cached audio already present in the current room', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.mocked(listCachedAudio).mockResolvedValue([
+      {
+        sha256: 'cached-sha',
+        blob: new Blob(['ID3'], { type: 'audio/mpeg' }),
+        mimeType: 'audio/mpeg',
+        originalName: 'cached-song.mp3',
+        uploaderDisplayName: 'Grace',
+        sizeBytes: 3,
+        lastAccessedAt: 1,
+        createdAt: 1
+      }
+    ]);
+    vi.mocked(audioCacheStats).mockResolvedValue({ entries: 1, bytes: 3 });
+    const fetchMock = mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+        audio: {
+          tracks: [
+            {
+              id: 'existing-track',
+              sha256: 'cached-sha',
+              originalName: 'cached-song.mp3',
+              title: 'cached-song.mp3',
+              metadataTitle: '',
+              mimeType: 'audio/mpeg',
+              sizeBytes: 3,
+              durationSeconds: 0,
+              hasCover: false,
+              uploadedByUserId: 'grace-one',
+              uploadedByName: 'Grace',
+              uploaderDisplayName: '',
+              displayOrder: 0,
+              missing: false,
+              starredByCaller: false
+            }
+          ]
+        }
+      }
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    vi.stubGlobal('XMLHttpRequest', TestUploadRequest);
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Restore cached audio' }));
+
+    await screen.findByText('Restored 0 cached audio files. Skipped 1. Failed 0.');
+    expect(TestUploadRequest.requests).toHaveLength(0);
+    expect(fetchMock.mock.calls.some(([url]) => url.toString() === '/api/uploads/preflight')).toBe(false);
+    expect(fetchMock.mock.calls.some(([url, init]) => url.toString() === '/api/rooms/room-one/audio/restored-track' && init?.method === 'PATCH')).toBe(false);
+  });
+
   it('shows cached audio restore upload errors with file names', async () => {
     window.history.replaceState({}, '', '/?room=room-one');
     vi.mocked(listCachedAudio).mockResolvedValue([
