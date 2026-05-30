@@ -88,6 +88,16 @@ function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }, snapshot = roomSnapshot) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
@@ -454,6 +464,58 @@ describe('App landing polish', () => {
     expect(TestUploadRequest.requests).toHaveLength(0);
     expect(fetchMock.mock.calls.some(([url]) => url.toString() === '/api/uploads/preflight')).toBe(false);
     expect(fetchMock.mock.calls.some(([url, init]) => url.toString() === '/api/rooms/room-one/audio/restored-track' && init?.method === 'PATCH')).toBe(false);
+  });
+
+  it('shows the cached audio restore total in the busy upload button', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.mocked(listCachedAudio).mockResolvedValue(Array.from({ length: 13 }, (_, index) => ({
+      sha256: `cached-sha-${index}`,
+      blob: new Blob(['ID3'], { type: 'audio/mpeg' }),
+      mimeType: 'audio/mpeg',
+      originalName: `cached-song-${index}.mp3`,
+      uploaderDisplayName: 'Grace',
+      sizeBytes: 3,
+      lastAccessedAt: 1,
+      createdAt: 1
+    })));
+    vi.mocked(audioCacheStats).mockResolvedValue({ entries: 13, bytes: 39 });
+    const preflight = deferred<Response>();
+    let preflightReleased = false;
+    const audioSnapshot = {
+      ...roomSnapshot,
+      room: {
+        ...roomSnapshot.room,
+        roomMode: 'audio'
+      },
+      caller: { userId: 'mod-one', role: 'mod', isAdmin: false }
+    };
+    const fetchMock = mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      audioSnapshot
+    );
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input.toString() === '/api/uploads/preflight') return preflightReleased ? response({ ok: true }) : preflight.promise;
+      return mockFetch(
+        { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+        audioSnapshot
+      )(input, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    vi.stubGlobal('XMLHttpRequest', TestUploadRequest);
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Restore cached audio' }));
+
+    await waitFor(() => expect(screen.queryAllByRole('button', { name: 'Working 1/13' }).length).toBeGreaterThan(0));
+    expect(screen.queryAllByRole('button', { name: 'Working 1/0' })).toHaveLength(0);
+    preflightReleased = true;
+    preflight.resolve(response({ ok: true }));
+    await screen.findByText('Restored 13 cached audio files. Skipped 0. Failed 0.');
   });
 
   it('shows cached audio restore upload errors with file names', async () => {

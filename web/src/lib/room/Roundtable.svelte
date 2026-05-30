@@ -164,6 +164,7 @@
   let audioBusy = $state(false);
   let audioProgress = $state(0);
   let audioUploadIndex = $state(0);
+  let audioWorkTotal = $state(0);
   let audioMessage = $state('');
   let audioBlocked = $state(false);
   let audioMuted = $state(false);
@@ -979,6 +980,7 @@
     audioBusy = true;
     audioProgress = 0;
     audioUploadIndex = 0;
+    audioWorkTotal = audioCacheUsage.entries;
     cacheMessage = '';
     audioMessage = 'Preparing cached audio...';
     let uploaded = 0;
@@ -987,6 +989,7 @@
     const failureDetails: string[] = [];
     try {
       const entries = await listCachedAudio();
+      audioWorkTotal = entries.length;
       if (entries.length === 0) {
         cacheMessage = 'No cached audio to restore.';
         return;
@@ -1080,6 +1083,7 @@
     audioBusy = true;
     audioProgress = 0;
     audioUploadIndex = 0;
+    audioWorkTotal = audioFiles.length;
     audioMessage = 'Preparing audio...';
     try {
       const { supported, unsupported } = await classifyAudioUploadFiles(audioFiles);
@@ -1088,9 +1092,11 @@
       }
       if (supported.length === 0) {
         audioFiles = [];
+        audioWorkTotal = 0;
         audioMessage = 'No supported audio files selected.';
         return;
       }
+      audioWorkTotal = supported.length;
       for (const [index, file] of supported.entries()) {
         audioUploadIndex = index + 1;
         try {
@@ -1829,7 +1835,7 @@
                   />
                 </label>
                 <button type="submit" disabled={audioBusy || audioFiles.length === 0}>
-                  <Upload size={16} /> {audioBusy ? `Working ${audioUploadIndex}/${audioFiles.length}` : 'Upload audio'}
+                  <Upload size={16} /> {audioBusy ? `Working ${audioUploadIndex}/${audioWorkTotal}` : 'Upload audio'}
                 </button>
                 {#if audioBusy || audioProgress > 0}
                   <progress max="100" value={audioProgress}>{audioProgress}%</progress>
@@ -2343,7 +2349,7 @@
                   />
                 </label>
                 <button type="submit" disabled={audioBusy || audioFiles.length === 0}>
-                  <Upload size={16} /> {audioBusy ? `Working ${audioUploadIndex}/${audioFiles.length}` : 'Upload audio'}
+                  <Upload size={16} /> {audioBusy ? `Working ${audioUploadIndex}/${audioWorkTotal}` : 'Upload audio'}
                 </button>
                 {#if audioBusy || audioProgress > 0}
                   <progress max="100" value={audioProgress}>{audioProgress}%</progress>
