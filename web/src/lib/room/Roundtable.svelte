@@ -968,6 +968,7 @@
     let uploaded = 0;
     let skipped = 0;
     let failed = 0;
+    const failureDetails: string[] = [];
     try {
       const entries = await listCachedAudio();
       if (entries.length === 0) {
@@ -994,14 +995,25 @@
           uploaded += 1;
           audioDownloaded = { ...audioDownloaded, [entry.sha256]: true };
           audioDownloadProgress = { ...audioDownloadProgress, [entry.sha256]: 100 };
-        } catch {
+        } catch (error) {
           failed += 1;
+          console.error('Cached audio restore failed', {
+            sha256: entry.sha256,
+            originalName: entry.originalName,
+            mimeType: entry.mimeType,
+            sizeBytes: entry.sizeBytes,
+            error
+          });
+          if (failureDetails.length < 5) {
+            failureDetails.push(`${entry.originalName}: ${errorMessage(error, 'Upload failed.')}`);
+          }
         }
       }
       audioProgress = uploaded > 0 ? 100 : 0;
       audioMessage = uploaded > 0 ? 'Cached audio restored.' : '';
       skipped = Math.max(entries.length - uploaded - failed, 0);
-      cacheMessage = `${uploaded === 1 ? 'Restored 1 cached audio file.' : `Restored ${uploaded} cached audio files.`} Skipped ${skipped}. Failed ${failed}.`;
+      const moreFailures = failed > failureDetails.length ? ` ${failed - failureDetails.length} more failed.` : '';
+      cacheMessage = `${uploaded === 1 ? 'Restored 1 cached audio file.' : `Restored ${uploaded} cached audio files.`} Skipped ${skipped}. Failed ${failed}.${failureDetails.length > 0 ? ` ${failureDetails.join(' ')}` : ''}${moreFailures}`;
       await refreshCacheUsage();
     } catch (error) {
       addToast(errorMessage(error, 'Could not restore cached audio.'));

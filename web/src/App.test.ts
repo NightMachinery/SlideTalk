@@ -112,6 +112,7 @@ function mockFetch(user: { id: string; displayName: string; isAdmin: boolean }, 
 
 class TestUploadRequest {
   static requests: TestUploadRequest[] = [];
+  static responses: { status: number; body: unknown }[] = [];
   upload = {
     onprogress: null as ((event: ProgressEvent) => void) | null
   };
@@ -139,6 +140,11 @@ class TestUploadRequest {
 
   constructor() {
     TestUploadRequest.requests.push(this);
+    const response = TestUploadRequest.responses.shift();
+    if (response) {
+      this.status = response.status;
+      this.responseText = JSON.stringify(response.body);
+    }
   }
 
   open(method: string, url: string) {
@@ -172,6 +178,7 @@ describe('App landing polish', () => {
     vi.mocked(audioCacheStats).mockResolvedValue({ entries: 0, bytes: 0 });
     vi.mocked(listCachedAudio).mockResolvedValue([]);
     TestUploadRequest.requests = [];
+    TestUploadRequest.responses = [];
     localStorage.clear();
     TestWebSocket.sockets = [];
     window.history.replaceState({}, '', '/');
@@ -342,6 +349,40 @@ describe('App landing polish', () => {
     const file = request.body?.get('file') as File;
     expect(file.name).toBe('cached-song.mp3');
     expect(file.type).toBe('audio/mpeg');
+  });
+
+  it('shows cached audio restore upload errors with file names', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.mocked(listCachedAudio).mockResolvedValue([
+      {
+        sha256: 'cached-sha',
+        blob: new Blob(['ID3'], { type: 'audio/mpeg' }),
+        mimeType: 'audio/mpeg',
+        originalName: 'cached-song.mp3',
+        sizeBytes: 3,
+        lastAccessedAt: 1,
+        createdAt: 1
+      }
+    ]);
+    vi.mocked(audioCacheStats).mockResolvedValue({ entries: 1, bytes: 3 });
+    TestUploadRequest.responses = [{ status: 400, body: { detail: 'audio hash does not match uploaded file' } }];
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false }
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    vi.stubGlobal('XMLHttpRequest', TestUploadRequest);
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Restore cached audio' }));
+
+    await screen.findByText('Restored 0 cached audio files. Skipped 0. Failed 1. cached-song.mp3: audio hash does not match uploaded file');
   });
 
   it('does not show cached audio restore to participants with upload grants', async () => {
