@@ -537,6 +537,61 @@ func TestRepeatBackwardWrapsToLastTrack(t *testing.T) {
 	}
 }
 
+func TestSnapshotExposesNextAudioTrackID(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+	firstID := insertAudioTrack(t, ctx, hub, roomID, modID, "first")
+	secondID := insertAudioTrack(t, ctx, hub, roomID, modID, "second")
+	if _, err := hub.db.ExecContext(ctx, `update rooms set audio_current_track_id = ?, audio_state = ?, audio_playback_mode = ? where id = ?`, firstID, AudioStatePlaying, AudioModeNext, roomID); err != nil {
+		t.Fatalf("seed audio state: %v", err)
+	}
+
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Audio.NextTrackID != secondID {
+		t.Fatalf("next track id = %q, want %q", snapshot.Audio.NextTrackID, secondID)
+	}
+}
+
+func TestAudioEndedUsesSnapshotNextTrackIDForShuffle(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+	firstID := insertAudioTrack(t, ctx, hub, roomID, modID, "first")
+	insertAudioTrack(t, ctx, hub, roomID, modID, "second")
+	insertAudioTrack(t, ctx, hub, roomID, modID, "third")
+	if _, err := hub.db.ExecContext(ctx, `update rooms set audio_current_track_id = ?, audio_state = ?, audio_playback_mode = ? where id = ?`, firstID, AudioStatePlaying, AudioModeShuffle, roomID); err != nil {
+		t.Fatalf("seed audio state: %v", err)
+	}
+
+	before, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot before ended: %v", err)
+	}
+	if before.Audio.NextTrackID == "" || before.Audio.NextTrackID == firstID {
+		t.Fatalf("shuffle next track id = %q, want non-current track", before.Audio.NextTrackID)
+	}
+	again, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot again: %v", err)
+	}
+	if again.Audio.NextTrackID != before.Audio.NextTrackID {
+		t.Fatalf("shuffle next track id changed from %q to %q", before.Audio.NextTrackID, again.Audio.NextTrackID)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandAudioEnded}); err != nil {
+		t.Fatalf("audio ended: %v", err)
+	}
+	after, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot after ended: %v", err)
+	}
+	if after.Audio.CurrentTrackID != before.Audio.NextTrackID {
+		t.Fatalf("audio current track = %q, want prior next track %q", after.Audio.CurrentTrackID, before.Audio.NextTrackID)
+	}
+}
+
 func TestAudioTrackStarsArePrivateWithOptionalCounts(t *testing.T) {
 	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
 	ctx := context.Background()

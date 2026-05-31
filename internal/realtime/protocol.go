@@ -164,6 +164,7 @@ type SnapshotSlide struct {
 type SnapshotAudio struct {
 	Tracks          []SnapshotAudioTrack `json:"tracks"`
 	CurrentTrackID  string               `json:"currentTrackId"`
+	NextTrackID     string               `json:"nextTrackId"`
 	State           string               `json:"state"`
 	PositionSeconds int                  `json:"positionSeconds"`
 	StartedAt       *string              `json:"startedAt"`

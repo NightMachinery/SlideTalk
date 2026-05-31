@@ -75,6 +75,7 @@ export type RoomSnapshot = {
       starCount?: number;
     }[];
     currentTrackId: string;
+    nextTrackId: string;
     state: 'paused' | 'playing';
     positionSeconds: number;
     startedAt: string | null;
@@ -140,6 +141,7 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
         starCount: track.starCount ?? 0
       })),
       currentTrackId: snapshot.audio?.currentTrackId ?? '',
+      nextTrackId: snapshot.audio?.nextTrackId ?? '',
       state: snapshot.audio?.state ?? 'paused',
       positionSeconds: snapshot.audio?.positionSeconds ?? 0,
       startedAt: snapshot.audio?.startedAt ?? null,

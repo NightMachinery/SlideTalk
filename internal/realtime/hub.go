@@ -1,10 +1,13 @@
 package realtime
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -262,6 +265,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		return Snapshot{}, err
 	}
 	snapshot.Audio.Tracks = audioTracks
+	snapshot.Audio.NextTrackID = nextAudioTrackID(roomID, audioTracks, snapshot.Audio.CurrentTrackID, snapshot.Audio.PlaybackMode)
 	return snapshot, nil
 }
 
@@ -1071,7 +1075,7 @@ func (h *Hub) advanceAudioEnded(ctx context.Context, roomID string) error {
 	if mode == AudioModeRepeatOne {
 		nextID = currentID
 	} else if len(tracks) > 0 && (mode == AudioModeNext || mode == AudioModeRepeatForward || mode == AudioModePrevious || mode == AudioModeRepeatBackward || mode == AudioModeShuffle) {
-		nextID = nextAudioTrackID(tracks, currentID, mode)
+		nextID = nextAudioTrackID(roomID, tracks, currentID, mode)
 		if nextID == "" && mode == AudioModeRepeatForward {
 			nextID = tracks[0].ID
 		}
@@ -1108,9 +1112,18 @@ func (h *Hub) setAudioStar(ctx context.Context, roomID string, trackID string, u
 	return nil
 }
 
-func nextAudioTrackID(tracks []SnapshotAudioTrack, currentID string, mode string) string {
+func nextAudioTrackID(roomID string, tracks []SnapshotAudioTrack, currentID string, mode string) string {
 	if len(tracks) == 0 {
 		return ""
+	}
+	if mode == AudioModeStop {
+		return ""
+	}
+	if mode == AudioModeRepeatOne {
+		return currentID
+	}
+	if mode == AudioModeShuffle {
+		return nextShuffledAudioTrackID(roomID, tracks, currentID)
 	}
 	index := -1
 	for i, track := range tracks {
@@ -1118,16 +1131,6 @@ func nextAudioTrackID(tracks []SnapshotAudioTrack, currentID string, mode string
 			index = i
 			break
 		}
-	}
-	if mode == AudioModeShuffle {
-		if len(tracks) == 1 {
-			return tracks[0].ID
-		}
-		next := int(time.Now().UnixNano() % int64(len(tracks)))
-		if next == index {
-			next = (next + 1) % len(tracks)
-		}
-		return tracks[next].ID
 	}
 	if index < 0 {
 		return tracks[0].ID
@@ -1148,6 +1151,43 @@ func nextAudioTrackID(tracks []SnapshotAudioTrack, currentID string, mode string
 		return ""
 	}
 	return tracks[index+1].ID
+}
+
+func nextShuffledAudioTrackID(roomID string, tracks []SnapshotAudioTrack, currentID string) string {
+	if len(tracks) == 0 {
+		return ""
+	}
+	if len(tracks) == 1 {
+		return tracks[0].ID
+	}
+	shuffled := slices.Clone(tracks)
+	slices.SortFunc(shuffled, func(a, b SnapshotAudioTrack) int {
+		aKey := deterministicShuffleKey(roomID, a.ID)
+		bKey := deterministicShuffleKey(roomID, b.ID)
+		if aKey < bKey {
+			return -1
+		}
+		if aKey > bKey {
+			return 1
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	index := -1
+	for i, track := range shuffled {
+		if track.ID == currentID {
+			index = i
+			break
+		}
+	}
+	if index < 0 || index+1 >= len(shuffled) {
+		return shuffled[0].ID
+	}
+	return shuffled[index+1].ID
+}
+
+func deterministicShuffleKey(roomID string, trackID string) uint64 {
+	sum := sha256.Sum256([]byte(roomID + ":" + trackID))
+	return binary.BigEndian.Uint64(sum[:8])
 }
 
 func currentAudioTrackID(ctx context.Context, db *store.DB, roomID string) string {

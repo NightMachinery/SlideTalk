@@ -186,6 +186,7 @@
   let audioDownloadProgress = $state<Record<string, number>>({});
   let audioDownloadBusy = $state<Record<string, boolean>>({});
   let audioDownloaded = $state<Record<string, boolean>>({});
+  let activeNextAudioCacheKey = '';
   let audioCoverUrls = $state<Record<string, string>>({});
   let activeAudioCoverObjectUrl = '';
   let editingAudioTrackId = $state('');
@@ -453,6 +454,41 @@
     return () => {
       cancelled = true;
       if (nextBlobUrl && nextBlobUrl !== activeAudioObjectUrl) URL.revokeObjectURL(nextBlobUrl);
+    };
+  });
+
+  $effect(() => {
+    const nextTrackID = snapshot.audio.nextTrackId;
+    if (!canSeeAudio || !nextTrackID || nextTrackID === snapshot.audio.currentTrackId) {
+      activeNextAudioCacheKey = '';
+      return;
+    }
+    const track = snapshot.audio.tracks.find((item) => item.id === nextTrackID);
+    if (!track || track.missing) {
+      activeNextAudioCacheKey = '';
+      return;
+    }
+    const cacheKey = `${snapshot.room.id}:${nextTrackID}:${track.sha256}`;
+    if (cacheKey === activeNextAudioCacheKey) return;
+    activeNextAudioCacheKey = cacheKey;
+    let cancelled = false;
+    void cacheNextAudioTrack().catch(() => {});
+
+    async function cacheNextAudioTrack() {
+      const cached = await getCachedAudio(track.sha256);
+      if (cancelled || activeNextAudioCacheKey !== cacheKey) return;
+      if (cached) {
+        audioDownloaded = { ...audioDownloaded, [track.sha256]: true };
+        audioDownloadProgress = { ...audioDownloadProgress, [track.sha256]: 100 };
+        return;
+      }
+      const link = await createAudioDownloadLink(snapshot.room.id, nextTrackID);
+      if (cancelled || activeNextAudioCacheKey !== cacheKey) return;
+      await downloadAndCacheAudio(track, link.url);
+    }
+
+    return () => {
+      cancelled = true;
     };
   });
 

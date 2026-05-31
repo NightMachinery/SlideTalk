@@ -88,6 +88,10 @@ function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+function blobResponse(body: Blob, status = 200) {
+  return new Response(body, { status, headers: { 'Content-Type': body.type || 'application/octet-stream', 'Content-Length': String(body.size) } });
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -864,5 +868,88 @@ describe('App landing polish', () => {
     await fireEvent.click(muteButton);
 
     expect(JSON.parse(localStorage.getItem('slidetalk.roomAudioPrefs.v1:room-one:user-one') ?? '{}')).toEqual({ muted: false, volume: 0.62 });
+  });
+
+  it('starts caching the server-announced next audio track', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const audioSnapshot = {
+      ...roomSnapshot,
+      room: {
+        ...roomSnapshot.room,
+        roomMode: 'audio'
+      },
+      caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+      audio: {
+        tracks: [
+            {
+              id: 'current-track',
+              sha256: 'current-sha',
+              originalName: 'current.mp3',
+              title: 'Current',
+              metadataTitle: '',
+              mimeType: 'audio/mpeg',
+              sizeBytes: 7,
+              durationSeconds: 30,
+              hasCover: false,
+              uploadedByUserId: 'mod-one',
+              uploadedByName: 'Ada',
+              uploaderDisplayName: '',
+              displayOrder: 0,
+              missing: false,
+              starredByCaller: false
+            },
+            {
+              id: 'next-track',
+              sha256: 'next-sha',
+              originalName: 'next.mp3',
+              title: 'Next',
+              metadataTitle: '',
+              mimeType: 'audio/mpeg',
+              sizeBytes: 8,
+              durationSeconds: 32,
+              hasCover: false,
+              uploadedByUserId: 'grace-one',
+              uploadedByName: 'Grace',
+              uploaderDisplayName: '',
+              displayOrder: 1,
+              missing: false,
+              starredByCaller: false
+            }
+        ],
+        currentTrackId: 'current-track',
+        nextTrackId: 'next-track',
+        state: 'playing',
+        positionSeconds: 0,
+        startedAt: '2026-05-21T00:00:00Z',
+        serverNow: '2026-05-21T00:00:00Z',
+        playbackMode: 'next'
+      }
+    };
+    const fetchMock = mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      audioSnapshot
+    );
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === '/api/rooms/room-one/audio/current-track/download-link') return response({ url: '/download/current' });
+      if (url === '/api/rooms/room-one/audio/next-track/download-link') return response({ url: '/download/next' });
+      if (url === '/download/current') return blobResponse(new Blob(['current'], { type: 'audio/mpeg' }));
+      if (url === '/download/next') return blobResponse(new Blob(['next'], { type: 'audio/mpeg' }));
+      return mockFetch(
+        { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+        audioSnapshot
+      )(input, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    localStorage.setItem('slidetalk.authToken', 'token-one');
+
+    render(App);
+
+    await waitFor(() => expect(document.title).toBe('Planning Circle'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/rooms/room-one/audio/next-track/download-link', expect.objectContaining({ method: 'POST' })));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/download/next'));
+    expect(fetchMock).toHaveBeenCalledWith('/api/rooms/room-one/audio/current-track/download-link', expect.objectContaining({ method: 'POST' }));
   });
 });

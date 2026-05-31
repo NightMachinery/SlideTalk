@@ -206,5 +206,6 @@ describe('normalizeRoomSnapshot', () => {
     expect(snapshot.audio.tracks[0].title).toBe('song.mp3');
     expect(snapshot.audio.tracks[0].durationSeconds).toBe(0);
     expect(snapshot.audio.tracks[0].hasCover).toBe(false);
+    expect(snapshot.audio.nextTrackId).toBe('');
   });
 });
