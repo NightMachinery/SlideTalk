@@ -2052,4 +2052,33 @@ kbd {
     position: static;
     width: 100%;
   }
+
+  .audio-track {
+    grid-template-columns: 1fr;
+    align-items: start;
+    padding: 12px;
+  }
+
+  .audio-track-main {
+    grid-column: 1 / -1;
+  }
+
+  .audio-track-main strong {
+    display: -webkit-box;
+    overflow: hidden;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .audio-track > .settings-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .audio-edit-form {
+    grid-template-columns: 1fr;
+  }
 }
