@@ -865,17 +865,58 @@ describe('App landing polish', () => {
     TestWebSocket.sockets[0].open();
     const playButton = await screen.findByRole('button', { name: 'Play' });
     expect(playButton.hasAttribute('disabled')).toBe(true);
+    expect(playButton.textContent?.trim()).toBe('');
+    expect(screen.queryByText('Local audio mode: only you hear these controls.')).toBeNull();
 
     const priorOfflineToasts = screen.queryAllByText('Live connection is offline. Changes will work after it reconnects.').length;
     await fireEvent.click(screen.getByLabelText('Local mode (unsynced)'));
     await waitFor(() => expect(TestWebSocket.sockets[0].sent.some((message) => JSON.parse(message).type === 'presence.audioLocalMode')).toBe(true));
     await waitFor(() => expect(playButton.hasAttribute('disabled')).toBe(false));
     await fireEvent.click(playButton);
+    await fireEvent.click(screen.getByRole('button', { name: 'Next track' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Previous track' }));
 
     const sentTypes = TestWebSocket.sockets[0].sent.map((message) => JSON.parse(message).type);
     expect(sentTypes).toContain('presence.audioLocalMode');
     expect(sentTypes).not.toContain('audio.play');
     expect(screen.queryAllByText('Live connection is offline. Changes will work after it reconnects.')).toHaveLength(priorOfflineToasts);
+  });
+
+
+  it('shows current audio track and starred filter visual states', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true });
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        room: { ...roomSnapshot.room, roomMode: 'audio' },
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+        audio: {
+          tracks: [
+            {
+              id: 'track-one', sha256: 'track-one-sha', originalName: 'track-one.mp3', title: 'Track one', metadataTitle: '', mimeType: 'audio/mpeg', sizeBytes: 7, durationSeconds: 30, hasCover: false, uploadedByUserId: 'mod-one', uploadedByName: 'Ada', uploaderDisplayName: '', displayOrder: 0, missing: false, starredByCaller: true
+            }
+          ],
+          currentTrackId: 'track-one', nextTrackId: '', state: 'paused', positionSeconds: 0, startedAt: null, serverNow: '2026-05-21T00:00:00Z', playbackMode: 'stop'
+        }
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    const starred = await screen.findByRole('button', { name: 'Starred' });
+    expect(starred.classList.contains('inactive-filter')).toBe(true);
+    expect(starred.classList.contains('active-filter')).toBe(false);
+
+    await fireEvent.click(starred);
+    expect(starred.classList.contains('active-filter')).toBe(true);
+    expect(starred.classList.contains('inactive-filter')).toBe(false);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Show current track' }));
+    expect(scrollIntoView).toHaveBeenCalled();
   });
 
   it('shows local audio badges in people lists', async () => {

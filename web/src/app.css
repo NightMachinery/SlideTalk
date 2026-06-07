@@ -1632,6 +1632,13 @@ code {
   gap: 7px;
 }
 
+.audio-stage-controls .audio-transport-button,
+.audio-now .audio-transport-button {
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+}
+
 .audio-stage-controls label {
   flex: 1 1 260px;
   text-align: left;
@@ -1854,6 +1861,17 @@ code {
 .starred-track-button {
   color: oklch(43% 0.13 82);
   background: oklch(93% 0.08 88);
+}
+
+.starred-filter-button.inactive-filter {
+  border: 1px solid oklch(78% 0.018 245 / 0.55);
+  color: oklch(42% 0.026 245 / 0.68);
+  background: oklch(98% 0.006 235 / 0.38);
+}
+
+.starred-filter-button.inactive-filter:hover:not(:disabled) {
+  color: oklch(30% 0.04 245);
+  background: oklch(94% 0.014 245 / 0.72);
 }
 
 .icon-text-button.active-filter {

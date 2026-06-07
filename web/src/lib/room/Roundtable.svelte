@@ -7,6 +7,7 @@
   import ChevronsLeft from '@lucide/svelte/icons/chevrons-left';
   import ChevronsRight from '@lucide/svelte/icons/chevrons-right';
   import Copy from '@lucide/svelte/icons/copy';
+  import Crosshair from '@lucide/svelte/icons/crosshair';
   import Eye from '@lucide/svelte/icons/eye';
   import FileText from '@lucide/svelte/icons/file-text';
   import FileWarning from '@lucide/svelte/icons/file-warning';
@@ -26,6 +27,8 @@
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Save from '@lucide/svelte/icons/save';
   import Settings from '@lucide/svelte/icons/settings';
+  import SkipBack from '@lucide/svelte/icons/skip-back';
+  import SkipForward from '@lucide/svelte/icons/skip-forward';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import Shield from '@lucide/svelte/icons/shield';
   import Star from '@lucide/svelte/icons/star';
@@ -202,6 +205,7 @@
   let localAudioStartedAtMs = 0;
   let localAudioPlaybackMode = $state<AudioPlaybackMode>('stop');
   let publishedManualLocalAudioMode: boolean | null = null;
+  let audioTrackElements = new Map<string, HTMLElement>();
   let audioRealtimeHasConnected = $state(false);
   let slideCacheUsage = $state<CacheStats>({ entries: 0, bytes: 0 });
   let starredOnly = $state(false);
@@ -1302,6 +1306,34 @@
     manualLocalAudioMode = enabled;
   }
 
+  function setAudioTrackElement(element: HTMLElement, trackId: string) {
+    audioTrackElements.set(trackId, element);
+    return {
+      destroy() {
+        if (audioTrackElements.get(trackId) === element) audioTrackElements.delete(trackId);
+      }
+    };
+  }
+
+  function showCurrentAudioTrack() {
+    const current = audioTrackElements.get(effectiveCurrentAudioTrackId);
+    current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function localPreviousAudioTrackId() {
+    return nextLocalAudioTrackId(snapshot.room.id, [...snapshot.audio.tracks].reverse(), effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
+  }
+
+  function localNextAudioTrackId() {
+    return nextLocalAudioTrackId(snapshot.room.id, snapshot.audio.tracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
+  }
+
+  function skipAudio(direction: -1 | 1) {
+    const nextTrackId = (direction < 0 ? localPreviousAudioTrackId() : localNextAudioTrackId()) || effectiveCurrentAudioTrackId || currentAudioTrack?.id || '';
+    if (!nextTrackId) return;
+    playAudio(nextTrackId);
+  }
+
   function playAudio(trackId = effectiveCurrentAudioTrackId || currentAudioTrack?.id || '') {
     if (!trackId) return;
     if (usingLocalAudioMode()) {
@@ -1825,16 +1857,25 @@
             </p>
           </div>
           <label class="toggle-field local-mode-toggle"><input type="checkbox" checked={manualLocalAudioMode} onchange={(event) => setManualLocalAudioMode(event.currentTarget.checked)} /> Local mode (unsynced)</label>
-          {#if localAudioModeActive}
-            <p class="local-audio-mode-status">{manualLocalAudioMode ? 'Local audio mode: only you hear these controls.' : 'Offline local playback: synced audio resumes on reconnect.'}</p>
+          {#if offlineLocalAudioMode}
+            <p class="local-audio-mode-status">Offline local playback</p>
           {/if}
           <div class="audio-stage-controls">
-            <button type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()}>
+            <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(-1)} title="Previous track" aria-label="Previous track">
+              <SkipBack size={18} />
+            </button>
+            <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()} title={effectiveAudioState === 'playing' ? 'Pause' : 'Play'} aria-label={effectiveAudioState === 'playing' ? 'Pause' : 'Play'}>
               {#if effectiveAudioState === 'playing'}
-                <Pause size={18} /> Pause
+                <Pause size={18} />
               {:else}
-                <Play size={18} /> Play
+                <Play size={18} />
               {/if}
+            </button>
+            <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(1)} title="Next track" aria-label="Next track">
+              <SkipForward size={18} />
+            </button>
+            <button class="icon-button audio-transport-button" type="button" disabled={!currentAudioTrack} onclick={showCurrentAudioTrack} title="Show current track" aria-label="Show current track">
+              <Crosshair size={18} />
             </button>
             <label class="seek-control">
               <input
@@ -1907,7 +1948,7 @@
               />
             {/if}
             <div class="settings-actions">
-              <button class={['icon-text-button', starredOnly && 'active-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
+              <button class={['icon-text-button', 'starred-filter-button', starredOnly ? 'active-filter' : 'inactive-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
                 <Star size={16} /> Starred
               </button>
             </div>
@@ -1924,6 +1965,7 @@
                       toggleTrackFromCard(event, track);
                     }
                   }}
+                  use:setAudioTrackElement={track.id}
                 >
                   <div class="audio-track-main">
                     <strong>{trackDisplayTitle(track)}</strong>
@@ -2366,16 +2408,25 @@
               <strong>{trackDisplayTitle(currentAudioTrack)}</strong>
               <span>{currentAudioTrack ? `${trackUploaderName(currentAudioTrack) ? `${trackUploaderName(currentAudioTrack)} · ` : ''}${formatBytes(currentAudioTrack.sizeBytes)} · ${audioSubtype(currentAudioTrack.mimeType)}` : `${effectiveAudioState} · ${effectiveAudioPlaybackMode}`}</span>
               <label class="toggle-field local-mode-toggle compact"><input type="checkbox" checked={manualLocalAudioMode} onchange={(event) => setManualLocalAudioMode(event.currentTarget.checked)} /> Local mode (unsynced)</label>
-              {#if localAudioModeActive}
-                <p class="local-audio-mode-status">{manualLocalAudioMode ? 'Local audio mode' : 'Offline local playback'}</p>
+              {#if offlineLocalAudioMode}
+                <p class="local-audio-mode-status">Offline local playback</p>
               {/if}
               <div class="settings-actions">
-                <button type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()}>
+                <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(-1)} title="Previous track" aria-label="Previous track">
+                  <SkipBack size={16} />
+                </button>
+                <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()} title={effectiveAudioState === 'playing' ? 'Pause' : 'Play'} aria-label={effectiveAudioState === 'playing' ? 'Pause' : 'Play'}>
                   {#if effectiveAudioState === 'playing'}
-                    <Pause size={16} /> Pause
+                    <Pause size={16} />
                   {:else}
-                    <Play size={16} /> Play
+                    <Play size={16} />
                   {/if}
+                </button>
+                <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(1)} title="Next track" aria-label="Next track">
+                  <SkipForward size={16} />
+                </button>
+                <button class="icon-button audio-transport-button" type="button" disabled={!currentAudioTrack} onclick={showCurrentAudioTrack} title="Show current track" aria-label="Show current track">
+                  <Crosshair size={16} />
                 </button>
                 <div class="local-audio-control compact" bind:this={localVolumeControlElement}>
                   <button
@@ -2431,7 +2482,7 @@
               />
             {/if}
             <div class="settings-actions">
-              <button class={['icon-text-button', starredOnly && 'active-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
+              <button class={['icon-text-button', 'starred-filter-button', starredOnly ? 'active-filter' : 'inactive-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
                 <Star size={16} /> Starred
               </button>
             </div>
@@ -2448,6 +2499,7 @@
                       toggleTrackFromCard(event, track);
                     }
                   }}
+                  use:setAudioTrackElement={track.id}
                 >
                   <div class="audio-track-main">
                     <strong>{trackDisplayTitle(track)}</strong>
