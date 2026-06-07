@@ -805,6 +805,106 @@ describe('App landing polish', () => {
     expect(await screen.findByLabelText('Live connection disconnected')).toBeTruthy();
   });
 
+
+  it('lets members use local unsynced audio without shared control', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const audioSnapshot = {
+      ...roomSnapshot,
+      room: {
+        ...roomSnapshot.room,
+        roomMode: 'audio',
+        allowAudienceAudioControl: false
+      },
+      caller: { userId: 'participant-one', role: 'participant', isAdmin: false },
+      participants: [
+        { userId: 'participant-one', displayName: 'Grace', role: 'participant', displayOrder: 0, isOnline: true, allowAudioUpload: false, allowAudioControl: false }
+      ],
+      audio: {
+        tracks: [
+          {
+            id: 'track-one',
+            sha256: 'track-one-sha',
+            originalName: 'track-one.mp3',
+            title: 'Track one',
+            metadataTitle: '',
+            mimeType: 'audio/mpeg',
+            sizeBytes: 7,
+            durationSeconds: 30,
+            hasCover: false,
+            uploadedByUserId: 'mod-one',
+            uploadedByName: 'Ada',
+            uploaderDisplayName: '',
+            displayOrder: 0,
+            missing: false,
+            starredByCaller: false
+          }
+        ],
+        currentTrackId: 'track-one',
+        nextTrackId: '',
+        state: 'paused',
+        positionSeconds: 0,
+        startedAt: null,
+        serverNow: '2026-05-21T00:00:00Z',
+        playbackMode: 'stop'
+      }
+    };
+    const fetchMock = mockFetch({ id: 'participant-one', displayName: 'Grace', isAdmin: false }, audioSnapshot);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === '/api/rooms/room-one/audio/track-one/download-link') return response({ url: '/download/track-one' });
+      if (url === '/download/track-one') return blobResponse(new Blob(['audio'], { type: 'audio/mpeg' }));
+      return mockFetch({ id: 'participant-one', displayName: 'Grace', isAdmin: false }, audioSnapshot)(input, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(TestWebSocket.sockets).toHaveLength(1));
+    TestWebSocket.sockets[0].open();
+    const playButton = await screen.findByRole('button', { name: 'Play' });
+    expect(playButton.hasAttribute('disabled')).toBe(true);
+
+    const priorOfflineToasts = screen.queryAllByText('Live connection is offline. Changes will work after it reconnects.').length;
+    await fireEvent.click(screen.getByLabelText('Local mode (unsynced)'));
+    await waitFor(() => expect(TestWebSocket.sockets[0].sent.some((message) => JSON.parse(message).type === 'presence.audioLocalMode')).toBe(true));
+    await waitFor(() => expect(playButton.hasAttribute('disabled')).toBe(false));
+    await fireEvent.click(playButton);
+
+    const sentTypes = TestWebSocket.sockets[0].sent.map((message) => JSON.parse(message).type);
+    expect(sentTypes).toContain('presence.audioLocalMode');
+    expect(sentTypes).not.toContain('audio.play');
+    expect(screen.queryAllByText('Live connection is offline. Changes will work after it reconnects.')).toHaveLength(priorOfflineToasts);
+  });
+
+  it('shows local audio badges in people lists', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+        participants: [
+          { userId: 'mod-one', displayName: 'Ada', role: 'mod', displayOrder: 0, isOnline: true, allowAudioUpload: false, allowAudioControl: false, audioLocalMode: false },
+          { userId: 'participant-one', displayName: 'Grace', role: 'participant', displayOrder: 1, isOnline: true, allowAudioUpload: false, allowAudioControl: false, audioLocalMode: true }
+        ],
+        observers: [
+          { userId: 'observer-one', displayName: 'Lin', role: 'observer', displayOrder: 0, isOnline: true, allowAudioUpload: false, allowAudioControl: false, audioLocalMode: true }
+        ]
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await fireEvent.click(await screen.findByRole('button', { name: /Participants/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Observers/ }));
+
+    expect(screen.getAllByText('Local audio')).toHaveLength(2);
+    expect(screen.getAllByLabelText('Using local audio mode, not synced')).toHaveLength(2);
+  });
+
   it('loads and saves per-person local audio volume preferences', async () => {
     window.history.replaceState({}, '', '/?room=room-one');
     localStorage.setItem('slidetalk.roomAudioPrefs.v1:room-one:user-one', JSON.stringify({ muted: true, volume: 0.35 }));

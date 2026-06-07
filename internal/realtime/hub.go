@@ -27,10 +27,11 @@ type Hub struct {
 	auth  *auth.Service
 	rooms *rooms.Service
 
-	mu       sync.Mutex
-	tickets  map[string]TicketClaims
-	versions map[string]int64
-	clients  map[*Client]bool
+	mu             sync.Mutex
+	tickets        map[string]TicketClaims
+	versions       map[string]int64
+	clients        map[*Client]bool
+	audioLocalMode map[string]map[string]bool
 }
 
 // TicketClaims bind a WebSocket ticket to one room and user.
@@ -44,12 +45,13 @@ type TicketClaims struct {
 func NewHub(db *store.DB, authService *auth.Service, roomService *rooms.Service) *Hub {
 	_, _ = db.ExecContext(context.Background(), `delete from room_online_members`)
 	return &Hub{
-		db:       db,
-		auth:     authService,
-		rooms:    roomService,
-		tickets:  make(map[string]TicketClaims),
-		versions: make(map[string]int64),
-		clients:  make(map[*Client]bool),
+		db:             db,
+		auth:           authService,
+		rooms:          roomService,
+		tickets:        make(map[string]TicketClaims),
+		versions:       make(map[string]int64),
+		clients:        make(map[*Client]bool),
+		audioLocalMode: make(map[string]map[string]bool),
 	}
 }
 
@@ -77,6 +79,47 @@ func (h *Hub) Unregister(client *Client) {
 		close(client.Send)
 		_, _ = h.db.ExecContext(context.Background(), `update room_online_members set connection_count = max(connection_count - 1, 0), updated_at = ? where room_id = ? and user_id = ?`, time.Now().UTC().Format(time.RFC3339Nano), client.RoomID, client.UserID)
 		_, _ = h.db.ExecContext(context.Background(), `delete from room_online_members where connection_count <= 0`)
+		if !h.userHasClientLocked(client.RoomID, client.UserID) {
+			if roomPresence, ok := h.audioLocalMode[client.RoomID]; ok {
+				delete(roomPresence, client.UserID)
+				if len(roomPresence) == 0 {
+					delete(h.audioLocalMode, client.RoomID)
+				}
+			}
+		}
+	}
+}
+
+func (h *Hub) userHasClientLocked(roomID string, userID string) bool {
+	for client := range h.clients {
+		if client.RoomID == roomID && client.UserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Hub) isAudioLocalMode(roomID string, userID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.audioLocalMode[roomID][userID]
+}
+
+func (h *Hub) setAudioLocalMode(roomID string, userID string, enabled bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if enabled {
+		if h.audioLocalMode[roomID] == nil {
+			h.audioLocalMode[roomID] = make(map[string]bool)
+		}
+		h.audioLocalMode[roomID][userID] = true
+		return
+	}
+	if roomPresence, ok := h.audioLocalMode[roomID]; ok {
+		delete(roomPresence, userID)
+		if len(roomPresence) == 0 {
+			delete(h.audioLocalMode, roomID)
+		}
 	}
 }
 
@@ -237,6 +280,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			IsOnline:          h.IsUserOnline(roomID, member.UserID),
 			AllowAudioUpload:  member.AllowAudioUpload,
 			AllowAudioControl: member.AllowAudioControl,
+			AudioLocalMode:    h.isAudioLocalMode(roomID, member.UserID),
 		}
 		if member.Role == rooms.RoleObserver {
 			snapshot.Observers = append(snapshot.Observers, snapshotMember)
@@ -277,6 +321,14 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 	}
 	isMod := details.Membership.Role == rooms.RoleMod
 	switch command.Type {
+	case CommandPresenceAudioLocalMode:
+		var payload struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.Unmarshal(command.Payload, &payload); err != nil {
+			return ErrBadCommand
+		}
+		h.setAudioLocalMode(roomID, callerUserID, payload.Enabled)
 	case CommandPeopleReorder:
 		if !isMod {
 			return ErrForbidden

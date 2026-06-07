@@ -8,6 +8,7 @@ export type SnapshotMember = {
   isOnline: boolean;
   allowAudioUpload: boolean;
   allowAudioControl: boolean;
+  audioLocalMode: boolean;
 };
 
 export type RoomSnapshot = {
@@ -103,8 +104,8 @@ type RoomSnapshotWireAudio = Partial<Omit<RoomSnapshot['audio'], 'tracks'>> & {
     Partial<Pick<RoomSnapshot['audio']['tracks'][number], 'title' | 'metadataTitle' | 'durationSeconds' | 'hasCover' | 'uploadedByName' | 'uploaderDisplayName' | 'starredByCaller' | 'starCount'>>)[];
 };
 
-type SnapshotMemberWire = Omit<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl'> &
-  Partial<Pick<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl'>>;
+type SnapshotMemberWire = Omit<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl' | 'audioLocalMode'> &
+  Partial<Pick<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl' | 'audioLocalMode'>>;
 
 type RoomSnapshotWire = Omit<RoomSnapshot, 'participants' | 'observers' | 'hands' | 'audio'> & {
   participants?: SnapshotMemberWire[] | null;
@@ -155,7 +156,8 @@ function normalizeSnapshotMember(member: SnapshotMemberWire): SnapshotMember {
   return {
     ...member,
     allowAudioUpload: member.allowAudioUpload ?? false,
-    allowAudioControl: member.allowAudioControl ?? false
+    allowAudioControl: member.allowAudioControl ?? false,
+    audioLocalMode: member.audioLocalMode ?? false
   };
 }
 
@@ -240,6 +242,10 @@ export type RealtimeCommand =
   | {
       type: 'audio.star';
       payload: { trackId: string; starred: boolean };
+    }
+  | {
+      type: 'presence.audioLocalMode';
+      payload: { enabled: boolean };
     };
 
 export type RealtimeConnection = {

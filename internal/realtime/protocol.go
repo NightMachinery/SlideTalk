@@ -11,29 +11,30 @@ const (
 	EventKicked   = "room.kicked"
 	EventError    = "error"
 
-	CommandPeopleReorder         = "people.reorder"
-	CommandPeopleSetRole         = "people.setRole"
-	CommandPeopleAudioPermission = "people.audioPermission"
-	CommandPeopleKick            = "people.kick"
-	CommandTurnNext              = "turn.next"
-	CommandTurnPrevious          = "turn.previous"
-	CommandTurnSetCurrent        = "turn.setCurrent"
-	CommandTimerStart            = "timer.start"
-	CommandTimerStop             = "timer.stop"
-	CommandTimerReset            = "timer.reset"
-	CommandHandRaise             = "hand.raise"
-	CommandHandLower             = "hand.lower"
-	CommandSlideNavigate         = "slide.navigate"
-	CommandMarkdownUpdate        = "markdown.update"
-	CommandSettingsUpdate        = "settings.update"
-	CommandAudioPlay             = "audio.play"
-	CommandAudioPause            = "audio.pause"
-	CommandAudioSeek             = "audio.seek"
-	CommandAudioSelect           = "audio.select"
-	CommandAudioReorder          = "audio.reorder"
-	CommandAudioMode             = "audio.mode"
-	CommandAudioEnded            = "audio.ended"
-	CommandAudioStar             = "audio.star"
+	CommandPeopleReorder          = "people.reorder"
+	CommandPeopleSetRole          = "people.setRole"
+	CommandPeopleAudioPermission  = "people.audioPermission"
+	CommandPeopleKick             = "people.kick"
+	CommandTurnNext               = "turn.next"
+	CommandTurnPrevious           = "turn.previous"
+	CommandTurnSetCurrent         = "turn.setCurrent"
+	CommandTimerStart             = "timer.start"
+	CommandTimerStop              = "timer.stop"
+	CommandTimerReset             = "timer.reset"
+	CommandHandRaise              = "hand.raise"
+	CommandHandLower              = "hand.lower"
+	CommandSlideNavigate          = "slide.navigate"
+	CommandMarkdownUpdate         = "markdown.update"
+	CommandSettingsUpdate         = "settings.update"
+	CommandAudioPlay              = "audio.play"
+	CommandAudioPause             = "audio.pause"
+	CommandAudioSeek              = "audio.seek"
+	CommandAudioSelect            = "audio.select"
+	CommandAudioReorder           = "audio.reorder"
+	CommandAudioMode              = "audio.mode"
+	CommandAudioEnded             = "audio.ended"
+	CommandAudioStar              = "audio.star"
+	CommandPresenceAudioLocalMode = "presence.audioLocalMode"
 )
 
 const (
@@ -128,6 +129,7 @@ type SnapshotMember struct {
 	IsOnline          bool   `json:"isOnline"`
 	AllowAudioUpload  bool   `json:"allowAudioUpload"`
 	AllowAudioControl bool   `json:"allowAudioControl"`
+	AudioLocalMode    bool   `json:"audioLocalMode"`
 }
 
 // SnapshotTurn describes current and next speakers.

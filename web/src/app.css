@@ -1749,6 +1749,44 @@ code {
   accent-color: oklch(58% 0.12 185);
 }
 
+
+.local-mode-toggle {
+  justify-self: center;
+  border: 1px solid oklch(78% 0.036 210);
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: oklch(97% 0.014 210);
+  color: oklch(28% 0.04 220);
+  font-size: 0.84rem;
+}
+
+.local-mode-toggle.compact {
+  justify-self: start;
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 0.78rem;
+}
+
+.local-audio-mode-status {
+  margin: 0;
+  color: oklch(36% 0.07 205);
+  font-size: 0.84rem;
+  font-weight: 720;
+}
+
+.local-audio-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 4px;
+  border: 1px solid oklch(74% 0.07 205);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: oklch(30% 0.08 205);
+  background: oklch(91% 0.045 205);
+  font-size: 0.72rem;
+  font-weight: 780;
+}
+
 .audio-track {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

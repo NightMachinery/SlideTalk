@@ -637,6 +637,56 @@ func TestAudioTrackStarsArePrivateWithOptionalCounts(t *testing.T) {
 	}
 }
 
+func TestPresenceAudioLocalModeAppearsInSnapshotsAndClearsOnDisconnect(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	client := &Client{RoomID: roomID, UserID: participantID, Send: make(chan Event, 4)}
+	hub.Register(client)
+
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandPresenceAudioLocalMode,
+		Payload: mustJSON(t, map[string]bool{"enabled": true}),
+	}); err != nil {
+		t.Fatalf("enable local audio presence: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snapshot.Participants) < 2 || !snapshot.Participants[1].AudioLocalMode {
+		t.Fatalf("participant local audio presence missing: %+v", snapshot.Participants)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandPresenceAudioLocalMode,
+		Payload: mustJSON(t, map[string]bool{"enabled": false}),
+	}); err != nil {
+		t.Fatalf("disable local audio presence: %v", err)
+	}
+	snapshot, err = hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot after disable: %v", err)
+	}
+	if snapshot.Participants[1].AudioLocalMode {
+		t.Fatalf("participant local audio presence remained after disable: %+v", snapshot.Participants[1])
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{
+		Type:    CommandPresenceAudioLocalMode,
+		Payload: mustJSON(t, map[string]bool{"enabled": true}),
+	}); err != nil {
+		t.Fatalf("re-enable local audio presence: %v", err)
+	}
+	hub.Unregister(client)
+	snapshot, err = hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot after disconnect: %v", err)
+	}
+	if snapshot.Participants[1].AudioLocalMode {
+		t.Fatalf("participant local audio presence persisted after disconnect: %+v", snapshot.Participants[1])
+	}
+}
+
 func TestParticipantWithAudioControlCanSetFinishMode(t *testing.T) {
 	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
 	ctx := context.Background()

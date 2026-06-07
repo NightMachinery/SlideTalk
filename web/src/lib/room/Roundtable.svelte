@@ -45,6 +45,7 @@
   import { addToast } from '../toast.svelte';
   import { classifyAudioUploadFiles, safeBrowserAudio } from './audioUploadValidation';
   import { loadLocalAudioPreferences, saveLocalAudioPreferences } from './localAudioPreferences';
+  import { nextLocalAudioTrackId, type AudioPlaybackMode } from './localAudioMode';
   import { displayNameForRoom, onlineCountLabel, sortedByOnline } from './memberDisplay';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
@@ -193,6 +194,15 @@
   let audioTitleDraft = $state('');
   let audioUploaderDraft = $state('');
   let audioCacheUsage = $state<CacheStats>({ entries: 0, bytes: 0 });
+  let manualLocalAudioMode = $state(false);
+  let offlineLocalAudioMode = $state(false);
+  let localAudioTrackId = $state('');
+  let localAudioState = $state<RoomSnapshot['audio']['state']>('paused');
+  let localAudioPositionSeconds = $state(0);
+  let localAudioStartedAtMs = 0;
+  let localAudioPlaybackMode = $state<AudioPlaybackMode>('stop');
+  let publishedManualLocalAudioMode: boolean | null = null;
+  let audioRealtimeHasConnected = $state(false);
   let slideCacheUsage = $state<CacheStats>({ entries: 0, bytes: 0 });
   let starredOnly = $state(false);
   let retentionDraft = $state('');
@@ -228,7 +238,14 @@
   const canSeeAudio = true;
   const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && (snapshot.room.allowAudienceAudioUpload || !!callerParticipant?.allowAudioUpload)));
   const canControlAudio = $derived(isMod || (snapshot.caller.role === 'participant' && (snapshot.room.allowAudienceAudioControl || !!callerParticipant?.allowAudioControl)));
-  const currentAudioTrack = $derived(snapshot.audio.tracks.find((track) => track.id === snapshot.audio.currentTrackId) ?? snapshot.audio.tracks[0]);
+  const localAudioModeActive = $derived(manualLocalAudioMode || offlineLocalAudioMode);
+  const canUseAudioControls = $derived(canControlAudio || localAudioModeActive);
+  const localEstimatedAudioSeconds = $derived(localAudioState === 'playing' ? Math.max(Math.floor((nowMs - localAudioStartedAtMs) / 1000), 0) : localAudioPositionSeconds);
+  const effectiveCurrentAudioTrackId = $derived(localAudioModeActive ? localAudioTrackId : snapshot.audio.currentTrackId);
+  const effectiveAudioState = $derived(localAudioModeActive ? localAudioState : snapshot.audio.state);
+  const effectiveAudioPositionSeconds = $derived(localAudioModeActive ? localEstimatedAudioSeconds : estimatedAudioSeconds);
+  const effectiveAudioPlaybackMode = $derived(localAudioModeActive ? localAudioPlaybackMode : snapshot.audio.playbackMode);
+  const currentAudioTrack = $derived(snapshot.audio.tracks.find((track) => track.id === effectiveCurrentAudioTrackId) ?? snapshot.audio.tracks[0]);
   const displayedAudioTracks = $derived(starredOnly ? snapshot.audio.tracks.filter((track) => track.starredByCaller) : snapshot.audio.tracks);
   const slideMimeType = $derived(snapshot.slide?.mimeType || 'application/pdf');
   const slideIsPDF = $derived(slideMimeType === 'application/pdf');
@@ -303,6 +320,30 @@
       audioElement.muted = audioMuted;
       audioElement.volume = audioVolume;
     }
+  });
+
+  $effect(() => {
+    if (status === 'connected') {
+      audioRealtimeHasConnected = true;
+      offlineLocalAudioMode = false;
+      return;
+    }
+    if (!audioRealtimeHasConnected) return;
+    const timer = window.setTimeout(() => {
+      if (!usingLocalAudioMode()) seedLocalAudioState();
+      offlineLocalAudioMode = true;
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (status !== 'connected') {
+      publishedManualLocalAudioMode = null;
+      return;
+    }
+    if (publishedManualLocalAudioMode === manualLocalAudioMode) return;
+    publishedManualLocalAudioMode = manualLocalAudioMode;
+    send({ type: 'presence.audioLocalMode', payload: { enabled: manualLocalAudioMode } }, { notifyOnFailure: false });
   });
 
   $effect(() => {
@@ -408,7 +449,7 @@
   });
 
   $effect(() => {
-    const trackID = snapshot.audio.currentTrackId;
+    const trackID = effectiveCurrentAudioTrackId;
     if (!trackID || !canSeeAudio) {
       activeAudioSourceKey = '';
       if (activeAudioObjectUrl) {
@@ -459,7 +500,7 @@
 
   $effect(() => {
     const nextTrackID = snapshot.audio.nextTrackId;
-    if (!canSeeAudio || !nextTrackID || nextTrackID === snapshot.audio.currentTrackId) {
+    if (!canSeeAudio || !nextTrackID || nextTrackID === effectiveCurrentAudioTrackId) {
       activeNextAudioCacheKey = '';
       return;
     }
@@ -494,12 +535,12 @@
 
   $effect(() => {
     if (!audioElement || !audioObjectUrl) return;
-    const desired = estimatedAudioSeconds;
+    const desired = effectiveAudioPositionSeconds;
     if (Number.isFinite(desired) && Math.abs(audioElement.currentTime - desired) > audioDriftThresholdSeconds) {
       audioElement.currentTime = desired;
     }
     if (!audioSeeking) audioPositionDraft = Math.floor(audioElement.currentTime || desired);
-    if (snapshot.audio.state === 'playing') {
+    if (effectiveAudioState === 'playing') {
       void audioElement.play().then(() => {
         audioBlocked = false;
       }).catch((error) => {
@@ -910,8 +951,8 @@
       if (objectUrl) URL.revokeObjectURL(url);
       return;
     }
-    const previousTime = audioElement?.currentTime ?? estimatedAudioSeconds;
-    const wasPlaying = snapshot.audio.state === 'playing' && !audioElement?.paused;
+    const previousTime = audioElement?.currentTime ?? effectiveAudioPositionSeconds;
+    const wasPlaying = effectiveAudioState === 'playing' && !audioElement?.paused;
     if (activeAudioObjectUrl && activeAudioObjectUrl !== url) URL.revokeObjectURL(activeAudioObjectUrl);
     activeAudioObjectUrl = objectUrl ? url : '';
     audioObjectUrl = url;
@@ -924,7 +965,7 @@
           // Some streams do not accept seeking until metadata is loaded.
         }
       }
-      if (wasPlaying || snapshot.audio.state === 'playing') {
+      if (wasPlaying || effectiveAudioState === 'playing') {
         void audioElement.play().catch((error) => {
           if (error.name !== 'AbortError') audioBlocked = true;
         });
@@ -1244,13 +1285,45 @@
     link.click();
   }
 
-  function playAudio(trackId = snapshot.audio.currentTrackId || currentAudioTrack?.id || '') {
-    if (!trackId || !canControlAudio) return;
+  function seedLocalAudioState() {
+    localAudioTrackId = effectiveCurrentAudioTrackId || snapshot.audio.currentTrackId || currentAudioTrack?.id || '';
+    localAudioPlaybackMode = effectiveAudioPlaybackMode;
+    localAudioPositionSeconds = Math.max(0, Math.floor(audioElement?.currentTime ?? effectiveAudioPositionSeconds ?? 0));
+    localAudioState = effectiveAudioState;
+    localAudioStartedAtMs = localAudioState === 'playing' ? Date.now() - localAudioPositionSeconds * 1000 : 0;
+  }
+
+  function usingLocalAudioMode() {
+    return manualLocalAudioMode || offlineLocalAudioMode;
+  }
+
+  function setManualLocalAudioMode(enabled: boolean) {
+    if (enabled && !usingLocalAudioMode()) seedLocalAudioState();
+    manualLocalAudioMode = enabled;
+  }
+
+  function playAudio(trackId = effectiveCurrentAudioTrackId || currentAudioTrack?.id || '') {
+    if (!trackId) return;
+    if (usingLocalAudioMode()) {
+      const positionSeconds = trackId === effectiveCurrentAudioTrackId ? Math.max(0, Math.floor(audioElement?.currentTime ?? effectiveAudioPositionSeconds)) : 0;
+      localAudioTrackId = trackId;
+      localAudioPositionSeconds = positionSeconds;
+      localAudioStartedAtMs = Date.now() - positionSeconds * 1000;
+      localAudioState = 'playing';
+      return;
+    }
+    if (!canControlAudio) return;
     const positionSeconds = trackId === snapshot.audio.currentTrackId ? Math.max(0, Math.floor(audioElement?.currentTime ?? snapshot.audio.positionSeconds)) : 0;
     send({ type: 'audio.play', payload: { trackId, positionSeconds } });
   }
 
   function pauseAudio() {
+    if (usingLocalAudioMode()) {
+      localAudioPositionSeconds = Math.max(0, Math.floor(audioElement?.currentTime ?? effectiveAudioPositionSeconds));
+      localAudioState = 'paused';
+      localAudioStartedAtMs = 0;
+      return;
+    }
     if (!canControlAudio) return;
     send({ type: 'audio.pause' });
   }
@@ -1350,12 +1423,25 @@
   }
 
   function seekAudio(value: number) {
-    if (!canControlAudio) return;
     const positionSeconds = Math.max(0, Math.floor(value));
+    if (usingLocalAudioMode()) {
+      localAudioPositionSeconds = positionSeconds;
+      if (audioElement) audioElement.currentTime = positionSeconds;
+      if (localAudioState === 'playing') localAudioStartedAtMs = Date.now() - positionSeconds * 1000;
+      return;
+    }
+    if (!canControlAudio) return;
     send({ type: 'audio.seek', payload: { positionSeconds } });
   }
 
   function selectAudio(trackId: string) {
+    if (usingLocalAudioMode()) {
+      localAudioTrackId = trackId;
+      localAudioPositionSeconds = 0;
+      localAudioState = 'paused';
+      localAudioStartedAtMs = 0;
+      return;
+    }
     if (!canControlAudio) return;
     send({ type: 'audio.select', payload: { trackId } });
   }
@@ -1370,8 +1456,30 @@
   }
 
   function setAudioMode(mode: RoomSnapshot['audio']['playbackMode']) {
+    if (usingLocalAudioMode()) {
+      localAudioPlaybackMode = mode;
+      return;
+    }
     if (!canControlAudio) return;
     send({ type: 'audio.mode', payload: { mode } });
+  }
+
+  function handleAudioEnded() {
+    if (!usingLocalAudioMode()) {
+      send({ type: 'audio.ended' }, { notifyOnFailure: false });
+      return;
+    }
+    const nextTrackId = nextLocalAudioTrackId(snapshot.room.id, snapshot.audio.tracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
+    if (!nextTrackId || effectiveAudioPlaybackMode === 'stop') {
+      localAudioState = 'paused';
+      localAudioPositionSeconds = 0;
+      localAudioStartedAtMs = 0;
+      return;
+    }
+    localAudioTrackId = nextTrackId;
+    localAudioPositionSeconds = 0;
+    localAudioStartedAtMs = Date.now();
+    localAudioState = 'playing';
   }
 
   function toggleAudioStar(track: RoomSnapshot['audio']['tracks'][number]) {
@@ -1392,8 +1500,8 @@
   function toggleTrackFromCard(event: Event, track: RoomSnapshot['audio']['tracks'][number]) {
     const target = event.target as Element | null;
     if (target?.closest('button,a,input,form')) return;
-    if (!canControlAudio) return;
-    if (track.id === snapshot.audio.currentTrackId && snapshot.audio.state === 'playing') {
+    if (!canUseAudioControls) return;
+    if (track.id === effectiveCurrentAudioTrackId && effectiveAudioState === 'playing') {
       pauseAudio();
     } else {
       playAudio(track.id);
@@ -1530,7 +1638,7 @@
   function updateAudioTiming() {
     if (!audioElement) return;
     if (!audioSeeking) audioPositionDraft = Math.floor(audioElement.currentTime || 0);
-    audioDuration = Math.floor(audioElement.duration || currentAudioTrack?.durationSeconds || estimatedAudioSeconds || 0);
+    audioDuration = Math.floor(audioElement.duration || currentAudioTrack?.durationSeconds || effectiveAudioPositionSeconds || 0);
     updateAudioBuffer();
   }
 
@@ -1628,7 +1736,7 @@
       bind:this={audioElement}
       bind:muted={audioMuted}
       src={audioObjectUrl}
-      onended={() => send({ type: 'audio.ended' }, { notifyOnFailure: false })}
+      onended={handleAudioEnded}
       ontimeupdate={() => {
         audioPositionDraft = Math.floor(audioElement?.currentTime ?? 0);
       }}
@@ -1694,7 +1802,7 @@
             bind:this={audioElement}
             bind:muted={audioMuted}
             src={audioObjectUrl}
-            onended={() => send({ type: 'audio.ended' }, { notifyOnFailure: false })}
+            onended={handleAudioEnded}
             ontimeupdate={updateAudioTiming}
             onprogress={updateAudioBuffer}
             onloadedmetadata={updateAudioTiming}
@@ -1716,9 +1824,13 @@
               {/if}
             </p>
           </div>
+          <label class="toggle-field local-mode-toggle"><input type="checkbox" checked={manualLocalAudioMode} onchange={(event) => setManualLocalAudioMode(event.currentTarget.checked)} /> Local mode (unsynced)</label>
+          {#if localAudioModeActive}
+            <p class="local-audio-mode-status">{manualLocalAudioMode ? 'Local audio mode: only you hear these controls.' : 'Offline local playback: synced audio resumes on reconnect.'}</p>
+          {/if}
           <div class="audio-stage-controls">
-            <button type="button" disabled={!canControlAudio || !currentAudioTrack} onclick={() => snapshot.audio.state === 'playing' ? pauseAudio() : playAudio()}>
-              {#if snapshot.audio.state === 'playing'}
+            <button type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()}>
+              {#if effectiveAudioState === 'playing'}
                 <Pause size={18} /> Pause
               {:else}
                 <Play size={18} /> Play
@@ -1728,9 +1840,9 @@
               <input
                 type="range"
                 min="0"
-                max={Math.max(Math.floor(audioDuration || currentAudioTrack?.durationSeconds || estimatedAudioSeconds || 1), 1)}
-                value={audioPositionDraft || estimatedAudioSeconds}
-                disabled={!canControlAudio || !currentAudioTrack}
+                max={Math.max(Math.floor(audioDuration || currentAudioTrack?.durationSeconds || effectiveAudioPositionSeconds || 1), 1)}
+                value={audioPositionDraft || effectiveAudioPositionSeconds}
+                disabled={!canUseAudioControls || !currentAudioTrack}
                 onpointerdown={() => (audioSeeking = true)}
                 oninput={(event) => (audioPositionDraft = Number(event.currentTarget.value))}
                 onchange={(event) => {
@@ -1740,7 +1852,7 @@
               />
               <span class="seek-buffer" style:--buffer={`${audioBufferedPercent}%`}></span>
             </label>
-            <span class="audio-time">{formatDuration(audioPositionDraft || estimatedAudioSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
+            <span class="audio-time">{formatDuration(audioPositionDraft || effectiveAudioPositionSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
             <div class="local-audio-control" bind:this={localVolumeControlElement}>
               <button
                 type="button"
@@ -1786,10 +1898,10 @@
             <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
           {/if}
           <div class="audio-stage-manage">
-            {#if canControlAudio}
+            {#if canUseAudioControls}
               <SelectMenu
                 label="Finish"
-                value={snapshot.audio.playbackMode}
+                value={effectiveAudioPlaybackMode}
                 options={finishModeOptions}
                 onChange={(value) => setAudioMode(value as RoomSnapshot['audio']['playbackMode'])}
               />
@@ -1802,7 +1914,7 @@
             <div class="audio-track-list">
               {#each displayedAudioTracks as track, index (track.id)}
                 <div
-                  class={["audio-track", track.id === snapshot.audio.currentTrackId && 'current-audio-track']}
+                  class={["audio-track", track.id === effectiveCurrentAudioTrackId && 'current-audio-track']}
                   role="button"
                   tabindex="0"
                   onclick={(event) => toggleTrackFromCard(event, track)}
@@ -2049,6 +2161,9 @@
                 <div>
                   <h3>{memberDisplayName(member)}</h3>
                   <p>{participantStatus(member)}</p>
+                  {#if member.audioLocalMode}
+                    <span class="local-audio-badge" title="Using local audio mode, not synced" aria-label="Using local audio mode, not synced">Local audio</span>
+                  {/if}
                 </div>
                 {#if raisedHandFor(member.userId)}
                   {#if canLowerHandFor(member.userId)}
@@ -2129,6 +2244,9 @@
                 <div>
                   <h3>{memberDisplayName(member)}</h3>
                   <p>{observerStatus(member)}</p>
+                  {#if member.audioLocalMode}
+                    <span class="local-audio-badge" title="Using local audio mode, not synced" aria-label="Using local audio mode, not synced">Local audio</span>
+                  {/if}
                 </div>
               </div>
               {#if isMod || member.userId === snapshot.caller.userId}
@@ -2239,17 +2357,21 @@
               bind:this={audioElement}
               bind:muted={audioMuted}
               src={audioObjectUrl}
-              onended={() => send({ type: 'audio.ended' }, { notifyOnFailure: false })}
+              onended={handleAudioEnded}
               ontimeupdate={updateAudioTiming}
               onprogress={updateAudioBuffer}
               onloadedmetadata={updateAudioTiming}
             ></audio>
             <div class="audio-now">
               <strong>{trackDisplayTitle(currentAudioTrack)}</strong>
-              <span>{currentAudioTrack ? `${trackUploaderName(currentAudioTrack) ? `${trackUploaderName(currentAudioTrack)} · ` : ''}${formatBytes(currentAudioTrack.sizeBytes)} · ${audioSubtype(currentAudioTrack.mimeType)}` : `${snapshot.audio.state} · ${snapshot.audio.playbackMode}`}</span>
+              <span>{currentAudioTrack ? `${trackUploaderName(currentAudioTrack) ? `${trackUploaderName(currentAudioTrack)} · ` : ''}${formatBytes(currentAudioTrack.sizeBytes)} · ${audioSubtype(currentAudioTrack.mimeType)}` : `${effectiveAudioState} · ${effectiveAudioPlaybackMode}`}</span>
+              <label class="toggle-field local-mode-toggle compact"><input type="checkbox" checked={manualLocalAudioMode} onchange={(event) => setManualLocalAudioMode(event.currentTarget.checked)} /> Local mode (unsynced)</label>
+              {#if localAudioModeActive}
+                <p class="local-audio-mode-status">{manualLocalAudioMode ? 'Local audio mode' : 'Offline local playback'}</p>
+              {/if}
               <div class="settings-actions">
-                <button type="button" disabled={!canControlAudio || !currentAudioTrack} onclick={() => snapshot.audio.state === 'playing' ? pauseAudio() : playAudio()}>
-                  {#if snapshot.audio.state === 'playing'}
+                <button type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()}>
+                  {#if effectiveAudioState === 'playing'}
                     <Pause size={16} /> Pause
                   {:else}
                     <Play size={16} /> Play
@@ -2300,10 +2422,10 @@
                 {/if}
               </div>
             </div>
-            {#if canControlAudio}
+            {#if canUseAudioControls}
               <SelectMenu
                 label="Finish"
-                value={snapshot.audio.playbackMode}
+                value={effectiveAudioPlaybackMode}
                 options={finishModeOptions}
                 onChange={(value) => setAudioMode(value as RoomSnapshot['audio']['playbackMode'])}
               />
@@ -2316,7 +2438,7 @@
             <div class="audio-track-list">
               {#each displayedAudioTracks as track, index (track.id)}
                 <div
-                  class={["audio-track", track.id === snapshot.audio.currentTrackId && 'current-audio-track']}
+                  class={["audio-track", track.id === effectiveCurrentAudioTrackId && 'current-audio-track']}
                   role="button"
                   tabindex="0"
                   onclick={(event) => toggleTrackFromCard(event, track)}
