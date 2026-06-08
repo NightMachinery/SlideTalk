@@ -961,11 +961,11 @@ describe('App landing polish', () => {
     await waitFor(() => expect(TestWebSocket.sockets).toHaveLength(1));
     TestWebSocket.sockets[0].open();
     await fireEvent.click(await screen.findByLabelText('Local mode (unsynced)'));
-    expect(document.querySelector('.audio-stage-copy h3')?.textContent).toBe('Track one');
+    expect(document.querySelector('.audio-mini-copy strong')?.textContent).toBe('Track one');
     await fireEvent.keyDown(window, { key: 'MediaPlayPause' });
     await fireEvent.keyDown(window, { key: 'MediaTrackNext' });
 
-    await waitFor(() => expect(document.querySelector('.audio-stage-copy h3')?.textContent).toBe('Track two'));
+    await waitFor(() => expect(document.querySelector('.audio-mini-copy strong')?.textContent).toBe('Track two'));
     const sentTypes = TestWebSocket.sockets[0].sent.map((message) => JSON.parse(message).type);
     expect(sentTypes).toContain('presence.audioLocalMode');
     expect(sentTypes).not.toContain('audio.play');

@@ -175,6 +175,8 @@
   let audioVolume = $state(1);
   let localVolumeOpen = $state(false);
   let localVolumeControlElement = $state<HTMLElement | null>(null);
+  let finishModeOpen = $state(false);
+  let finishModeControlElement = $state<HTMLElement | null>(null);
   let localVolumeLongPress: number | null = null;
   let localVolumeSuppressClick = false;
   let localVolumeDragging = false;
@@ -1504,9 +1506,9 @@
   }
 
   function handleWindowPointerDown(event: PointerEvent) {
-    if (!localVolumeOpen) return;
-    if (localVolumeControlElement?.contains(event.target as Node)) return;
-    localVolumeOpen = false;
+    const target = event.target as Node;
+    if (localVolumeOpen && !localVolumeControlElement?.contains(target)) localVolumeOpen = false;
+    if (finishModeOpen && !finishModeControlElement?.contains(target)) finishModeOpen = false;
   }
 
   function handleLocalAudioPointerMove(event: PointerEvent) {
@@ -1557,6 +1559,7 @@
   }
 
   function setAudioMode(mode: RoomSnapshot['audio']['playbackMode']) {
+    finishModeOpen = false;
     if (usingLocalAudioMode()) {
       localAudioPlaybackMode = mode;
       return;
@@ -1700,8 +1703,9 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && localVolumeOpen) {
+    if (event.key === 'Escape' && (localVolumeOpen || finishModeOpen)) {
       localVolumeOpen = false;
+      finishModeOpen = false;
       return;
     }
     const mediaAction = mediaKeyAction(event.key);
@@ -1848,6 +1852,215 @@
   onpointercancel={finishLocalAudioPointerPress}
 />
 
+{#snippet finishModeMenu()}
+  {#if canUseAudioControls}
+    <div class="finish-mode-control" bind:this={finishModeControlElement}>
+      <button
+        type="button"
+        class="icon-button finish-mode-trigger"
+        title={`Finish mode: ${finishModeOptions.find((option) => option.value === effectiveAudioPlaybackMode)?.label ?? effectiveAudioPlaybackMode}`}
+        aria-label={`Finish mode: ${finishModeOptions.find((option) => option.value === effectiveAudioPlaybackMode)?.label ?? effectiveAudioPlaybackMode}`}
+        aria-haspopup="listbox"
+        aria-expanded={finishModeOpen}
+        onclick={() => (finishModeOpen = !finishModeOpen)}
+      >
+        <RotateCcw size={18} />
+      </button>
+      {#if finishModeOpen}
+        <div class="finish-mode-popover" role="listbox" aria-label="Finish mode">
+          {#each finishModeOptions as option (option.value)}
+            <button
+              type="button"
+              class:active={option.value === effectiveAudioPlaybackMode}
+              role="option"
+              aria-selected={option.value === effectiveAudioPlaybackMode}
+              onclick={() => setAudioMode(option.value as RoomSnapshot['audio']['playbackMode'])}
+            >
+              {option.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet audioMiniPlayer(compact: boolean)}
+  <div class={["audio-mini-player", compact && 'compact']}>
+    <div class="audio-mini-now">
+      {#if !compact}
+        <div class="audio-mini-art">
+          {#if currentAudioTrack?.hasCover && audioCoverUrls[currentAudioTrack.id]}
+            <img src={audioCoverUrls[currentAudioTrack.id]} alt="" />
+          {:else}
+            <Music size={30} />
+          {/if}
+        </div>
+      {/if}
+      <div class="audio-mini-copy">
+        <strong>{trackDisplayTitle(currentAudioTrack)}</strong>
+        <span>
+          {#if currentAudioTrack}
+            {trackUploaderName(currentAudioTrack) ? `${trackUploaderName(currentAudioTrack)} · ` : ''}{formatBytes(currentAudioTrack.sizeBytes)} · {audioSubtype(currentAudioTrack.mimeType)}
+          {:else}
+            Upload a track below to start listening.
+          {/if}
+        </span>
+      </div>
+    </div>
+
+    <div class="audio-mini-controls">
+      <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(-1)} title="Previous track" aria-label="Previous track">
+        <SkipBack size={18} />
+      </button>
+      <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()} title={effectiveAudioState === 'playing' ? 'Pause' : 'Play'} aria-label={effectiveAudioState === 'playing' ? 'Pause' : 'Play'}>
+        {#if effectiveAudioState === 'playing'}
+          <Pause size={18} />
+        {:else}
+          <Play size={18} />
+        {/if}
+      </button>
+      <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(1)} title="Next track" aria-label="Next track">
+        <SkipForward size={18} />
+      </button>
+      <button class="icon-button audio-transport-button" type="button" disabled={!currentAudioTrack} onclick={showCurrentAudioTrack} title="Show current track" aria-label="Show current track">
+        <Crosshair size={18} />
+      </button>
+      {@render finishModeMenu()}
+      <div class={["local-audio-control", compact && 'compact']} bind:this={localVolumeControlElement}>
+        <button
+          type="button"
+          class="icon-button local-volume-mute"
+          class:muted={audioMuted}
+          onclick={handleLocalAudioMuteClick}
+          onpointerdown={startLocalAudioLongPress}
+          onpointermove={handleLocalAudioPointerMove}
+          onpointerup={finishLocalAudioPointerPress}
+          onpointercancel={cancelLocalAudioPointerPress}
+          onpointerleave={cancelLocalAudioPointerPress}
+          onlostpointercapture={finishLocalAudioPointerPress}
+          title={audioMuted ? "Unmute local audio" : "Mute local audio"}
+          aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
+        >
+          {#if audioMuted}
+            <VolumeX size={18} />
+          {:else}
+            <Volume2 size={18} />
+          {/if}
+        </button>
+        <button type="button" class="icon-button local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
+          <SlidersHorizontal size={18} />
+        </button>
+        {#if localVolumeOpen}
+          <div class="local-volume-popover" role="group" aria-label="Local audio volume controls" onpointerdown={(event) => event.stopPropagation()}>
+            <label>
+              <span>Volume {Math.round(audioVolume * 100)}%</span>
+              <input
+                aria-label="Local audio volume"
+                type="range"
+                min="0"
+                max="100"
+                value={Math.round(audioVolume * 100)}
+                oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
+              />
+            </label>
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <div class="audio-mini-seek-row">
+      <label class="seek-control">
+        <input
+          type="range"
+          min="0"
+          max={Math.max(Math.floor(audioDuration || currentAudioTrack?.durationSeconds || effectiveAudioPositionSeconds || 1), 1)}
+          value={audioPositionDraft || effectiveAudioPositionSeconds}
+          disabled={!canUseAudioControls || !currentAudioTrack}
+          onpointerdown={() => (audioSeeking = true)}
+          oninput={(event) => (audioPositionDraft = Number(event.currentTarget.value))}
+          onchange={(event) => {
+            audioSeeking = false;
+            seekAudio(Number(event.currentTarget.value));
+          }}
+        />
+        <span class="seek-buffer" style:--buffer={`${audioBufferedPercent}%`}></span>
+      </label>
+      <span class="audio-time">{formatDuration(audioPositionDraft || effectiveAudioPositionSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
+    </div>
+
+    <div class="audio-mini-status-row">
+      <label class={["toggle-field", "local-mode-toggle", compact && 'compact']}><input type="checkbox" checked={manualLocalAudioMode} onchange={(event) => setManualLocalAudioMode(event.currentTarget.checked)} /> Local mode (unsynced)</label>
+      {#if offlineLocalAudioMode}
+        <p class="local-audio-mode-status">Offline local playback</p>
+      {/if}
+      {#if audioBlocked}
+        <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
+      {/if}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet audioTrackList(listClass: string)}
+  <div class={["audio-track-list", listClass]}>
+    {#each displayedAudioTracks as track, index (track.id)}
+      <div
+        class={["audio-track", track.id === effectiveCurrentAudioTrackId && 'current-audio-track']}
+        role="button"
+        tabindex="0"
+        onclick={(event) => toggleTrackFromCard(event, track)}
+        onkeydown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleTrackFromCard(event, track);
+          }
+        }}
+        use:setAudioTrackElement={track.id}
+      >
+        <div class="audio-track-main">
+          <strong>{trackDisplayTitle(track)}</strong>
+          <span>{trackUploaderName(track) ? `${trackUploaderName(track)} · ` : ''}{formatBytes(track.sizeBytes)} · {audioSubtype(track.mimeType)}</span>
+          {#if audioDownloadBusy[track.sha256] || audioDownloadProgress[track.sha256] > 0}
+            <progress max="100" value={audioDownloadProgress[track.sha256] ?? 0}>{audioDownloadProgress[track.sha256] ?? 0}%</progress>
+          {/if}
+        </div>
+        <div class="settings-actions">
+          <button class={['icon-button', track.starredByCaller && 'starred-track-button']} type="button" title={track.starredByCaller ? 'Unstar' : 'Star'} aria-label={track.starredByCaller ? 'Unstar' : 'Star'} onclick={(event) => { event.stopPropagation(); toggleAudioStar(track); }}>
+            <Star size={16} />
+            {#if snapshot.room.showAudioStarCounts && (track.starCount ?? 0) > 0}
+              <span>{track.starCount}</span>
+            {/if}
+          </button>
+          {#if isMod}
+            <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), -1); }}><ArrowUp size={16} /></button>
+            <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), 1); }}><ArrowDown size={16} /></button>
+          {/if}
+          {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
+            <button class="icon-button" type="button" title="Rename" aria-label="Rename" onclick={(event) => { event.stopPropagation(); startRenameAudio(track); }}><Pencil size={16} /></button>
+          {/if}
+          <a class="download-link icon-button" title="Download" aria-label="Download" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => { event.stopPropagation(); downloadAudio(event, track.id, track.originalName); }}><Download size={16} /></a>
+          {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
+            <button class="danger-button icon-button" title="Remove" aria-label="Remove" type="button" onclick={(event) => { event.stopPropagation(); deleteAudioTrack(track.id); }}>
+              <Trash2 size={16} />
+            </button>
+          {/if}
+        </div>
+        {#if editingAudioTrackId === track.id}
+          <form class="audio-edit-form" onsubmit={(event) => { event.preventDefault(); saveAudioMetadata(track); }}>
+            <input aria-label="Audio title" bind:value={audioTitleDraft} maxlength="200" />
+            {#if isMod}
+              <input aria-label="Uploader name" bind:value={audioUploaderDraft} maxlength="80" />
+            {/if}
+            <button type="button" onclick={() => (audioTitleDraft = fileNameWithoutExtension(track.originalName))}>Name</button>
+            <button type="button" onclick={() => (audioTitleDraft = track.metadataTitle || fileNameWithoutExtension(track.originalName))}>Title</button>
+            <button type="submit">Save</button>
+          </form>
+        {/if}
+      </div>
+    {/each}
+  </div>
+{/snippet}
+
 <section class={['roundtable', panelState.railCollapsed && 'rail-collapsed']} aria-label="Live roundtable">
   {#if canSeeAudio && snapshot.room.roomMode !== 'audio'}
     <audio
@@ -1925,176 +2138,14 @@
             onprogress={updateAudioBuffer}
             onloadedmetadata={updateAudioTiming}
           ></audio>
-          <div class="audio-stage-art">
-            {#if currentAudioTrack?.hasCover && audioCoverUrls[currentAudioTrack.id]}
-              <img src={audioCoverUrls[currentAudioTrack.id]} alt="" />
-            {:else}
-              <Music size={48} />
-            {/if}
-          </div>
-          <div class="audio-stage-copy">
-            <h3>{trackDisplayTitle(currentAudioTrack)}</h3>
-            <p>
-              {#if currentAudioTrack}
-                {trackUploaderName(currentAudioTrack) ? `${trackUploaderName(currentAudioTrack)} · ` : ''}{formatBytes(currentAudioTrack.sizeBytes)} · {audioSubtype(currentAudioTrack.mimeType)}
-              {:else}
-                Upload a track below to start listening.
-              {/if}
-            </p>
-          </div>
-          <label class="toggle-field local-mode-toggle"><input type="checkbox" checked={manualLocalAudioMode} onchange={(event) => setManualLocalAudioMode(event.currentTarget.checked)} /> Local mode (unsynced)</label>
-          {#if offlineLocalAudioMode}
-            <p class="local-audio-mode-status">Offline local playback</p>
-          {/if}
-          <div class="audio-stage-controls">
-            <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(-1)} title="Previous track" aria-label="Previous track">
-              <SkipBack size={18} />
-            </button>
-            <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()} title={effectiveAudioState === 'playing' ? 'Pause' : 'Play'} aria-label={effectiveAudioState === 'playing' ? 'Pause' : 'Play'}>
-              {#if effectiveAudioState === 'playing'}
-                <Pause size={18} />
-              {:else}
-                <Play size={18} />
-              {/if}
-            </button>
-            <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(1)} title="Next track" aria-label="Next track">
-              <SkipForward size={18} />
-            </button>
-            <button class="icon-button audio-transport-button" type="button" disabled={!currentAudioTrack} onclick={showCurrentAudioTrack} title="Show current track" aria-label="Show current track">
-              <Crosshair size={18} />
-            </button>
-            <label class="seek-control">
-              <input
-                type="range"
-                min="0"
-                max={Math.max(Math.floor(audioDuration || currentAudioTrack?.durationSeconds || effectiveAudioPositionSeconds || 1), 1)}
-                value={audioPositionDraft || effectiveAudioPositionSeconds}
-                disabled={!canUseAudioControls || !currentAudioTrack}
-                onpointerdown={() => (audioSeeking = true)}
-                oninput={(event) => (audioPositionDraft = Number(event.currentTarget.value))}
-                onchange={(event) => {
-                  audioSeeking = false;
-                  seekAudio(Number(event.currentTarget.value));
-                }}
-              />
-              <span class="seek-buffer" style:--buffer={`${audioBufferedPercent}%`}></span>
-            </label>
-            <span class="audio-time">{formatDuration(audioPositionDraft || effectiveAudioPositionSeconds)} / {formatDuration(audioDuration || currentAudioTrack?.durationSeconds || 0)}</span>
-            <div class="local-audio-control" bind:this={localVolumeControlElement}>
-              <button
-                type="button"
-                class="icon-button local-volume-mute"
-                class:muted={audioMuted}
-                onclick={handleLocalAudioMuteClick}
-                onpointerdown={startLocalAudioLongPress}
-                onpointermove={handleLocalAudioPointerMove}
-                onpointerup={finishLocalAudioPointerPress}
-                onpointercancel={cancelLocalAudioPointerPress}
-                onpointerleave={cancelLocalAudioPointerPress}
-                onlostpointercapture={finishLocalAudioPointerPress}
-                title={audioMuted ? "Unmute local audio" : "Mute local audio"}
-                aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
-              >
-                {#if audioMuted}
-                  <VolumeX size={18} />
-                {:else}
-                  <Volume2 size={18} />
-                {/if}
-              </button>
-              <button type="button" class="icon-button local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
-                <SlidersHorizontal size={18} />
-              </button>
-              {#if localVolumeOpen}
-                <div class="local-volume-popover" role="group" aria-label="Local audio volume controls" onpointerdown={(event) => event.stopPropagation()}>
-                  <label>
-                    <span>Volume {Math.round(audioVolume * 100)}%</span>
-                    <input
-                      aria-label="Local audio volume"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(audioVolume * 100)}
-                      oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
-                    />
-                  </label>
-                </div>
-              {/if}
-            </div>
-          </div>
-          {#if audioBlocked}
-            <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
-          {/if}
+          {@render audioMiniPlayer(false)}
           <div class="audio-stage-manage">
-            {#if canUseAudioControls}
-              <SelectMenu
-                label="Finish"
-                value={effectiveAudioPlaybackMode}
-                options={finishModeOptions}
-                onChange={(value) => setAudioMode(value as RoomSnapshot['audio']['playbackMode'])}
-              />
-            {/if}
-            <div class="settings-actions">
+            <div class="audio-list-toolbar">
               <button class={['icon-text-button', 'starred-filter-button', starredOnly ? 'active-filter' : 'inactive-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
                 <Star size={16} /> Starred
               </button>
             </div>
-            <div class="audio-track-list">
-              {#each displayedAudioTracks as track, index (track.id)}
-                <div
-                  class={["audio-track", track.id === effectiveCurrentAudioTrackId && 'current-audio-track']}
-                  role="button"
-                  tabindex="0"
-                  onclick={(event) => toggleTrackFromCard(event, track)}
-                  onkeydown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      toggleTrackFromCard(event, track);
-                    }
-                  }}
-                  use:setAudioTrackElement={track.id}
-                >
-                  <div class="audio-track-main">
-                    <strong>{trackDisplayTitle(track)}</strong>
-                    <span>{trackUploaderName(track) ? `${trackUploaderName(track)} · ` : ''}{formatBytes(track.sizeBytes)} · {audioSubtype(track.mimeType)}</span>
-                    {#if audioDownloadBusy[track.sha256] || audioDownloadProgress[track.sha256] > 0}
-                      <progress max="100" value={audioDownloadProgress[track.sha256] ?? 0}>{audioDownloadProgress[track.sha256] ?? 0}%</progress>
-                    {/if}
-                  </div>
-                  <div class="settings-actions">
-                    <button class={['icon-button', track.starredByCaller && 'starred-track-button']} type="button" title={track.starredByCaller ? 'Unstar' : 'Star'} aria-label={track.starredByCaller ? 'Unstar' : 'Star'} onclick={(event) => { event.stopPropagation(); toggleAudioStar(track); }}>
-                      <Star size={16} />
-                      {#if snapshot.room.showAudioStarCounts && (track.starCount ?? 0) > 0}
-                        <span>{track.starCount}</span>
-                      {/if}
-                    </button>
-                    {#if isMod}
-                      <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), -1); }}><ArrowUp size={16} /></button>
-                      <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), 1); }}><ArrowDown size={16} /></button>
-                    {/if}
-                    {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
-                      <button class="icon-button" type="button" title="Rename" aria-label="Rename" onclick={(event) => { event.stopPropagation(); startRenameAudio(track); }}><Pencil size={16} /></button>
-                    {/if}
-                    <a class="download-link icon-button" title="Download" aria-label="Download" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => { event.stopPropagation(); downloadAudio(event, track.id, track.originalName); }}><Download size={16} /></a>
-                    {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
-                      <button class="danger-button icon-button" title="Remove" aria-label="Remove" type="button" onclick={(event) => { event.stopPropagation(); deleteAudioTrack(track.id); }}>
-                        <Trash2 size={16} />
-                      </button>
-                    {/if}
-                  </div>
-                  {#if editingAudioTrackId === track.id}
-                    <form class="audio-edit-form" onsubmit={(event) => { event.preventDefault(); saveAudioMetadata(track); }}>
-                      <input aria-label="Audio title" bind:value={audioTitleDraft} maxlength="200" />
-                      {#if isMod}
-                        <input aria-label="Uploader name" bind:value={audioUploaderDraft} maxlength="80" />
-                      {/if}
-                      <button type="button" onclick={() => (audioTitleDraft = fileNameWithoutExtension(track.originalName))}>Name</button>
-                      <button type="button" onclick={() => (audioTitleDraft = track.metadataTitle || fileNameWithoutExtension(track.originalName))}>Title</button>
-                      <button type="submit">Save</button>
-                    </form>
-                  {/if}
-                </div>
-              {/each}
-            </div>
+            {@render audioTrackList('audio-stage-track-list')}
             {#if canUploadAudio}
               <form class="audio-upload" onsubmit={(event) => { event.preventDefault(); submitAudioUpload(); }}>
                 <label>
@@ -2490,145 +2541,13 @@
               onprogress={updateAudioBuffer}
               onloadedmetadata={updateAudioTiming}
             ></audio>
-            <div class="audio-now">
-              <strong>{trackDisplayTitle(currentAudioTrack)}</strong>
-              <span>{currentAudioTrack ? `${trackUploaderName(currentAudioTrack) ? `${trackUploaderName(currentAudioTrack)} · ` : ''}${formatBytes(currentAudioTrack.sizeBytes)} · ${audioSubtype(currentAudioTrack.mimeType)}` : `${effectiveAudioState} · ${effectiveAudioPlaybackMode}`}</span>
-              <label class="toggle-field local-mode-toggle compact"><input type="checkbox" checked={manualLocalAudioMode} onchange={(event) => setManualLocalAudioMode(event.currentTarget.checked)} /> Local mode (unsynced)</label>
-              {#if offlineLocalAudioMode}
-                <p class="local-audio-mode-status">Offline local playback</p>
-              {/if}
-              <div class="settings-actions">
-                <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(-1)} title="Previous track" aria-label="Previous track">
-                  <SkipBack size={16} />
-                </button>
-                <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => effectiveAudioState === 'playing' ? pauseAudio() : playAudio()} title={effectiveAudioState === 'playing' ? 'Pause' : 'Play'} aria-label={effectiveAudioState === 'playing' ? 'Pause' : 'Play'}>
-                  {#if effectiveAudioState === 'playing'}
-                    <Pause size={16} />
-                  {:else}
-                    <Play size={16} />
-                  {/if}
-                </button>
-                <button class="icon-button audio-transport-button" type="button" disabled={!canUseAudioControls || !currentAudioTrack} onclick={() => skipAudio(1)} title="Next track" aria-label="Next track">
-                  <SkipForward size={16} />
-                </button>
-                <button class="icon-button audio-transport-button" type="button" disabled={!currentAudioTrack} onclick={showCurrentAudioTrack} title="Show current track" aria-label="Show current track">
-                  <Crosshair size={16} />
-                </button>
-                <div class="local-audio-control compact" bind:this={localVolumeControlElement}>
-                  <button
-                    type="button"
-                    class="icon-button local-volume-mute"
-                    class:muted={audioMuted}
-                    onclick={handleLocalAudioMuteClick}
-                    onpointerdown={startLocalAudioLongPress}
-                    onpointermove={handleLocalAudioPointerMove}
-                    onpointerup={finishLocalAudioPointerPress}
-                    onpointercancel={cancelLocalAudioPointerPress}
-                    onpointerleave={cancelLocalAudioPointerPress}
-                    onlostpointercapture={finishLocalAudioPointerPress}
-                    title={audioMuted ? "Unmute local audio" : "Mute local audio"}
-                    aria-label={audioMuted ? "Unmute local audio" : "Mute local audio"}
-                  >
-                    {#if audioMuted}
-                      <VolumeX size={16} />
-                    {:else}
-                      <Volume2 size={16} />
-                    {/if}
-                  </button>
-                  <button type="button" class="icon-button local-volume-menu-button" class:active={localVolumeOpen} onclick={toggleLocalAudioVolume} title="Open local audio volume" aria-label="Open local audio volume" aria-expanded={localVolumeOpen}>
-                    <SlidersHorizontal size={16} />
-                  </button>
-                  {#if localVolumeOpen}
-                    <div class="local-volume-popover" role="group" aria-label="Local audio volume controls" onpointerdown={(event) => event.stopPropagation()}>
-                      <label>
-                        <span>Volume {Math.round(audioVolume * 100)}%</span>
-                        <input
-                          aria-label="Local audio volume"
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={Math.round(audioVolume * 100)}
-                          oninput={(event) => setLocalAudioVolume(Number(event.currentTarget.value) / 100)}
-                        />
-                      </label>
-                    </div>
-                  {/if}
-                </div>
-                {#if audioBlocked}
-                  <button type="button" onclick={() => audioElement?.play()}>Enable audio</button>
-                {/if}
-              </div>
-            </div>
-            {#if canUseAudioControls}
-              <SelectMenu
-                label="Finish"
-                value={effectiveAudioPlaybackMode}
-                options={finishModeOptions}
-                onChange={(value) => setAudioMode(value as RoomSnapshot['audio']['playbackMode'])}
-              />
-            {/if}
-            <div class="settings-actions">
+            {@render audioMiniPlayer(true)}
+            <div class="audio-list-toolbar">
               <button class={['icon-text-button', 'starred-filter-button', starredOnly ? 'active-filter' : 'inactive-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
                 <Star size={16} /> Starred
               </button>
             </div>
-            <div class="audio-track-list">
-              {#each displayedAudioTracks as track, index (track.id)}
-                <div
-                  class={["audio-track", track.id === effectiveCurrentAudioTrackId && 'current-audio-track']}
-                  role="button"
-                  tabindex="0"
-                  onclick={(event) => toggleTrackFromCard(event, track)}
-                  onkeydown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      toggleTrackFromCard(event, track);
-                    }
-                  }}
-                  use:setAudioTrackElement={track.id}
-                >
-                  <div class="audio-track-main">
-                    <strong>{trackDisplayTitle(track)}</strong>
-                    <span>{trackUploaderName(track) ? `${trackUploaderName(track)} · ` : ''}{formatBytes(track.sizeBytes)} · {audioSubtype(track.mimeType)}</span>
-                    {#if audioDownloadBusy[track.sha256] || audioDownloadProgress[track.sha256] > 0}
-                      <progress max="100" value={audioDownloadProgress[track.sha256] ?? 0}>{audioDownloadProgress[track.sha256] ?? 0}%</progress>
-                    {/if}
-                  </div>
-                  <div class="settings-actions">
-                    <button class={['icon-button', track.starredByCaller && 'starred-track-button']} type="button" title={track.starredByCaller ? 'Unstar' : 'Star'} aria-label={track.starredByCaller ? 'Unstar' : 'Star'} onclick={(event) => { event.stopPropagation(); toggleAudioStar(track); }}>
-                      <Star size={16} />
-                      {#if snapshot.room.showAudioStarCounts && (track.starCount ?? 0) > 0}
-                        <span>{track.starCount}</span>
-                      {/if}
-                    </button>
-                    {#if isMod}
-                      <button class="icon-button" type="button" title="Move up" aria-label="Move up" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === 0} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), -1); }}><ArrowUp size={16} /></button>
-                      <button class="icon-button" type="button" title="Move down" aria-label="Move down" disabled={starredOnly || snapshot.audio.tracks.findIndex((item) => item.id === track.id) === snapshot.audio.tracks.length - 1} onclick={(event) => { event.stopPropagation(); moveAudioTrack(snapshot.audio.tracks.findIndex((item) => item.id === track.id), 1); }}><ArrowDown size={16} /></button>
-                    {/if}
-                    {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
-                      <button class="icon-button" type="button" title="Rename" aria-label="Rename" onclick={(event) => { event.stopPropagation(); startRenameAudio(track); }}><Pencil size={16} /></button>
-                    {/if}
-                    <a class="download-link icon-button" title="Download" aria-label="Download" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => { event.stopPropagation(); downloadAudio(event, track.id, track.originalName); }}><Download size={16} /></a>
-                    {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
-                      <button class="danger-button icon-button" title="Remove" aria-label="Remove" type="button" onclick={(event) => { event.stopPropagation(); deleteAudioTrack(track.id); }}>
-                        <Trash2 size={16} />
-                      </button>
-                    {/if}
-                  </div>
-                  {#if editingAudioTrackId === track.id}
-                    <form class="audio-edit-form" onsubmit={(event) => { event.preventDefault(); saveAudioMetadata(track); }}>
-                      <input aria-label="Audio title" bind:value={audioTitleDraft} maxlength="200" />
-                      {#if isMod}
-                        <input aria-label="Uploader name" bind:value={audioUploaderDraft} maxlength="80" />
-                      {/if}
-                      <button type="button" onclick={() => (audioTitleDraft = fileNameWithoutExtension(track.originalName))}>Name</button>
-                      <button type="button" onclick={() => (audioTitleDraft = track.metadataTitle || fileNameWithoutExtension(track.originalName))}>Title</button>
-                      <button type="submit">Save</button>
-                    </form>
-                  {/if}
-                </div>
-              {/each}
-            </div>
+            {@render audioTrackList('audio-panel-track-list')}
             {#if canUploadAudio}
               <form class="audio-upload" onsubmit={(event) => { event.preventDefault(); submitAudioUpload(); }}>
                 <label>
