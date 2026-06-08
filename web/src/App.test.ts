@@ -919,6 +919,97 @@ describe('App landing polish', () => {
     expect(scrollIntoView).toHaveBeenCalled();
   });
 
+
+  it('uses keyboard media keys for local audio playback without shared commands', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const audioSnapshot = {
+      ...roomSnapshot,
+      room: { ...roomSnapshot.room, roomMode: 'audio', allowAudienceAudioControl: false },
+      caller: { userId: 'participant-one', role: 'participant', isAdmin: false },
+      participants: [
+        { userId: 'participant-one', displayName: 'Grace', role: 'participant', displayOrder: 0, isOnline: true, allowAudioUpload: false, allowAudioControl: false }
+      ],
+      audio: {
+        tracks: [
+          { id: 'track-one', sha256: 'track-one-sha', originalName: 'track-one.mp3', title: 'Track one', metadataTitle: '', mimeType: 'audio/mpeg', sizeBytes: 7, durationSeconds: 30, hasCover: false, uploadedByUserId: 'mod-one', uploadedByName: 'Ada', uploaderDisplayName: '', displayOrder: 0, missing: false, starredByCaller: false },
+          { id: 'track-two', sha256: 'track-two-sha', originalName: 'track-two.mp3', title: 'Track two', metadataTitle: '', mimeType: 'audio/mpeg', sizeBytes: 8, durationSeconds: 40, hasCover: false, uploadedByUserId: 'mod-one', uploadedByName: 'Ada', uploaderDisplayName: '', displayOrder: 1, missing: false, starredByCaller: false }
+        ],
+        currentTrackId: 'track-one',
+        nextTrackId: 'track-two',
+        state: 'paused',
+        positionSeconds: 0,
+        startedAt: null,
+        serverNow: '2026-05-21T00:00:00Z',
+        playbackMode: 'next'
+      }
+    };
+    const fetchMock = mockFetch({ id: 'participant-one', displayName: 'Grace', isAdmin: false }, audioSnapshot);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === '/api/rooms/room-one/audio/track-one/download-link') return response({ url: '/download/track-one' });
+      if (url === '/api/rooms/room-one/audio/track-two/download-link') return response({ url: '/download/track-two' });
+      if (url === '/download/track-one') return blobResponse(new Blob(['one'], { type: 'audio/mpeg' }));
+      if (url === '/download/track-two') return blobResponse(new Blob(['two'], { type: 'audio/mpeg' }));
+      return mockFetch({ id: 'participant-one', displayName: 'Grace', isAdmin: false }, audioSnapshot)(input, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    await waitFor(() => expect(TestWebSocket.sockets).toHaveLength(1));
+    TestWebSocket.sockets[0].open();
+    await fireEvent.click(await screen.findByLabelText('Local mode (unsynced)'));
+    expect(document.querySelector('.audio-stage-copy h3')?.textContent).toBe('Track one');
+    await fireEvent.keyDown(window, { key: 'MediaPlayPause' });
+    await fireEvent.keyDown(window, { key: 'MediaTrackNext' });
+
+    await waitFor(() => expect(document.querySelector('.audio-stage-copy h3')?.textContent).toBe('Track two'));
+    const sentTypes = TestWebSocket.sockets[0].sent.map((message) => JSON.parse(message).type);
+    expect(sentTypes).toContain('presence.audioLocalMode');
+    expect(sentTypes).not.toContain('audio.play');
+  });
+
+  it('uses keyboard media keys for synced audio when caller can control audio', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    const audioSnapshot = {
+      ...roomSnapshot,
+      room: { ...roomSnapshot.room, roomMode: 'audio' },
+      caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+      audio: {
+        tracks: [
+          { id: 'track-one', sha256: 'track-one-sha', originalName: 'track-one.mp3', title: 'Track one', metadataTitle: '', mimeType: 'audio/mpeg', sizeBytes: 7, durationSeconds: 30, hasCover: false, uploadedByUserId: 'mod-one', uploadedByName: 'Ada', uploaderDisplayName: '', displayOrder: 0, missing: false, starredByCaller: false },
+          { id: 'track-two', sha256: 'track-two-sha', originalName: 'track-two.mp3', title: 'Track two', metadataTitle: '', mimeType: 'audio/mpeg', sizeBytes: 8, durationSeconds: 40, hasCover: false, uploadedByUserId: 'mod-one', uploadedByName: 'Ada', uploaderDisplayName: '', displayOrder: 1, missing: false, starredByCaller: false }
+        ],
+        currentTrackId: 'track-one',
+        nextTrackId: 'track-two',
+        state: 'paused',
+        positionSeconds: 0,
+        startedAt: null,
+        serverNow: '2026-05-21T00:00:00Z',
+        playbackMode: 'next'
+      }
+    };
+    vi.stubGlobal('fetch', mockFetch({ id: 'mod-one', displayName: 'Ada', isAdmin: false }, audioSnapshot));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+    vi.spyOn(crypto, 'randomUUID').mockReturnValueOnce('play-request').mockReturnValueOnce('next-request');
+
+    render(App);
+
+    await waitFor(() => expect(TestWebSocket.sockets).toHaveLength(1));
+    TestWebSocket.sockets[0].open();
+    await waitFor(() => expect(screen.getAllByText('Track one').length).toBeGreaterThan(0));
+    await fireEvent.keyDown(window, { key: 'MediaPlayPause' });
+    await fireEvent.keyDown(window, { key: 'MediaTrackNext' });
+
+    const audioCommands = TestWebSocket.sockets[0].sent.map((message) => JSON.parse(message)).filter((message) => message.type === 'audio.play');
+    expect(audioCommands).toEqual([
+      expect.objectContaining({ payload: { trackId: 'track-one', positionSeconds: 0 } }),
+      expect.objectContaining({ payload: { trackId: 'track-two', positionSeconds: 0 } })
+    ]);
+  });
+
   it('shows local audio badges in people lists', async () => {
     window.history.replaceState({}, '', '/?room=room-one');
     vi.stubGlobal('fetch', mockFetch(

@@ -351,6 +351,39 @@
   });
 
   $effect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    const mediaSession = navigator.mediaSession;
+    try {
+      mediaSession.setActionHandler('play', () => handleMediaPlaybackAction('play'));
+      mediaSession.setActionHandler('pause', () => handleMediaPlaybackAction('pause'));
+      mediaSession.setActionHandler('stop', () => handleMediaPlaybackAction('stop'));
+      mediaSession.setActionHandler('previoustrack', () => handleMediaPlaybackAction('previous'));
+      mediaSession.setActionHandler('nexttrack', () => handleMediaPlaybackAction('next'));
+      mediaSession.setActionHandler('seekbackward', () => handleMediaPlaybackAction('seek-backward'));
+      mediaSession.setActionHandler('seekforward', () => handleMediaPlaybackAction('seek-forward'));
+      mediaSession.setActionHandler('seekto', (details) => {
+        if (typeof details.seekTime === 'number') seekAudio(details.seekTime);
+      });
+    } catch {
+      // Older browsers can reject unsupported media session actions.
+    }
+    return () => {
+      try {
+        mediaSession.setActionHandler('play', null);
+        mediaSession.setActionHandler('pause', null);
+        mediaSession.setActionHandler('stop', null);
+        mediaSession.setActionHandler('previoustrack', null);
+        mediaSession.setActionHandler('nexttrack', null);
+        mediaSession.setActionHandler('seekbackward', null);
+        mediaSession.setActionHandler('seekforward', null);
+        mediaSession.setActionHandler('seekto', null);
+      } catch {
+        // Ignore cleanup errors from partial implementations.
+      }
+    };
+  });
+
+  $effect(() => {
     if (!preferencesReady) return;
     savePanelState(panelState);
   });
@@ -1334,6 +1367,42 @@
     playAudio(nextTrackId);
   }
 
+  function seekRelativeAudio(deltaSeconds: number) {
+    const current = Math.max(0, Math.floor(audioElement?.currentTime ?? effectiveAudioPositionSeconds ?? 0));
+    seekAudio(Math.max(0, current + deltaSeconds));
+  }
+
+  function handleMediaPlaybackAction(action: 'play-pause' | 'play' | 'pause' | 'stop' | 'previous' | 'next' | 'seek-backward' | 'seek-forward') {
+    if (!canUseAudioControls || !currentAudioTrack) return false;
+    if (action === 'play-pause') {
+      if (effectiveAudioState === 'playing') pauseAudio();
+      else playAudio();
+      return true;
+    }
+    if (action === 'play') {
+      playAudio();
+      return true;
+    }
+    if (action === 'pause' || action === 'stop') {
+      pauseAudio();
+      return true;
+    }
+    if (action === 'previous') {
+      skipAudio(-1);
+      return true;
+    }
+    if (action === 'next') {
+      skipAudio(1);
+      return true;
+    }
+    if (action === 'seek-backward') {
+      seekRelativeAudio(-10);
+      return true;
+    }
+    seekRelativeAudio(10);
+    return true;
+  }
+
   function playAudio(trackId = effectiveCurrentAudioTrackId || currentAudioTrack?.id || '') {
     if (!trackId) return;
     if (usingLocalAudioMode()) {
@@ -1618,9 +1687,26 @@
     };
   }
 
+  function mediaKeyAction(key: string): Parameters<typeof handleMediaPlaybackAction>[0] | null {
+    if (key === 'MediaPlayPause') return 'play-pause';
+    if (key === 'MediaPlay') return 'play';
+    if (key === 'MediaPause') return 'pause';
+    if (key === 'MediaStop') return 'stop';
+    if (key === 'MediaTrackPrevious') return 'previous';
+    if (key === 'MediaTrackNext') return 'next';
+    if (key === 'MediaRewind') return 'seek-backward';
+    if (key === 'MediaFastForward') return 'seek-forward';
+    return null;
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape' && localVolumeOpen) {
       localVolumeOpen = false;
+      return;
+    }
+    const mediaAction = mediaKeyAction(event.key);
+    if (mediaAction) {
+      if (handleMediaPlaybackAction(mediaAction)) event.preventDefault();
       return;
     }
     if (shouldIgnoreShortcut(event)) return;
