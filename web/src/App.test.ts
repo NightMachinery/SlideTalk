@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { audioCacheStats, hiddenUploaderDisplayName, listCachedAudio } from './lib/audioCache';
@@ -917,6 +917,59 @@ describe('App landing polish', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Show current track' }));
     expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+
+  it('filters audio tracks by search text and combines search with starred', async () => {
+    window.history.replaceState({}, '', '/?room=room-one');
+    vi.stubGlobal('fetch', mockFetch(
+      { id: 'mod-one', displayName: 'Ada', isAdmin: false },
+      {
+        ...roomSnapshot,
+        room: { ...roomSnapshot.room, roomMode: 'audio' },
+        caller: { userId: 'mod-one', role: 'mod', isAdmin: false },
+        audio: {
+          tracks: [
+            { id: 'track-one', sha256: 'track-one-sha', originalName: 'alpha-theme.mp3', title: 'Alpha Theme', metadataTitle: '', mimeType: 'audio/mpeg', sizeBytes: 7, durationSeconds: 30, hasCover: false, uploadedByUserId: 'mod-one', uploadedByName: 'Ada', uploaderDisplayName: '', displayOrder: 0, missing: false, starredByCaller: true },
+            { id: 'track-two', sha256: 'track-two-sha', originalName: 'secret-filename.mp3', title: 'Hidden Filename', metadataTitle: '', mimeType: 'audio/mpeg', sizeBytes: 8, durationSeconds: 40, hasCover: false, uploadedByUserId: 'user-two', uploadedByName: 'Grace Hopper', uploaderDisplayName: '', displayOrder: 1, missing: false, starredByCaller: false },
+            { id: 'track-three', sha256: 'track-three-sha', originalName: 'closing.mp3', title: 'Closing Notes', metadataTitle: '', mimeType: 'audio/mpeg', sizeBytes: 9, durationSeconds: 50, hasCover: false, uploadedByUserId: 'user-three', uploadedByName: 'Nora', uploaderDisplayName: 'Nora Curator', displayOrder: 2, missing: false, starredByCaller: true }
+          ],
+          currentTrackId: 'track-one', nextTrackId: 'track-two', state: 'paused', positionSeconds: 0, startedAt: null, serverNow: '2026-05-21T00:00:00Z', playbackMode: 'stop'
+        }
+      }
+    ));
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    render(App);
+
+    const list = await waitFor(() => {
+      const element = document.querySelector('.audio-track-list');
+      expect(element).toBeTruthy();
+      return element as HTMLElement;
+    });
+    const search = await screen.findByRole('searchbox', { name: 'Search audio tracks' });
+
+    await fireEvent.input(search, { target: { value: 'secret-filename' } });
+    expect(within(list).getByText('Hidden Filename')).toBeTruthy();
+    expect(within(list).queryByText('Alpha Theme')).toBeNull();
+    expect(within(list).queryByText('Closing Notes')).toBeNull();
+
+    await fireEvent.input(search, { target: { value: 'nora curator' } });
+    expect(within(list).getByText('Closing Notes')).toBeTruthy();
+    expect(within(list).queryByText('Hidden Filename')).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Starred' }));
+    expect(within(list).getByText('Closing Notes')).toBeTruthy();
+    expect(within(list).queryByText('Hidden Filename')).toBeNull();
+
+    await fireEvent.input(search, { target: { value: 'grace hopper' } });
+    expect(within(list).queryByText('Hidden Filename')).toBeNull();
+    expect(within(list).getByText('No audio tracks match this search.')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear audio search' }));
+    expect((search as HTMLInputElement).value).toBe('');
+    expect(within(list).getByText('Alpha Theme')).toBeTruthy();
+    expect(within(list).getByText('Closing Notes')).toBeTruthy();
   });
 
 

@@ -29,6 +29,7 @@
   import Settings from '@lucide/svelte/icons/settings';
   import SkipBack from '@lucide/svelte/icons/skip-back';
   import SkipForward from '@lucide/svelte/icons/skip-forward';
+  import Search from '@lucide/svelte/icons/search';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import Shield from '@lucide/svelte/icons/shield';
   import Star from '@lucide/svelte/icons/star';
@@ -191,6 +192,7 @@
   let audioBufferedPercent = $state(0);
   let audioDownloadProgress = $state<Record<string, number>>({});
   let audioDownloadBusy = $state<Record<string, boolean>>({});
+  let audioSearchQuery = $state('');
   let audioDownloaded = $state<Record<string, boolean>>({});
   let activeNextAudioCacheKey = '';
   let audioCoverUrls = $state<Record<string, string>>({});
@@ -252,7 +254,12 @@
   const effectiveAudioPositionSeconds = $derived(localAudioModeActive ? localEstimatedAudioSeconds : estimatedAudioSeconds);
   const effectiveAudioPlaybackMode = $derived(localAudioModeActive ? localAudioPlaybackMode : snapshot.audio.playbackMode);
   const currentAudioTrack = $derived(snapshot.audio.tracks.find((track) => track.id === effectiveCurrentAudioTrackId) ?? snapshot.audio.tracks[0]);
-  const displayedAudioTracks = $derived(starredOnly ? snapshot.audio.tracks.filter((track) => track.starredByCaller) : snapshot.audio.tracks);
+  const normalizedAudioSearchQuery = $derived(audioSearchQuery.trim().toLowerCase());
+  const displayedAudioTracks = $derived.by(() => {
+    const tracks = starredOnly ? snapshot.audio.tracks.filter((track) => track.starredByCaller) : snapshot.audio.tracks;
+    if (!normalizedAudioSearchQuery) return tracks;
+    return tracks.filter((track) => audioTrackMatchesSearch(track, normalizedAudioSearchQuery));
+  });
   const slideMimeType = $derived(snapshot.slide?.mimeType || 'application/pdf');
   const slideIsPDF = $derived(slideMimeType === 'application/pdf');
   const slideIsImage = $derived(slideMimeType.startsWith('image/'));
@@ -1324,6 +1331,13 @@
     link.click();
   }
 
+  function audioTrackMatchesSearch(track: RoomSnapshot['audio']['tracks'][number], query: string) {
+    const searchable = [trackDisplayTitle(track), trackUploaderName(track), track.originalName]
+      .join(' ')
+      .toLowerCase();
+    return searchable.includes(query);
+  }
+
   function seedLocalAudioState() {
     localAudioTrackId = effectiveCurrentAudioTrackId || snapshot.audio.currentTrackId || currentAudioTrack?.id || '';
     localAudioPlaybackMode = effectiveAudioPlaybackMode;
@@ -2001,8 +2015,32 @@
   </div>
 {/snippet}
 
+{#snippet audioListToolbar()}
+  <div class="audio-list-toolbar">
+    <label class="audio-search-field">
+      <span>Search audio</span>
+      <Search size={16} aria-hidden="true" />
+      <input
+        type="search"
+        aria-label="Search audio tracks"
+        placeholder="Search title, uploader, filename"
+        bind:value={audioSearchQuery}
+      />
+      {#if audioSearchQuery}
+        <button class="icon-button audio-search-clear" type="button" title="Clear audio search" aria-label="Clear audio search" onclick={() => (audioSearchQuery = '')}>×</button>
+      {/if}
+    </label>
+    <button class={['icon-text-button', 'starred-filter-button', starredOnly ? 'active-filter' : 'inactive-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
+      <Star size={16} /> Starred
+    </button>
+  </div>
+{/snippet}
+
 {#snippet audioTrackList(listClass: string)}
   <div class={["audio-track-list", listClass]}>
+    {#if displayedAudioTracks.length === 0 && snapshot.audio.tracks.length > 0}
+      <p class="audio-search-empty">No audio tracks match this search.</p>
+    {/if}
     {#each displayedAudioTracks as track, index (track.id)}
       <div
         class={["audio-track", track.id === effectiveCurrentAudioTrackId && 'current-audio-track']}
@@ -2140,11 +2178,7 @@
           ></audio>
           {@render audioMiniPlayer(false)}
           <div class="audio-stage-manage">
-            <div class="audio-list-toolbar">
-              <button class={['icon-text-button', 'starred-filter-button', starredOnly ? 'active-filter' : 'inactive-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
-                <Star size={16} /> Starred
-              </button>
-            </div>
+            {@render audioListToolbar()}
             {@render audioTrackList('audio-stage-track-list')}
             {#if canUploadAudio}
               <form class="audio-upload" onsubmit={(event) => { event.preventDefault(); submitAudioUpload(); }}>
@@ -2542,11 +2576,7 @@
               onloadedmetadata={updateAudioTiming}
             ></audio>
             {@render audioMiniPlayer(true)}
-            <div class="audio-list-toolbar">
-              <button class={['icon-text-button', 'starred-filter-button', starredOnly ? 'active-filter' : 'inactive-filter']} type="button" onclick={() => (starredOnly = !starredOnly)}>
-                <Star size={16} /> Starred
-              </button>
-            </div>
+            {@render audioListToolbar()}
             {@render audioTrackList('audio-panel-track-list')}
             {#if canUploadAudio}
               <form class="audio-upload" onsubmit={(event) => { event.preventDefault(); submitAudioUpload(); }}>

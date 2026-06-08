@@ -23,4 +23,12 @@ describe('audio mini-player scroll layout styles', () => {
     expect(appCss).toMatch(/\.finish-mode-control\s*\{[\s\S]*position:\s*relative;/);
     expect(appCss).toMatch(/\.finish-mode-trigger\s*\{[\s\S]*width:\s*38px;/);
   });
+
+
+  it('keeps search controls in the list toolbar instead of the mini-player', () => {
+    expect(appCss).toMatch(/\.audio-list-toolbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(180px,\s*1fr\)\s*auto;/);
+    expect(appCss).toMatch(/\.audio-search-field\s*\{[\s\S]*position:\s*relative;/);
+    expect(appCss).toMatch(/\.audio-search-empty\s*\{[\s\S]*text-align:\s*center;/);
+  });
+
 });
