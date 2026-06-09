@@ -1205,7 +1205,20 @@ func nextAudioTrackID(roomID string, tracks []SnapshotAudioTrack, currentID stri
 	return tracks[index+1].ID
 }
 
+func previousAudioTrackID(roomID string, tracks []SnapshotAudioTrack, currentID string, mode string) string {
+	if mode == AudioModeShuffle {
+		return shuffledAudioTrackID(roomID, tracks, currentID, -1)
+	}
+	reversed := slices.Clone(tracks)
+	slices.Reverse(reversed)
+	return nextAudioTrackID(roomID, reversed, currentID, mode)
+}
+
 func nextShuffledAudioTrackID(roomID string, tracks []SnapshotAudioTrack, currentID string) string {
+	return shuffledAudioTrackID(roomID, tracks, currentID, 1)
+}
+
+func shuffledAudioTrackID(roomID string, tracks []SnapshotAudioTrack, currentID string, direction int) string {
 	if len(tracks) == 0 {
 		return ""
 	}
@@ -1231,10 +1244,11 @@ func nextShuffledAudioTrackID(roomID string, tracks []SnapshotAudioTrack, curren
 			break
 		}
 	}
-	if index < 0 || index+1 >= len(shuffled) {
+	if index < 0 {
 		return shuffled[0].ID
 	}
-	return shuffled[index+1].ID
+	nextIndex := (index + direction + len(shuffled)) % len(shuffled)
+	return shuffled[nextIndex].ID
 }
 
 func deterministicShuffleKey(roomID string, trackID string) uint64 {

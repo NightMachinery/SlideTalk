@@ -555,6 +555,23 @@ func TestSnapshotExposesNextAudioTrackID(t *testing.T) {
 	}
 }
 
+func TestShuffleNextAndPreviousAreInverse(t *testing.T) {
+	tracks := []SnapshotAudioTrack{{ID: "first"}, {ID: "second"}, {ID: "third"}, {ID: "fourth"}}
+	for _, track := range tracks {
+		next := nextAudioTrackID("room-one", tracks, track.ID, AudioModeShuffle)
+		previous := previousAudioTrackID("room-one", tracks, track.ID, AudioModeShuffle)
+		if next == "" || previous == "" {
+			t.Fatalf("shuffle around %q returned next=%q previous=%q", track.ID, next, previous)
+		}
+		if got := previousAudioTrackID("room-one", tracks, next, AudioModeShuffle); got != track.ID {
+			t.Fatalf("previous(next(%q)) = %q, want %q", track.ID, got, track.ID)
+		}
+		if got := nextAudioTrackID("room-one", tracks, previous, AudioModeShuffle); got != track.ID {
+			t.Fatalf("next(previous(%q)) = %q, want %q", track.ID, got, track.ID)
+		}
+	}
+}
+
 func TestAudioEndedUsesSnapshotNextTrackIDForShuffle(t *testing.T) {
 	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
 	ctx := context.Background()

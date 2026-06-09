@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextLocalAudioTrackId } from './localAudioMode';
+import { nextLocalAudioTrackId, previousLocalAudioTrackId } from './localAudioMode';
 
 const tracks = [{ id: 'first' }, { id: 'second' }, { id: 'third' }];
 
@@ -26,4 +26,22 @@ describe('nextLocalAudioTrackId', () => {
     expect(first).not.toBe('first');
     expect(second).toBe(first);
   });
+
+  it('makes shuffle next and previous inverse operations', () => {
+    for (const track of tracks) {
+      const next = nextLocalAudioTrackId('room-one', tracks, track.id, 'shuffle');
+      const previous = previousLocalAudioTrackId('room-one', tracks, track.id, 'shuffle');
+
+      expect(previousLocalAudioTrackId('room-one', tracks, next, 'shuffle')).toBe(track.id);
+      expect(nextLocalAudioTrackId('room-one', tracks, previous, 'shuffle')).toBe(track.id);
+    }
+  });
+
+  it('returns the only track for single-track shuffle in both directions', () => {
+    const singleTrack = [{ id: 'only' }];
+
+    expect(nextLocalAudioTrackId('room-one', singleTrack, 'only', 'shuffle')).toBe('only');
+    expect(previousLocalAudioTrackId('room-one', singleTrack, 'only', 'shuffle')).toBe('only');
+  });
+
 });

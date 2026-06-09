@@ -6,7 +6,7 @@ export type AudioPlaybackMode = RoomSnapshot['audio']['playbackMode'];
 export function nextLocalAudioTrackId(roomId: string, tracks: AudioTrackRef[], currentId: string, mode: AudioPlaybackMode): string {
   if (tracks.length === 0 || mode === 'stop') return '';
   if (mode === 'repeat-one') return currentId;
-  if (mode === 'shuffle') return nextShuffledLocalAudioTrackId(roomId, tracks, currentId);
+  if (mode === 'shuffle') return shuffledLocalAudioTrackId(roomId, tracks, currentId, 1);
   const index = tracks.findIndex((track) => track.id === currentId);
   if (index < 0) return tracks[0]?.id ?? '';
   if (mode === 'previous' || mode === 'repeat-backward') {
@@ -17,7 +17,12 @@ export function nextLocalAudioTrackId(roomId: string, tracks: AudioTrackRef[], c
   return tracks[index + 1].id;
 }
 
-function nextShuffledLocalAudioTrackId(roomId: string, tracks: AudioTrackRef[], currentId: string): string {
+export function previousLocalAudioTrackId(roomId: string, tracks: AudioTrackRef[], currentId: string, mode: AudioPlaybackMode): string {
+  if (mode === 'shuffle') return shuffledLocalAudioTrackId(roomId, tracks, currentId, -1);
+  return nextLocalAudioTrackId(roomId, [...tracks].reverse(), currentId, mode);
+}
+
+function shuffledLocalAudioTrackId(roomId: string, tracks: AudioTrackRef[], currentId: string, direction: -1 | 1): string {
   if (tracks.length === 0) return '';
   if (tracks.length === 1) return tracks[0].id;
   const shuffled = [...tracks].sort((a, b) => {
@@ -28,8 +33,9 @@ function nextShuffledLocalAudioTrackId(roomId: string, tracks: AudioTrackRef[], 
     return a.id.localeCompare(b.id);
   });
   const index = shuffled.findIndex((track) => track.id === currentId);
-  if (index < 0 || index + 1 >= shuffled.length) return shuffled[0].id;
-  return shuffled[index + 1].id;
+  if (index < 0) return shuffled[0].id;
+  const nextIndex = (index + direction + shuffled.length) % shuffled.length;
+  return shuffled[nextIndex].id;
 }
 
 function deterministicShuffleKey(roomId: string, trackId: string): bigint {

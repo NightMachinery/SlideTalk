@@ -49,7 +49,7 @@
   import { addToast } from '../toast.svelte';
   import { classifyAudioUploadFiles, safeBrowserAudio } from './audioUploadValidation';
   import { loadLocalAudioPreferences, saveLocalAudioPreferences } from './localAudioPreferences';
-  import { nextLocalAudioTrackId, type AudioPlaybackMode } from './localAudioMode';
+  import { nextLocalAudioTrackId, previousLocalAudioTrackId, type AudioPlaybackMode } from './localAudioMode';
   import { displayNameForRoom, onlineCountLabel, sortedByOnline } from './memberDisplay';
   import { parseMarkdown } from './markdown';
   import SelectMenu from './SelectMenu.svelte';
@@ -1370,7 +1370,7 @@
   }
 
   function localPreviousAudioTrackId() {
-    return nextLocalAudioTrackId(snapshot.room.id, [...snapshot.audio.tracks].reverse(), effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
+    return previousLocalAudioTrackId(snapshot.room.id, snapshot.audio.tracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
   }
 
   function localNextAudioTrackId() {
