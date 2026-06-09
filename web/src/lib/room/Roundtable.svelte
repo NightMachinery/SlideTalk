@@ -2021,7 +2021,8 @@
       <span>Search audio</span>
       <Search size={16} aria-hidden="true" />
       <input
-        type="search"
+        type="text"
+        inputmode="search"
         aria-label="Search audio tracks"
         placeholder="Search title, uploader, filename"
         bind:value={audioSearchQuery}
@@ -2176,7 +2177,6 @@
             onprogress={updateAudioBuffer}
             onloadedmetadata={updateAudioTiming}
           ></audio>
-          {@render audioMiniPlayer(false)}
           <div class="audio-stage-manage">
             {@render audioListToolbar()}
             {@render audioTrackList('audio-stage-track-list')}
@@ -2207,6 +2207,7 @@
               <p class="upload-message">{audioMessage}</p>
             {/if}
           </div>
+          {@render audioMiniPlayer(false)}
         </div>
       {:else if snapshot.room.roomMode === 'markdown'}
         <div class="markdown-panel">
@@ -2575,7 +2576,6 @@
               onprogress={updateAudioBuffer}
               onloadedmetadata={updateAudioTiming}
             ></audio>
-            {@render audioMiniPlayer(true)}
             {@render audioListToolbar()}
             {@render audioTrackList('audio-panel-track-list')}
             {#if canUploadAudio}
@@ -2604,6 +2604,7 @@
             {#if audioMessage}
               <p class="upload-message">{audioMessage}</p>
             {/if}
+            {@render audioMiniPlayer(true)}
           </div>
         {/if}
       </section>

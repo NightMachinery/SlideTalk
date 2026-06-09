@@ -31,4 +31,19 @@ describe('audio mini-player scroll layout styles', () => {
     expect(appCss).toMatch(/\.audio-search-empty\s*\{[\s\S]*text-align:\s*center;/);
   });
 
+
+
+  it('pins the mini-player to the bottom and keeps volume above other popovers', () => {
+    expect(appCss).toMatch(/\.audio-mini-player\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0;/);
+    expect(appCss).not.toMatch(/\.audio-mini-player\s*\{[^}]*top:\s*0;/);
+    expect(appCss).toMatch(/\.local-audio-control\s*\{[\s\S]*z-index:\s*180;/);
+    expect(appCss).toMatch(/\.local-volume-popover\s*\{[\s\S]*z-index:\s*220;/);
+    expect(appCss).toMatch(/\.finish-mode-popover\s*\{[\s\S]*z-index:\s*130;/);
+  });
+
+  it('uses a compact responsive audio upload row', () => {
+    expect(appCss).toMatch(/\.audio-upload\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto;/);
+    expect(appCss).toMatch(/@media \(max-width: 840px\)[\s\S]*\.audio-upload\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
+  });
+
 });

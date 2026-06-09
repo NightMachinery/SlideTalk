@@ -947,7 +947,9 @@ describe('App landing polish', () => {
       expect(element).toBeTruthy();
       return element as HTMLElement;
     });
-    const search = await screen.findByRole('searchbox', { name: 'Search audio tracks' });
+    const search = await screen.findByRole('textbox', { name: 'Search audio tracks' });
+    expect(search.getAttribute('type')).toBe('text');
+    expect(search.getAttribute('inputmode')).toBe('search');
 
     await fireEvent.input(search, { target: { value: 'secret-filename' } });
     expect(within(list).getByText('Hidden Filename')).toBeTruthy();

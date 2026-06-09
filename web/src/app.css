@@ -1555,16 +1555,27 @@ code {
 }
 
 .audio-panel,
-.audio-upload,
 .audio-track-list,
 .audio-now {
   display: grid;
   gap: 10px;
 }
 
+.audio-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.audio-upload progress,
+.audio-upload .upload-message {
+  grid-column: 1 / -1;
+}
+
 .audio-stage {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   align-content: start;
   gap: 14px;
   min-height: 0;
@@ -1578,8 +1589,8 @@ code {
 
 .audio-mini-player {
   position: sticky;
-  top: 0;
-  z-index: 20;
+  bottom: 0;
+  z-index: 60;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
@@ -1596,7 +1607,7 @@ code {
 .audio-mini-player.compact {
   grid-template-columns: 1fr;
   position: sticky;
-  top: 0;
+  bottom: 0;
   width: 100%;
   border-radius: 8px;
   padding: 10px;
@@ -1811,6 +1822,7 @@ code {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 4px;
+  padding-bottom: 12px;
 }
 
 .audio-panel-track-list {
@@ -1818,6 +1830,7 @@ code {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 4px;
+  padding-bottom: 12px;
 }
 
 .audio-stage-art {
@@ -1930,7 +1943,7 @@ code {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  z-index: 40;
+  z-index: 180;
   isolation: isolate;
 }
 
@@ -1966,7 +1979,7 @@ code {
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
-  z-index: 120;
+  z-index: 220;
   width: 168px;
   padding: 10px 12px;
   border: 1px solid oklch(82% 0.018 245);
@@ -2359,7 +2372,7 @@ kbd {
 
   .audio-mini-player {
     position: sticky;
-    top: 0;
+    bottom: 0;
     grid-template-columns: 1fr;
     padding: 10px;
   }
@@ -2376,7 +2389,8 @@ kbd {
     grid-template-columns: 1fr;
   }
 
-  .audio-list-toolbar {
+  .audio-list-toolbar,
+  .audio-upload {
     grid-template-columns: 1fr;
   }
 
