@@ -162,7 +162,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			claimed_at text not null,
 			primary key(room_id, track_id, tag_slug, claimed_by_user_id, claim_source),
 			foreign key(room_id) references rooms(id),
-			foreign key(track_id) references room_audio_tracks(id),
+			foreign key(track_id) references room_audio_tracks(id) on delete cascade,
 			foreign key(claimed_by_user_id) references users(id)
 		)`,
 		`create index if not exists idx_room_audio_track_tag_claims_track on room_audio_track_tag_claims (room_id, track_id, tag_slug)`,
@@ -241,6 +241,9 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}); err != nil {
 		return err
 	}
+	if err := ensureAudioTagClaimsCascade(ctx, db); err != nil {
+		return err
+	}
 	if err := addMissingColumns(ctx, db, "room_members", map[string]string{
 		"allow_audio_upload":  `alter table room_members add column allow_audio_upload integer not null default 0`,
 		"allow_audio_control": `alter table room_members add column allow_audio_control integer not null default 0`,
@@ -252,6 +255,74 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		if err := backfillRoomExpirations(ctx, db, 7*24*time.Hour); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func ensureAudioTagClaimsCascade(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `pragma foreign_key_list(room_audio_track_tag_claims)`)
+	if err != nil {
+		return fmt.Errorf("read audio tag claim foreign keys: %w", err)
+	}
+	defer rows.Close()
+	hasCascade := false
+	for rows.Next() {
+		var id int
+		var seq int
+		var table string
+		var from string
+		var to string
+		var onUpdate string
+		var onDelete string
+		var match string
+		if err := rows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+			return fmt.Errorf("scan audio tag claim foreign key: %w", err)
+		}
+		if table == "room_audio_tracks" && from == "track_id" && onDelete == "CASCADE" {
+			hasCascade = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate audio tag claim foreign keys: %w", err)
+	}
+	if hasCascade {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin audio tag claim cascade migration: %w", err)
+	}
+	defer rollback(tx)
+	if _, err := tx.ExecContext(ctx, `alter table room_audio_track_tag_claims rename to room_audio_track_tag_claims_old`); err != nil {
+		return fmt.Errorf("rename old audio tag claims: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `create table room_audio_track_tag_claims (
+		room_id text not null,
+		track_id text not null,
+		tag_slug text not null,
+		tag_label text not null,
+		claimed_by_user_id text not null,
+		claim_source text not null,
+		claimed_at text not null,
+		primary key(room_id, track_id, tag_slug, claimed_by_user_id, claim_source),
+		foreign key(room_id) references rooms(id),
+		foreign key(track_id) references room_audio_tracks(id) on delete cascade,
+		foreign key(claimed_by_user_id) references users(id)
+	)`); err != nil {
+		return fmt.Errorf("create cascading audio tag claims: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `insert into room_audio_track_tag_claims (room_id, track_id, tag_slug, tag_label, claimed_by_user_id, claim_source, claimed_at)
+		select room_id, track_id, tag_slug, tag_label, claimed_by_user_id, claim_source, claimed_at from room_audio_track_tag_claims_old`); err != nil {
+		return fmt.Errorf("copy audio tag claims: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `drop table room_audio_track_tag_claims_old`); err != nil {
+		return fmt.Errorf("drop old audio tag claims: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `create index if not exists idx_room_audio_track_tag_claims_track on room_audio_track_tag_claims (room_id, track_id, tag_slug)`); err != nil {
+		return fmt.Errorf("create audio tag claim index: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit audio tag claim cascade migration: %w", err)
 	}
 	return nil
 }
@@ -336,4 +407,8 @@ func columns(ctx context.Context, db *sql.DB, table string) ([]string, error) {
 		return nil, fmt.Errorf("iterate %s columns: %w", table, err)
 	}
 	return names, nil
+}
+
+func rollback(tx *sql.Tx) {
+	_ = tx.Rollback()
 }

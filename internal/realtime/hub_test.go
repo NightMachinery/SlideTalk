@@ -917,6 +917,39 @@ func TestAudioTagsUseLayeredClaimsAndPermissions(t *testing.T) {
 	}
 }
 
+func TestAudioEndedUsesFilterPublisherStarsForSharedStarredScope(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	firstID := insertAudioTrack(t, ctx, hub, roomID, modID, "first-starred")
+	insertAudioTrack(t, ctx, hub, roomID, modID, "second-unstarred")
+	thirdID := insertAudioTrack(t, ctx, hub, roomID, modID, "third-starred")
+	for _, trackID := range []string{firstID, thirdID} {
+		if err := hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandAudioStar, Payload: mustJSON(t, map[string]any{"trackId": trackID, "starred": true})}); err != nil {
+			t.Fatalf("participant star: %v", err)
+		}
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandPeopleAudioPermission, Payload: mustJSON(t, map[string]any{"userId": participantID, "allowAudioControl": true})}); err != nil {
+		t.Fatalf("grant participant control: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandAudioMode, Payload: mustJSON(t, map[string]any{"mode": AudioModeNext})}); err != nil {
+		t.Fatalf("set audio mode: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandAudioPlay, Payload: mustJSON(t, map[string]any{"trackId": firstID, "positionSeconds": 0, "filterScope": map[string]any{"starredOnly": true}})}); err != nil {
+		t.Fatalf("play starred scope: %v", err)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandAudioEnded}); err != nil {
+		t.Fatalf("audio ended: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot after ended: %v", err)
+	}
+	if snapshot.Audio.CurrentTrackID != thirdID {
+		t.Fatalf("current after starred scoped end = %q, want %q", snapshot.Audio.CurrentTrackID, thirdID)
+	}
+}
+
 func TestAudioFilterScopeControlsNextTrackAndVisibleReorder(t *testing.T) {
 	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
 	ctx := context.Background()

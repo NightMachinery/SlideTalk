@@ -1204,10 +1204,6 @@ func mergeVisibleAudioReorder(existing []SnapshotAudioTrack, orderedVisibleIDs [
 }
 
 func (h *Hub) advanceAudioEnded(ctx context.Context, roomID string) error {
-	tracks, err := h.listAudioTracks(ctx, roomID, "", false)
-	if err != nil {
-		return err
-	}
 	var currentID string
 	var mode string
 	var rawScope string
@@ -1215,6 +1211,14 @@ func (h *Hub) advanceAudioEnded(ctx context.Context, roomID string) error {
 	var updatedAt sql.NullString
 	if err := h.db.QueryRowContext(ctx, `select coalesce(audio_current_track_id, ''), audio_playback_mode, audio_filter_scope, audio_filter_updated_by_user_id, audio_filter_updated_at from rooms where id = ?`, roomID).Scan(&currentID, &mode, &rawScope, &updatedBy, &updatedAt); err != nil {
 		return fmt.Errorf("read audio ended state: %w", err)
+	}
+	trackCallerID := ""
+	if updatedBy.Valid {
+		trackCallerID = updatedBy.String
+	}
+	tracks, err := h.listAudioTracks(ctx, roomID, trackCallerID, false)
+	if err != nil {
+		return err
 	}
 	tracks = audioTracksMatchingScope(tracks, parseAudioFilterScope(rawScope, updatedBy, updatedAt))
 	nextID := ""

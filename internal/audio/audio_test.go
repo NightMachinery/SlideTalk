@@ -192,6 +192,73 @@ func TestCleanupRemovesTracksAfterRoomExpiration(t *testing.T) {
 	}
 }
 
+func TestRemoveTrackDeletesCollaborativeTagClaims(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAudioFixture(t)
+	content := []byte("ID3tagged audio")
+	status, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sha256Hex(content),
+		OriginalName: "tagged.mp3",
+		MIMEType:     "audio/mpeg",
+		File:         bytes.NewReader(content),
+		IsAdmin:      true,
+	})
+	if err != nil {
+		t.Fatalf("store audio: %v", err)
+	}
+	if _, err := fixture.db.ExecContext(ctx, `insert into room_audio_track_tag_claims (room_id, track_id, tag_slug, tag_label, claimed_by_user_id, claim_source, claimed_at) values (?, ?, 'calm', 'Calm', ?, 'moderator', ?)`, fixture.room.ID, status.ID, fixture.admin.ID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert tag claim: %v", err)
+	}
+
+	if err := fixture.service.RemoveTrack(ctx, fixture.room.ID, status.ID, fixture.admin.ID, true); err != nil {
+		t.Fatalf("remove tagged audio track: %v", err)
+	}
+
+	var claims int
+	if err := fixture.db.QueryRowContext(ctx, `select count(*) from room_audio_track_tag_claims where track_id = ?`, status.ID).Scan(&claims); err != nil {
+		t.Fatalf("count tag claims: %v", err)
+	}
+	if claims != 0 {
+		t.Fatalf("tag claims = %d, want 0", claims)
+	}
+}
+
+func TestCleanupRemovesTaggedTracksAfterRoomExpiration(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAudioFixture(t)
+	content := []byte("ID3old tagged audio")
+	status, err := fixture.service.Store(ctx, fixture.admin.ID, StoreInput{
+		RoomID:       fixture.room.ID,
+		SHA256:       sha256Hex(content),
+		OriginalName: "old-tagged.mp3",
+		MIMEType:     "audio/mpeg",
+		File:         bytes.NewReader(content),
+		IsAdmin:      true,
+	})
+	if err != nil {
+		t.Fatalf("store audio: %v", err)
+	}
+	if _, err := fixture.db.ExecContext(ctx, `insert into room_audio_track_tag_claims (room_id, track_id, tag_slug, tag_label, claimed_by_user_id, claim_source, claimed_at) values (?, ?, 'ambient', 'Ambient', ?, 'moderator', ?)`, fixture.room.ID, status.ID, fixture.admin.ID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert tag claim: %v", err)
+	}
+	if _, err := fixture.db.ExecContext(ctx, `update rooms set expires_at = ? where id = ?`, time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano), fixture.room.ID); err != nil {
+		t.Fatalf("expire room: %v", err)
+	}
+
+	if err := fixture.service.Cleanup(ctx, time.Now().UTC(), 7*24*time.Hour); err != nil {
+		t.Fatalf("cleanup tagged expired audio: %v", err)
+	}
+
+	var claims int
+	if err := fixture.db.QueryRowContext(ctx, `select count(*) from room_audio_track_tag_claims where track_id = ?`, status.ID).Scan(&claims); err != nil {
+		t.Fatalf("count tag claims: %v", err)
+	}
+	if claims != 0 {
+		t.Fatalf("tag claims = %d, want 0", claims)
+	}
+}
+
 func TestCleanupKeepsAudioForNeverExpireRoomPastFallbackCutoff(t *testing.T) {
 	ctx := context.Background()
 	fixture := newAudioFixture(t)
