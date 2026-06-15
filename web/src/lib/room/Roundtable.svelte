@@ -38,13 +38,14 @@
   import Upload from '@lucide/svelte/icons/upload';
   import UserRound from '@lucide/svelte/icons/user-round';
   import UsersRound from '@lucide/svelte/icons/users-round';
+  import { DEFAULT_AUDIO_TAGS, audioTagSlug } from '../audioTags';
   import { audioCoverRequest, audioFileRequest, checkUploadPreflight, createAudioDownloadLink, createMigrationLink, getSlideStatus, insufficientFreeSpaceMessage, removeRoomAudio, removeRoomSlide, slideFileRequest, updateRoomAudio, updateRoomSettings, updateRoomSlideExpiration, uploadRoomAudio, uploadRoomSlide } from '../api';
   import { audioCacheStats, audioSubtype, clearAudioCache, fileNameWithoutExtension, gcAudioCache, getCachedAudio, hiddenUploaderDisplayName, listCachedAudio, putCachedAudio, trackDisplayTitle, trackUploaderName } from '../audioCache';
   import { readAudioUploadMetadata } from '../audioMetadata';
   import { cacheLimits } from '../cacheConstants';
   import { copyText } from '../clipboard';
   import type { CacheStats } from '../blobCache';
-  import type { RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
+  import type { AudioFilterScope, RealtimeCommand, RoomSnapshot, SnapshotMember } from '../realtime';
   import { clearSlideCache, gcSlideCache, getCachedSlide, putCachedSlide, slideCacheStats } from '../slideCache';
   import { addToast } from '../toast.svelte';
   import { classifyAudioUploadFiles, safeBrowserAudio } from './audioUploadValidation';
@@ -193,6 +194,10 @@
   let audioDownloadProgress = $state<Record<string, number>>({});
   let audioDownloadBusy = $state<Record<string, boolean>>({});
   let audioSearchQuery = $state('');
+  let includedAudioTagGroups = $state<string[][]>([]);
+  let excludedAudioTags = $state<string[]>([]);
+  let editingAudioTagsTrackId = $state('');
+  let customAudioTagDraft = $state('');
   let audioDownloaded = $state<Record<string, boolean>>({});
   let activeNextAudioCacheKey = '';
   let audioCoverUrls = $state<Record<string, string>>({});
@@ -246,6 +251,7 @@
   const canSeeAudio = true;
   const canUploadAudio = $derived(isMod || (snapshot.caller.role === 'participant' && (snapshot.room.allowAudienceAudioUpload || !!callerParticipant?.allowAudioUpload)));
   const canControlAudio = $derived(isMod || (snapshot.caller.role === 'participant' && (snapshot.room.allowAudienceAudioControl || !!callerParticipant?.allowAudioControl)));
+  const canTagAudio = $derived(isMod || (snapshot.caller.role === 'participant' && (snapshot.room.allowAudienceAudioTagging || !!callerParticipant?.allowAudioTagging)));
   const localAudioModeActive = $derived(manualLocalAudioMode || offlineLocalAudioMode);
   const canUseAudioControls = $derived(canControlAudio || localAudioModeActive);
   const localEstimatedAudioSeconds = $derived(localAudioState === 'playing' ? Math.max(Math.floor((nowMs - localAudioStartedAtMs) / 1000), 0) : localAudioPositionSeconds);
@@ -255,11 +261,18 @@
   const effectiveAudioPlaybackMode = $derived(localAudioModeActive ? localAudioPlaybackMode : snapshot.audio.playbackMode);
   const currentAudioTrack = $derived(snapshot.audio.tracks.find((track) => track.id === effectiveCurrentAudioTrackId) ?? snapshot.audio.tracks[0]);
   const normalizedAudioSearchQuery = $derived(audioSearchQuery.trim().toLowerCase());
-  const displayedAudioTracks = $derived.by(() => {
-    const tracks = starredOnly ? snapshot.audio.tracks.filter((track) => track.starredByCaller) : snapshot.audio.tracks;
-    if (!normalizedAudioSearchQuery) return tracks;
-    return tracks.filter((track) => audioTrackMatchesSearch(track, normalizedAudioSearchQuery));
+  const audioFilterScope = $derived<AudioFilterScope>({ search: audioSearchQuery, includeGroups: includedAudioTagGroups.map((tags) => ({ tags })), excludeTags: excludedAudioTags, starredOnly, updatedByUserId: '', updatedAt: '' });
+  const roomFilterScopeKey = $derived(audioFilterScopeKey(snapshot.audio.filterScope));
+  const localFilterScopeKey = $derived(audioFilterScopeKey(audioFilterScope));
+  const localAudioFilterDiffers = $derived(roomFilterScopeKey !== localFilterScopeKey);
+  const availableAudioTags = $derived.by(() => {
+    const tags = new Map(DEFAULT_AUDIO_TAGS.map((label) => [audioTagSlug(label), label]));
+    for (const track of snapshot.audio.tracks) {
+      for (const tag of track.tags) tags.set(tag.slug, tag.label);
+    }
+    return [...tags].map(([slug, label]) => ({ slug, label }));
   });
+  const displayedAudioTracks = $derived.by(() => snapshot.audio.tracks.filter((track) => audioTrackMatchesFilter(track, audioFilterScope)));
   const slideMimeType = $derived(snapshot.slide?.mimeType || 'application/pdf');
   const slideIsPDF = $derived(slideMimeType === 'application/pdf');
   const slideIsImage = $derived(slideMimeType.startsWith('image/'));
@@ -1331,11 +1344,66 @@
     link.click();
   }
 
-  function audioTrackMatchesSearch(track: RoomSnapshot['audio']['tracks'][number], query: string) {
-    const searchable = [trackDisplayTitle(track), trackUploaderName(track), track.originalName]
-      .join(' ')
-      .toLowerCase();
+  function audioTrackMatchesFilter(track: RoomSnapshot['audio']['tracks'][number], scope: AudioFilterScope) {
+    if (scope.starredOnly && !track.starredByCaller) return false;
+    const tagSlugs = new Set(track.tags.map((tag) => tag.slug));
+    if (scope.excludeTags.some((tag) => tagSlugs.has(tag))) return false;
+    if (scope.includeGroups.length > 0 && !scope.includeGroups.some((group) => group.tags.every((tag) => tagSlugs.has(tag)))) return false;
+    const query = scope.search.trim().toLowerCase();
+    if (!query) return true;
+    const searchable = [trackDisplayTitle(track), trackUploaderName(track), track.originalName, ...track.tags.map((tag) => tag.label)].join(' ').toLowerCase();
     return searchable.includes(query);
+  }
+
+  function audioFilterScopeKey(scope: AudioFilterScope) {
+    return JSON.stringify({ search: scope.search.trim(), includeGroups: scope.includeGroups.filter((group) => group.tags.length > 0), excludeTags: scope.excludeTags, starredOnly: scope.starredOnly });
+  }
+
+  function resetAudioFiltersToRoomScope() {
+    audioSearchQuery = snapshot.audio.filterScope.search;
+    includedAudioTagGroups = snapshot.audio.filterScope.includeGroups.map((group) => [...group.tags]);
+    excludedAudioTags = [...snapshot.audio.filterScope.excludeTags];
+    starredOnly = snapshot.audio.filterScope.starredOnly;
+  }
+
+  function tagFilterState(slug: string) {
+    if (excludedAudioTags.includes(slug)) return 'exclude';
+    if (includedAudioTagGroups.some((group) => group.includes(slug))) return 'include';
+    return 'off';
+  }
+
+  function cycleAudioTagFilter(slug: string) {
+    const state = tagFilterState(slug);
+    includedAudioTagGroups = includedAudioTagGroups.map((group) => group.filter((tag) => tag !== slug)).filter((group) => group.length > 0);
+    excludedAudioTags = excludedAudioTags.filter((tag) => tag !== slug);
+    if (state === 'off') includedAudioTagGroups = [...includedAudioTagGroups, [slug]];
+    if (state === 'include') excludedAudioTags = [...excludedAudioTags, slug];
+  }
+
+  function stickAudioTagToPrevious(slug: string) {
+    const flat = includedAudioTagGroups.flat();
+    const previous = flat[flat.indexOf(slug) - 1];
+    if (!previous) return;
+    includedAudioTagGroups = includedAudioTagGroups.map((group) => group.filter((tag) => tag !== slug && tag !== previous)).filter((group) => group.length > 0);
+    includedAudioTagGroups = [...includedAudioTagGroups, [previous, slug]];
+    excludedAudioTags = excludedAudioTags.filter((tag) => tag !== slug && tag !== previous);
+  }
+
+  function trackHasTag(track: RoomSnapshot['audio']['tracks'][number], slug: string) {
+    return track.tags.some((tag) => tag.slug === slug && tag.claims.some((claim) => claim.userId === snapshot.caller.userId || isMod));
+  }
+
+  function toggleAudioTag(track: RoomSnapshot['audio']['tracks'][number], tag: string) {
+    if (!canTagAudio && !isMod && track.uploadedByUserId !== snapshot.caller.userId) return;
+    const slug = audioTagSlug(tag);
+    send({ type: 'audio.tag', payload: { trackId: track.id, tag, tagged: !trackHasTag(track, slug) } });
+  }
+
+  function addCustomAudioTag(track: RoomSnapshot['audio']['tracks'][number]) {
+    const tag = customAudioTagDraft.trim();
+    if (!tag) return;
+    customAudioTagDraft = '';
+    send({ type: 'audio.tag', payload: { trackId: track.id, tag, tagged: true } });
   }
 
   function seedLocalAudioState() {
@@ -1370,11 +1438,11 @@
   }
 
   function localPreviousAudioTrackId() {
-    return previousLocalAudioTrackId(snapshot.room.id, snapshot.audio.tracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
+    return previousLocalAudioTrackId(snapshot.room.id, displayedAudioTracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
   }
 
   function localNextAudioTrackId() {
-    return nextLocalAudioTrackId(snapshot.room.id, snapshot.audio.tracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
+    return nextLocalAudioTrackId(snapshot.room.id, displayedAudioTracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
   }
 
   function skipAudio(direction: -1 | 1) {
@@ -1431,7 +1499,7 @@
     }
     if (!canControlAudio) return;
     const positionSeconds = trackId === snapshot.audio.currentTrackId ? Math.max(0, Math.floor(audioElement?.currentTime ?? snapshot.audio.positionSeconds)) : 0;
-    send({ type: 'audio.play', payload: { trackId, positionSeconds } });
+    send({ type: 'audio.play', payload: { trackId, positionSeconds, filterScope: audioFilterScope } });
   }
 
   function pauseAudio() {
@@ -1565,11 +1633,22 @@
 
   function moveAudioTrack(index: number, direction: -1 | 1) {
     if (!isMod) return;
+    const track = snapshot.audio.tracks[index];
+    const visibleTrackIds = displayedAudioTracks.map((item) => item.id);
+    const visibleIndex = visibleTrackIds.indexOf(track?.id ?? '');
+    if (visibleIndex >= 0 && visibleTrackIds.length !== snapshot.audio.tracks.length) {
+      const target = visibleIndex + direction;
+      if (target < 0 || target >= visibleTrackIds.length) return;
+      const reorderedVisible = [...visibleTrackIds];
+      [reorderedVisible[visibleIndex], reorderedVisible[target]] = [reorderedVisible[target], reorderedVisible[visibleIndex]];
+      send({ type: 'audio.reorder', payload: { trackIds: reorderedVisible, visibleTrackIds } });
+      return;
+    }
     const next = [...snapshot.audio.tracks];
     const target = index + direction;
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
-    send({ type: 'audio.reorder', payload: { trackIds: next.map((track) => track.id) } });
+    send({ type: 'audio.reorder', payload: { trackIds: next.map((item) => item.id) } });
   }
 
   function setAudioMode(mode: RoomSnapshot['audio']['playbackMode']) {
@@ -1587,7 +1666,7 @@
       send({ type: 'audio.ended' }, { notifyOnFailure: false });
       return;
     }
-    const nextTrackId = nextLocalAudioTrackId(snapshot.room.id, snapshot.audio.tracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
+    const nextTrackId = nextLocalAudioTrackId(snapshot.room.id, displayedAudioTracks, effectiveCurrentAudioTrackId, effectiveAudioPlaybackMode);
     if (!nextTrackId || effectiveAudioPlaybackMode === 'stop') {
       localAudioState = 'paused';
       localAudioPositionSeconds = 0;
@@ -2035,6 +2114,19 @@
       <Star size={16} /> Starred
     </button>
   </div>
+  <div class="audio-tag-filter-row" aria-label="Audio tag filters">
+    {#each availableAudioTags as tag (tag.slug)}
+      <button class={['audio-tag-chip', `filter-${tagFilterState(tag.slug)}`]} type="button" aria-pressed={tagFilterState(tag.slug) !== 'off'} onclick={() => cycleAudioTagFilter(tag.slug)}>
+        {tagFilterState(tag.slug) === 'exclude' ? 'Not ' : ''}{tag.label}
+      </button>
+      {#if tagFilterState(tag.slug) === 'include'}
+        <button class="audio-tag-stick" type="button" title="Group with previous included tag" aria-label={`Group ${tag.label} with previous tag`} onclick={() => stickAudioTagToPrevious(tag.slug)}>+</button>
+      {/if}
+    {/each}
+    {#if localAudioFilterDiffers}
+      <button class="audio-filter-reset" type="button" onclick={resetAudioFiltersToRoomScope}>Reset to room filter</button>
+    {/if}
+  </div>
 {/snippet}
 
 {#snippet audioTrackList(listClass: string)}
@@ -2059,6 +2151,13 @@
         <div class="audio-track-main">
           <strong>{trackDisplayTitle(track)}</strong>
           <span>{trackUploaderName(track) ? `${trackUploaderName(track)} · ` : ''}{formatBytes(track.sizeBytes)} · {audioSubtype(track.mimeType)}</span>
+          {#if track.tags.length > 0}
+            <div class="audio-track-tags">
+              {#each track.tags as tag (tag.slug)}
+                <span class={['audio-track-tag', tag.claims.some((claim) => claim.source === 'moderator') ? 'tag-by-mod' : tag.claims.some((claim) => claim.source === 'uploader') ? 'tag-by-uploader' : 'tag-by-other']}>{tag.label}</span>
+              {/each}
+            </div>
+          {/if}
           {#if audioDownloadBusy[track.sha256] || audioDownloadProgress[track.sha256] > 0}
             <progress max="100" value={audioDownloadProgress[track.sha256] ?? 0}>{audioDownloadProgress[track.sha256] ?? 0}%</progress>
           {/if}
@@ -2077,6 +2176,9 @@
           {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
             <button class="icon-button" type="button" title="Rename" aria-label="Rename" onclick={(event) => { event.stopPropagation(); startRenameAudio(track); }}><Pencil size={16} /></button>
           {/if}
+          {#if canTagAudio || track.uploadedByUserId === snapshot.caller.userId}
+            <button class="icon-button" type="button" title="Tag" aria-label="Tag" onclick={(event) => { event.stopPropagation(); editingAudioTagsTrackId = editingAudioTagsTrackId === track.id ? '' : track.id; }}><SlidersHorizontal size={16} /></button>
+          {/if}
           <a class="download-link icon-button" title="Download" aria-label="Download" href={audioFileRequest(snapshot.room.id, track.id).url} onclick={(event) => { event.stopPropagation(); downloadAudio(event, track.id, track.originalName); }}><Download size={16} /></a>
           {#if isMod || track.uploadedByUserId === snapshot.caller.userId}
             <button class="danger-button icon-button" title="Remove" aria-label="Remove" type="button" onclick={(event) => { event.stopPropagation(); deleteAudioTrack(track.id); }}>
@@ -2094,6 +2196,17 @@
             <button type="button" onclick={() => (audioTitleDraft = track.metadataTitle || fileNameWithoutExtension(track.originalName))}>Title</button>
             <button type="submit">Save</button>
           </form>
+        {/if}
+        {#if editingAudioTagsTrackId === track.id}
+          <div class="audio-tag-editor">
+            {#each availableAudioTags as tag (tag.slug)}
+              <button type="button" class={['audio-tag-chip', track.tags.some((item) => item.slug === tag.slug) && 'on-track']} onclick={() => toggleAudioTag(track, tag.label)}>{tag.label}</button>
+            {/each}
+            <form onsubmit={(event) => { event.preventDefault(); addCustomAudioTag(track); }}>
+              <input aria-label="Custom audio tag" bind:value={customAudioTagDraft} maxlength="40" placeholder="Custom tag" />
+              <button type="submit">Add tag</button>
+            </form>
+          </div>
         {/if}
       </div>
     {/each}
@@ -2417,6 +2530,17 @@
                       <Volume2 size={16} />
                     </button>
                   {/if}
+                  {#if member.role === 'participant' && !snapshot.room.allowAudienceAudioTagging}
+                    <button
+                      class={['icon-button', 'permission-button', member.allowAudioTagging && 'active']}
+                      type="button"
+                      title={member.allowAudioTagging ? 'Revoke audio tagging' : 'Grant audio tagging'}
+                      aria-label={`${member.allowAudioTagging ? 'Revoke' : 'Grant'} ${memberDisplayName(member)} audio tagging`}
+                      onclick={() => send({ type: 'people.tagPermission', payload: { userId: member.userId, allowAudioTagging: !member.allowAudioTagging } })}
+                    >
+                      <SlidersHorizontal size={16} />
+                    </button>
+                  {/if}
                   {#if member.role === 'mod'}
                     <button type="button" onclick={() => setRole(member.userId, 'participant')}>
                       <Shield size={15} /> Demote
@@ -2683,6 +2807,14 @@
                 onchange={(event) => send({ type: 'settings.update', payload: { showAudioStarCounts: event.currentTarget.checked } })}
               />
               Show audio star counts
+            </label>
+            <label class="toggle-field">
+              <input
+                type="checkbox"
+                checked={snapshot.room.allowAudienceAudioTagging}
+                onchange={(event) => send({ type: 'settings.update', payload: { allowAudienceAudioTagging: event.currentTarget.checked } })}
+              />
+              Audience can tag audio
             </label>
             <SelectMenu
               label="Hands"

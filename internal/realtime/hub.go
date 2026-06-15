@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -187,6 +188,10 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		AllowAudienceAudioUpload  bool
 		AllowAudienceAudioControl bool
 		ShowAudioStarCounts       bool
+		AllowAudienceAudioTagging bool
+		AudioFilterScope          string
+		AudioFilterUpdatedBy      sql.NullString
+		AudioFilterUpdatedAt      sql.NullString
 		ExpiresAt                 sql.NullString
 		AudioCurrentTrackID       sql.NullString
 		AudioState                string
@@ -203,7 +208,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		TimerStartedAt            sql.NullString
 		RaiseHandMode             string
 	}
-	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.room_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.allow_audience_audio_upload, r.allow_audience_audio_control, r.show_audio_star_counts, r.expires_at, r.audio_current_track_id, r.audio_state, r.audio_position_seconds, r.audio_started_at, r.audio_playback_mode, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.RoomMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.AllowAudienceAudioUpload, &roomRow.AllowAudienceAudioControl, &roomRow.ShowAudioStarCounts, &roomRow.ExpiresAt, &roomRow.AudioCurrentTrackID, &roomRow.AudioState, &roomRow.AudioPositionSeconds, &roomRow.AudioStartedAt, &roomRow.AudioPlaybackMode, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
+	if err := h.db.QueryRowContext(ctx, `select r.id, r.title, r.password_hash, r.room_mode, r.allow_participant_markdown, r.slide_page, r.shared_navigation_enabled, r.allow_audience_audio_upload, r.allow_audience_audio_control, r.show_audio_star_counts, r.allow_audience_audio_tagging, r.audio_filter_scope, r.audio_filter_updated_by_user_id, r.audio_filter_updated_at, r.expires_at, r.audio_current_track_id, r.audio_state, r.audio_position_seconds, r.audio_started_at, r.audio_playback_mode, r.markdown, r.markdown_updated_by_user_id, u.display_name, r.markdown_updated_at, r.current_speaker_user_id, r.timer_state, r.timer_duration_seconds, r.timer_started_at, r.raise_hand_mode from rooms r left join users u on u.id = r.markdown_updated_by_user_id where r.id = ?`, roomID).Scan(&roomRow.ID, &roomRow.Title, &roomRow.PasswordHash, &roomRow.RoomMode, &roomRow.AllowParticipantMarkdown, &roomRow.SlidePage, &roomRow.SharedNavigationEnabled, &roomRow.AllowAudienceAudioUpload, &roomRow.AllowAudienceAudioControl, &roomRow.ShowAudioStarCounts, &roomRow.AllowAudienceAudioTagging, &roomRow.AudioFilterScope, &roomRow.AudioFilterUpdatedBy, &roomRow.AudioFilterUpdatedAt, &roomRow.ExpiresAt, &roomRow.AudioCurrentTrackID, &roomRow.AudioState, &roomRow.AudioPositionSeconds, &roomRow.AudioStartedAt, &roomRow.AudioPlaybackMode, &roomRow.Markdown, &roomRow.MarkdownUpdatedByUserID, &roomRow.MarkdownUpdatedByName, &roomRow.MarkdownUpdatedAt, &roomRow.CurrentSpeakerUserID, &roomRow.TimerState, &roomRow.TimerDurationSeconds, &roomRow.TimerStartedAt, &roomRow.RaiseHandMode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Snapshot{}, rooms.ErrNotFound
 		}
@@ -226,6 +231,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			AllowAudienceAudioUpload:  roomRow.AllowAudienceAudioUpload,
 			AllowAudienceAudioControl: roomRow.AllowAudienceAudioControl,
 			ShowAudioStarCounts:       roomRow.ShowAudioStarCounts,
+			AllowAudienceAudioTagging: roomRow.AllowAudienceAudioTagging,
 			NeverExpires:              !roomRow.ExpiresAt.Valid,
 		},
 		Caller: SnapshotCaller{
@@ -248,6 +254,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			PositionSeconds: roomRow.AudioPositionSeconds,
 			ServerNow:       time.Now().UTC().Format(time.RFC3339Nano),
 			PlaybackMode:    roomRow.AudioPlaybackMode,
+			FilterScope:     parseAudioFilterScope(roomRow.AudioFilterScope, roomRow.AudioFilterUpdatedBy, roomRow.AudioFilterUpdatedAt),
 		},
 	}
 	if roomRow.AudioCurrentTrackID.Valid {
@@ -280,6 +287,7 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 			IsOnline:          h.IsUserOnline(roomID, member.UserID),
 			AllowAudioUpload:  member.AllowAudioUpload,
 			AllowAudioControl: member.AllowAudioControl,
+			AllowAudioTagging: member.AllowAudioTagging,
 			AudioLocalMode:    h.isAudioLocalMode(roomID, member.UserID),
 		}
 		if member.Role == rooms.RoleObserver {
@@ -309,7 +317,8 @@ func (h *Hub) Snapshot(ctx context.Context, roomID string, callerUserID string) 
 		return Snapshot{}, err
 	}
 	snapshot.Audio.Tracks = audioTracks
-	snapshot.Audio.NextTrackID = nextAudioTrackID(roomID, audioTracks, snapshot.Audio.CurrentTrackID, snapshot.Audio.PlaybackMode)
+	scopedAudioTracks := audioTracksMatchingScope(audioTracks, snapshot.Audio.FilterScope)
+	snapshot.Audio.NextTrackID = nextAudioTrackID(roomID, scopedAudioTracks, snapshot.Audio.CurrentTrackID, snapshot.Audio.PlaybackMode)
 	return snapshot, nil
 }
 
@@ -374,6 +383,20 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return ErrBadCommand
 		}
 		if err := h.setMemberAudioPermissions(ctx, roomID, payload.UserID, payload.AllowAudioUpload, payload.AllowAudioControl); err != nil {
+			return err
+		}
+	case CommandPeopleTagPermission:
+		if !isMod {
+			return ErrForbidden
+		}
+		var payload struct {
+			UserID            string `json:"userId"`
+			AllowAudioTagging *bool  `json:"allowAudioTagging"`
+		}
+		if err := json.Unmarshal(command.Payload, &payload); err != nil || payload.UserID == "" || payload.AllowAudioTagging == nil {
+			return ErrBadCommand
+		}
+		if err := h.setMemberAudioTaggingPermission(ctx, roomID, payload.UserID, *payload.AllowAudioTagging); err != nil {
 			return err
 		}
 	case CommandPeopleKick:
@@ -532,6 +555,7 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			AllowAudienceAudioUpload  *bool   `json:"allowAudienceAudioUpload"`
 			AllowAudienceAudioControl *bool   `json:"allowAudienceAudioControl"`
 			ShowAudioStarCounts       *bool   `json:"showAudioStarCounts"`
+			AllowAudienceAudioTagging *bool   `json:"allowAudienceAudioTagging"`
 		}
 		if err := json.Unmarshal(command.Payload, &payload); err != nil {
 			return ErrBadCommand
@@ -577,6 +601,11 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 				return fmt.Errorf("update audio star count setting: %w", err)
 			}
 		}
+		if payload.AllowAudienceAudioTagging != nil {
+			if _, err := h.db.ExecContext(ctx, `update rooms set allow_audience_audio_tagging = ? where id = ?`, *payload.AllowAudienceAudioTagging, roomID); err != nil {
+				return fmt.Errorf("update audience audio tagging: %w", err)
+			}
+		}
 		if payload.RaiseHandMode != nil && *payload.RaiseHandMode == RaiseHandModeOff {
 			if _, err := h.db.ExecContext(ctx, `delete from raised_hands where room_id = ?`, roomID); err != nil {
 				return fmt.Errorf("clear hands: %w", err)
@@ -587,8 +616,9 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return err
 		}
 		var payload struct {
-			TrackID         string `json:"trackId"`
-			PositionSeconds int    `json:"positionSeconds"`
+			TrackID         string                    `json:"trackId"`
+			PositionSeconds int                       `json:"positionSeconds"`
+			FilterScope     *SnapshotAudioFilterScope `json:"filterScope"`
 		}
 		if err := json.Unmarshal(command.Payload, &payload); err != nil {
 			return ErrBadCommand
@@ -603,7 +633,11 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return err
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
-		if _, err := h.db.ExecContext(ctx, `update rooms set audio_current_track_id = ?, audio_state = ?, audio_position_seconds = ?, audio_started_at = ? where id = ?`, payload.TrackID, AudioStatePlaying, payload.PositionSeconds, now, roomID); err != nil {
+		filterJSON := ""
+		if payload.FilterScope != nil {
+			filterJSON = marshalAudioFilterScope(*payload.FilterScope)
+		}
+		if _, err := h.db.ExecContext(ctx, `update rooms set audio_current_track_id = ?, audio_state = ?, audio_position_seconds = ?, audio_started_at = ?, audio_filter_scope = ?, audio_filter_updated_by_user_id = ?, audio_filter_updated_at = ? where id = ?`, payload.TrackID, AudioStatePlaying, payload.PositionSeconds, now, filterJSON, callerUserID, now, roomID); err != nil {
 			return fmt.Errorf("play audio: %w", err)
 		}
 	case CommandAudioPause:
@@ -652,12 +686,13 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 			return ErrForbidden
 		}
 		var payload struct {
-			TrackIDs []string `json:"trackIds"`
+			TrackIDs        []string `json:"trackIds"`
+			VisibleTrackIDs []string `json:"visibleTrackIds"`
 		}
 		if err := json.Unmarshal(command.Payload, &payload); err != nil {
 			return ErrBadCommand
 		}
-		if err := h.reorderAudio(ctx, roomID, payload.TrackIDs); err != nil {
+		if err := h.reorderAudio(ctx, roomID, payload.TrackIDs, payload.VisibleTrackIDs); err != nil {
 			return err
 		}
 	case CommandAudioMode:
@@ -675,6 +710,30 @@ func (h *Hub) HandleCommand(ctx context.Context, roomID string, callerUserID str
 		}
 	case CommandAudioEnded:
 		if err := h.advanceAudioEnded(ctx, roomID); err != nil {
+			return err
+		}
+	case CommandAudioFilterScope:
+		if err := h.requireAudioControl(ctx, roomID, callerUserID, details.Membership.Role, isMod); err != nil {
+			return err
+		}
+		var payload SnapshotAudioFilterScope
+		if err := json.Unmarshal(command.Payload, &payload); err != nil {
+			return ErrBadCommand
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if _, err := h.db.ExecContext(ctx, `update rooms set audio_filter_scope = ?, audio_filter_updated_by_user_id = ?, audio_filter_updated_at = ? where id = ?`, marshalAudioFilterScope(payload), callerUserID, now, roomID); err != nil {
+			return fmt.Errorf("update audio filter scope: %w", err)
+		}
+	case CommandAudioTag:
+		var payload struct {
+			TrackID string `json:"trackId"`
+			Tag     string `json:"tag"`
+			Tagged  bool   `json:"tagged"`
+		}
+		if err := json.Unmarshal(command.Payload, &payload); err != nil || payload.TrackID == "" || strings.TrimSpace(payload.Tag) == "" {
+			return ErrBadCommand
+		}
+		if err := h.setAudioTag(ctx, roomID, payload.TrackID, callerUserID, details.Membership.Role, isMod, payload.Tag, payload.Tagged); err != nil {
 			return err
 		}
 	case CommandAudioStar:
@@ -982,6 +1041,9 @@ func (h *Hub) listAudioTracks(ctx context.Context, roomID string, callerUserID s
 			tracks[index].StarredByCaller = starred[tracks[index].ID]
 		}
 	}
+	if err := h.attachAudioTags(ctx, roomID, tracks); err != nil {
+		return nil, err
+	}
 	if showStarCounts && len(tracks) > 0 {
 		countRows, err := h.db.QueryContext(ctx, `select track_id, count(*) from room_audio_track_stars where room_id = ? group by track_id`, roomID)
 		if err != nil {
@@ -1078,10 +1140,13 @@ func (h *Hub) currentAudioPosition(ctx context.Context, roomID string) (int, err
 	return max(position, 0), nil
 }
 
-func (h *Hub) reorderAudio(ctx context.Context, roomID string, trackIDs []string) error {
+func (h *Hub) reorderAudio(ctx context.Context, roomID string, trackIDs []string, visibleTrackIDs []string) error {
 	existing, err := h.listAudioTracks(ctx, roomID, "", false)
 	if err != nil {
 		return err
+	}
+	if len(visibleTrackIDs) > 0 {
+		trackIDs = mergeVisibleAudioReorder(existing, trackIDs, visibleTrackIDs)
 	}
 	if len(trackIDs) != len(existing) {
 		return ErrBadCommand
@@ -1113,6 +1178,31 @@ func (h *Hub) reorderAudio(ctx context.Context, roomID string, trackIDs []string
 	return nil
 }
 
+func mergeVisibleAudioReorder(existing []SnapshotAudioTrack, orderedVisibleIDs []string, previousVisibleIDs []string) []string {
+	if len(orderedVisibleIDs) != len(previousVisibleIDs) {
+		return orderedVisibleIDs
+	}
+	visibleSet := map[string]bool{}
+	for _, id := range previousVisibleIDs {
+		visibleSet[id] = true
+	}
+	ordered := slices.Clone(orderedVisibleIDs)
+	merged := make([]string, 0, len(existing))
+	visibleIndex := 0
+	for _, track := range existing {
+		if visibleSet[track.ID] {
+			if visibleIndex >= len(ordered) {
+				return orderedVisibleIDs
+			}
+			merged = append(merged, ordered[visibleIndex])
+			visibleIndex++
+		} else {
+			merged = append(merged, track.ID)
+		}
+	}
+	return merged
+}
+
 func (h *Hub) advanceAudioEnded(ctx context.Context, roomID string) error {
 	tracks, err := h.listAudioTracks(ctx, roomID, "", false)
 	if err != nil {
@@ -1120,9 +1210,13 @@ func (h *Hub) advanceAudioEnded(ctx context.Context, roomID string) error {
 	}
 	var currentID string
 	var mode string
-	if err := h.db.QueryRowContext(ctx, `select coalesce(audio_current_track_id, ''), audio_playback_mode from rooms where id = ?`, roomID).Scan(&currentID, &mode); err != nil {
+	var rawScope string
+	var updatedBy sql.NullString
+	var updatedAt sql.NullString
+	if err := h.db.QueryRowContext(ctx, `select coalesce(audio_current_track_id, ''), audio_playback_mode, audio_filter_scope, audio_filter_updated_by_user_id, audio_filter_updated_at from rooms where id = ?`, roomID).Scan(&currentID, &mode, &rawScope, &updatedBy, &updatedAt); err != nil {
 		return fmt.Errorf("read audio ended state: %w", err)
 	}
+	tracks = audioTracksMatchingScope(tracks, parseAudioFilterScope(rawScope, updatedBy, updatedAt))
 	nextID := ""
 	if mode == AudioModeRepeatOne {
 		nextID = currentID
@@ -1254,6 +1348,262 @@ func shuffledAudioTrackID(roomID string, tracks []SnapshotAudioTrack, currentID 
 func deterministicShuffleKey(roomID string, trackID string) uint64 {
 	sum := sha256.Sum256([]byte(roomID + ":" + trackID))
 	return binary.BigEndian.Uint64(sum[:8])
+}
+
+func (h *Hub) setMemberAudioTaggingPermission(ctx context.Context, roomID string, userID string, allowTagging bool) error {
+	var role string
+	err := h.db.QueryRowContext(ctx, `select role from room_members where room_id = ? and user_id = ? and kicked_at is null`, roomID, userID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return rooms.ErrNotMember
+	}
+	if err != nil {
+		return fmt.Errorf("read audio tagging permission member: %w", err)
+	}
+	if role == rooms.RoleObserver {
+		return ErrBadCommand
+	}
+	if _, err := h.db.ExecContext(ctx, `update room_members set allow_audio_tagging = ? where room_id = ? and user_id = ? and kicked_at is null`, allowTagging, roomID, userID); err != nil {
+		return fmt.Errorf("update member audio tagging permission: %w", err)
+	}
+	return nil
+}
+
+func (h *Hub) requireAudioTagging(ctx context.Context, roomID string, trackID string, userID string, role string, isMod bool) (string, error) {
+	if isMod {
+		return "moderator", nil
+	}
+	if role == rooms.RoleObserver {
+		return "", ErrForbidden
+	}
+	var roomAllow bool
+	var memberAllow bool
+	var uploader string
+	if err := h.db.QueryRowContext(ctx, `select r.allow_audience_audio_tagging, rm.allow_audio_tagging, rat.uploaded_by_user_id from rooms r join room_members rm on rm.room_id = r.id join room_audio_tracks rat on rat.room_id = r.id where r.id = ? and rm.user_id = ? and rm.kicked_at is null and rat.id = ?`, roomID, userID, trackID).Scan(&roomAllow, &memberAllow, &uploader); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrBadCommand
+		}
+		return "", fmt.Errorf("read audio tagging permission: %w", err)
+	}
+	if uploader == userID {
+		return "uploader", nil
+	}
+	if roomAllow || memberAllow {
+		return "participant", nil
+	}
+	return "", ErrForbidden
+}
+
+func (h *Hub) setAudioTag(ctx context.Context, roomID string, trackID string, userID string, role string, isMod bool, label string, tagged bool) error {
+	if err := h.ensureAudioTrack(ctx, roomID, trackID); err != nil {
+		return err
+	}
+	slug, cleanLabel := normalizeAudioTag(label)
+	if slug == "" {
+		return ErrBadCommand
+	}
+	source, err := h.requireAudioTagging(ctx, roomID, trackID, userID, role, isMod)
+	if err != nil {
+		return err
+	}
+	if tagged {
+		if _, err := h.db.ExecContext(ctx, `insert into room_audio_track_tag_claims (room_id, track_id, tag_slug, tag_label, claimed_by_user_id, claim_source, claimed_at) values (?, ?, ?, ?, ?, ?, ?) on conflict(room_id, track_id, tag_slug, claimed_by_user_id, claim_source) do update set tag_label = excluded.tag_label, claimed_at = excluded.claimed_at`, roomID, trackID, slug, cleanLabel, userID, source, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("tag audio track: %w", err)
+		}
+		return nil
+	}
+	if isMod {
+		if _, err := h.db.ExecContext(ctx, `delete from room_audio_track_tag_claims where room_id = ? and track_id = ? and tag_slug = ?`, roomID, trackID, slug); err != nil {
+			return fmt.Errorf("untag audio track: %w", err)
+		}
+		return nil
+	}
+	if _, err := h.db.ExecContext(ctx, `delete from room_audio_track_tag_claims where room_id = ? and track_id = ? and tag_slug = ? and claimed_by_user_id = ? and claim_source = ?`, roomID, trackID, slug, userID, source); err != nil {
+		return fmt.Errorf("untag own audio track claim: %w", err)
+	}
+	return nil
+}
+
+func normalizeAudioTag(label string) (string, string) {
+	clean := strings.Join(strings.Fields(strings.TrimSpace(label)), " ")
+	if clean == "" || len([]rune(clean)) > 40 {
+		return "", ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(clean) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r > 127 {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "", ""
+	}
+	return slug, clean
+}
+
+func (h *Hub) attachAudioTags(ctx context.Context, roomID string, tracks []SnapshotAudioTrack) error {
+	if len(tracks) == 0 {
+		return nil
+	}
+	rows, err := h.db.QueryContext(ctx, `select track_id, tag_slug, tag_label, claimed_by_user_id, claim_source from room_audio_track_tag_claims where room_id = ? order by lower(tag_label), claim_source, claimed_at`, roomID)
+	if err != nil {
+		return fmt.Errorf("list audio tag claims: %w", err)
+	}
+	defer rows.Close()
+	byTrack := map[string]map[string]*SnapshotAudioTag{}
+	for rows.Next() {
+		var trackID, slug, label, userID, source string
+		if err := rows.Scan(&trackID, &slug, &label, &userID, &source); err != nil {
+			return fmt.Errorf("scan audio tag claim: %w", err)
+		}
+		if byTrack[trackID] == nil {
+			byTrack[trackID] = map[string]*SnapshotAudioTag{}
+		}
+		tag := byTrack[trackID][slug]
+		if tag == nil {
+			tag = &SnapshotAudioTag{Slug: slug, Label: label, Claims: []SnapshotAudioTagClaim{}}
+			byTrack[trackID][slug] = tag
+		}
+		tag.Claims = append(tag.Claims, SnapshotAudioTagClaim{UserID: userID, Source: source})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate audio tag claims: %w", err)
+	}
+	for index := range tracks {
+		trackTags := byTrack[tracks[index].ID]
+		if len(trackTags) == 0 {
+			tracks[index].Tags = []SnapshotAudioTag{}
+			continue
+		}
+		for _, tag := range trackTags {
+			tracks[index].Tags = append(tracks[index].Tags, *tag)
+		}
+		slices.SortFunc(tracks[index].Tags, func(a, b SnapshotAudioTag) int {
+			return strings.Compare(strings.ToLower(a.Label), strings.ToLower(b.Label))
+		})
+	}
+	return nil
+}
+
+func parseAudioFilterScope(raw string, updatedBy sql.NullString, updatedAt sql.NullString) SnapshotAudioFilterScope {
+	var scope SnapshotAudioFilterScope
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &scope)
+	}
+	scope = normalizeAudioFilterScope(scope)
+	if updatedBy.Valid {
+		scope.UpdatedByUserID = updatedBy.String
+	}
+	if updatedAt.Valid {
+		scope.UpdatedAt = updatedAt.String
+	}
+	return scope
+}
+
+func marshalAudioFilterScope(scope SnapshotAudioFilterScope) string {
+	scope = normalizeAudioFilterScope(scope)
+	bytes, err := json.Marshal(scope)
+	if err != nil {
+		return ""
+	}
+	return string(bytes)
+}
+
+func normalizeAudioFilterScope(scope SnapshotAudioFilterScope) SnapshotAudioFilterScope {
+	scope.Search = strings.TrimSpace(scope.Search)
+	for i := range scope.IncludeGroups {
+		seen := map[string]bool{}
+		var tags []string
+		for _, tag := range scope.IncludeGroups[i].Tags {
+			slug, _ := normalizeAudioTag(tag)
+			if slug != "" && !seen[slug] {
+				seen[slug] = true
+				tags = append(tags, slug)
+			}
+		}
+		scope.IncludeGroups[i].Tags = tags
+	}
+	groups := scope.IncludeGroups[:0]
+	for _, group := range scope.IncludeGroups {
+		if len(group.Tags) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	scope.IncludeGroups = groups
+	seenExclude := map[string]bool{}
+	exclude := scope.ExcludeTags[:0]
+	for _, tag := range scope.ExcludeTags {
+		slug, _ := normalizeAudioTag(tag)
+		if slug != "" && !seenExclude[slug] {
+			seenExclude[slug] = true
+			exclude = append(exclude, slug)
+		}
+	}
+	scope.ExcludeTags = exclude
+	return scope
+}
+
+func audioTracksMatchingScope(tracks []SnapshotAudioTrack, scope SnapshotAudioFilterScope) []SnapshotAudioTrack {
+	scope = normalizeAudioFilterScope(scope)
+	if scope.Search == "" && len(scope.IncludeGroups) == 0 && len(scope.ExcludeTags) == 0 && !scope.StarredOnly {
+		return tracks
+	}
+	filtered := make([]SnapshotAudioTrack, 0, len(tracks))
+	for _, track := range tracks {
+		if audioTrackMatchesScope(track, scope) {
+			filtered = append(filtered, track)
+		}
+	}
+	return filtered
+}
+
+func audioTrackMatchesScope(track SnapshotAudioTrack, scope SnapshotAudioFilterScope) bool {
+	if scope.StarredOnly && !track.StarredByCaller {
+		return false
+	}
+	tagSet := map[string]bool{}
+	var labels []string
+	for _, tag := range track.Tags {
+		tagSet[tag.Slug] = true
+		labels = append(labels, tag.Label)
+	}
+	for _, excluded := range scope.ExcludeTags {
+		if tagSet[excluded] {
+			return false
+		}
+	}
+	if len(scope.IncludeGroups) > 0 {
+		matchedGroup := false
+		for _, group := range scope.IncludeGroups {
+			matchedAll := true
+			for _, tag := range group.Tags {
+				if !tagSet[tag] {
+					matchedAll = false
+					break
+				}
+			}
+			if matchedAll {
+				matchedGroup = true
+				break
+			}
+		}
+		if !matchedGroup {
+			return false
+		}
+	}
+	query := strings.ToLower(strings.TrimSpace(scope.Search))
+	if query == "" {
+		return true
+	}
+	searchable := strings.ToLower(strings.Join([]string{track.Title, track.MetadataTitle, track.OriginalName, track.UploadedByName, track.UploaderDisplayName, strings.Join(labels, " ")}, " "))
+	return strings.Contains(searchable, query)
 }
 
 func currentAudioTrackID(ctx context.Context, db *store.DB, roomID string) string {

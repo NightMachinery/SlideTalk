@@ -75,6 +75,7 @@ type Member struct {
 	DisplayOrder      int
 	AllowAudioUpload  bool
 	AllowAudioControl bool
+	AllowAudioTagging bool
 }
 
 // Details contains room metadata and caller membership.
@@ -106,6 +107,7 @@ type SettingsInput struct {
 	RoomMode                  *string
 	AllowAudienceAudioUpload  *bool
 	AllowAudienceAudioControl *bool
+	AllowAudienceAudioTagging *bool
 	RaiseHandMode             *string
 }
 
@@ -370,6 +372,11 @@ func (s *Service) UpdateSettings(ctx context.Context, roomID string, input Setti
 			return Room{}, fmt.Errorf("update audience audio control: %w", err)
 		}
 	}
+	if input.AllowAudienceAudioTagging != nil {
+		if _, err := tx.ExecContext(ctx, `update rooms set allow_audience_audio_tagging = ?, updated_at = ? where id = ?`, *input.AllowAudienceAudioTagging, nowText(), roomID); err != nil {
+			return Room{}, fmt.Errorf("update audience audio tagging: %w", err)
+		}
+	}
 	if input.RaiseHandMode != nil {
 		mode := strings.TrimSpace(*input.RaiseHandMode)
 		if mode != "off" && mode != "manual" && mode != "queue" {
@@ -466,7 +473,7 @@ func (s *Service) UpdateRetention(ctx context.Context, roomID string, requesterU
 func (s *Service) ListMembers(ctx context.Context, roomID string) ([]Member, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`select u.id, u.display_name, rm.role, rm.display_order, rm.allow_audio_upload, rm.allow_audio_control
+		`select u.id, u.display_name, rm.role, rm.display_order, rm.allow_audio_upload, rm.allow_audio_control, rm.allow_audio_tagging
 		 from room_members rm
 		 join users u on u.id = rm.user_id
 		 where rm.room_id = ? and rm.kicked_at is null
@@ -480,7 +487,7 @@ func (s *Service) ListMembers(ctx context.Context, roomID string) ([]Member, err
 	var members []Member
 	for rows.Next() {
 		var member Member
-		if err := rows.Scan(&member.UserID, &member.DisplayName, &member.Role, &member.DisplayOrder, &member.AllowAudioUpload, &member.AllowAudioControl); err != nil {
+		if err := rows.Scan(&member.UserID, &member.DisplayName, &member.Role, &member.DisplayOrder, &member.AllowAudioUpload, &member.AllowAudioControl, &member.AllowAudioTagging); err != nil {
 			return nil, fmt.Errorf("scan member: %w", err)
 		}
 		members = append(members, member)

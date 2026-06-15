@@ -45,6 +45,10 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			raise_hand_mode text not null default 'manual',
 			expires_at text,
 			show_audio_star_counts integer not null default 0,
+			allow_audience_audio_tagging integer not null default 1,
+			audio_filter_scope text not null default '',
+			audio_filter_updated_by_user_id text,
+			audio_filter_updated_at text,
 			created_by_user_id text not null,
 			created_at text not null,
 			updated_at text not null,
@@ -57,6 +61,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			display_order integer not null,
 			allow_audio_upload integer not null default 0,
 			allow_audio_control integer not null default 0,
+			allow_audio_tagging integer not null default 0,
 			joined_at text not null,
 			kicked_at text,
 			primary key(room_id, user_id),
@@ -147,6 +152,20 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			foreign key(user_id) references users(id)
 		)`,
 		`create index if not exists idx_room_audio_track_stars_track on room_audio_track_stars (room_id, track_id)`,
+		`create table if not exists room_audio_track_tag_claims (
+			room_id text not null,
+			track_id text not null,
+			tag_slug text not null,
+			tag_label text not null,
+			claimed_by_user_id text not null,
+			claim_source text not null,
+			claimed_at text not null,
+			primary key(room_id, track_id, tag_slug, claimed_by_user_id, claim_source),
+			foreign key(room_id) references rooms(id),
+			foreign key(track_id) references room_audio_tracks(id),
+			foreign key(claimed_by_user_id) references users(id)
+		)`,
+		`create index if not exists idx_room_audio_track_tag_claims_track on room_audio_track_tag_claims (room_id, track_id, tag_slug)`,
 		`create table if not exists room_migration_links (
 			migration_id_hash text primary key,
 			room_id text not null,
@@ -176,26 +195,30 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}
 	hadRoomExpiresAt := slices.Contains(roomColumns, "expires_at")
 	alterStatements := map[string]string{
-		"current_speaker_user_id":      `alter table rooms add column current_speaker_user_id text`,
-		"room_mode":                    `alter table rooms add column room_mode text not null default 'slides'`,
-		"timer_state":                  `alter table rooms add column timer_state text not null default 'stopped'`,
-		"timer_duration_seconds":       `alter table rooms add column timer_duration_seconds integer not null default 0`,
-		"timer_started_at":             `alter table rooms add column timer_started_at text`,
-		"raise_hand_mode":              `alter table rooms add column raise_hand_mode text not null default 'manual'`,
-		"slide_page":                   `alter table rooms add column slide_page integer not null default 1`,
-		"shared_navigation_enabled":    `alter table rooms add column shared_navigation_enabled integer not null default 1`,
-		"allow_audience_audio_access":  `alter table rooms add column allow_audience_audio_access integer not null default 0`,
-		"allow_audience_audio_upload":  `alter table rooms add column allow_audience_audio_upload integer not null default 0`,
-		"allow_audience_audio_control": `alter table rooms add column allow_audience_audio_control integer not null default 0`,
-		"audio_current_track_id":       `alter table rooms add column audio_current_track_id text`,
-		"audio_state":                  `alter table rooms add column audio_state text not null default 'paused'`,
-		"audio_position_seconds":       `alter table rooms add column audio_position_seconds integer not null default 0`,
-		"audio_started_at":             `alter table rooms add column audio_started_at text`,
-		"audio_playback_mode":          `alter table rooms add column audio_playback_mode text not null default 'stop'`,
-		"markdown_updated_by_user_id":  `alter table rooms add column markdown_updated_by_user_id text`,
-		"markdown_updated_at":          `alter table rooms add column markdown_updated_at text`,
-		"expires_at":                   `alter table rooms add column expires_at text`,
-		"show_audio_star_counts":       `alter table rooms add column show_audio_star_counts integer not null default 0`,
+		"current_speaker_user_id":         `alter table rooms add column current_speaker_user_id text`,
+		"room_mode":                       `alter table rooms add column room_mode text not null default 'slides'`,
+		"timer_state":                     `alter table rooms add column timer_state text not null default 'stopped'`,
+		"timer_duration_seconds":          `alter table rooms add column timer_duration_seconds integer not null default 0`,
+		"timer_started_at":                `alter table rooms add column timer_started_at text`,
+		"raise_hand_mode":                 `alter table rooms add column raise_hand_mode text not null default 'manual'`,
+		"slide_page":                      `alter table rooms add column slide_page integer not null default 1`,
+		"shared_navigation_enabled":       `alter table rooms add column shared_navigation_enabled integer not null default 1`,
+		"allow_audience_audio_access":     `alter table rooms add column allow_audience_audio_access integer not null default 0`,
+		"allow_audience_audio_upload":     `alter table rooms add column allow_audience_audio_upload integer not null default 0`,
+		"allow_audience_audio_control":    `alter table rooms add column allow_audience_audio_control integer not null default 0`,
+		"audio_current_track_id":          `alter table rooms add column audio_current_track_id text`,
+		"audio_state":                     `alter table rooms add column audio_state text not null default 'paused'`,
+		"audio_position_seconds":          `alter table rooms add column audio_position_seconds integer not null default 0`,
+		"audio_started_at":                `alter table rooms add column audio_started_at text`,
+		"audio_playback_mode":             `alter table rooms add column audio_playback_mode text not null default 'stop'`,
+		"markdown_updated_by_user_id":     `alter table rooms add column markdown_updated_by_user_id text`,
+		"markdown_updated_at":             `alter table rooms add column markdown_updated_at text`,
+		"expires_at":                      `alter table rooms add column expires_at text`,
+		"show_audio_star_counts":          `alter table rooms add column show_audio_star_counts integer not null default 0`,
+		"allow_audience_audio_tagging":    `alter table rooms add column allow_audience_audio_tagging integer not null default 1`,
+		"audio_filter_scope":              `alter table rooms add column audio_filter_scope text not null default ''`,
+		"audio_filter_updated_by_user_id": `alter table rooms add column audio_filter_updated_by_user_id text`,
+		"audio_filter_updated_at":         `alter table rooms add column audio_filter_updated_at text`,
 	}
 	for column, statement := range alterStatements {
 		if !slices.Contains(roomColumns, column) {
@@ -221,6 +244,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := addMissingColumns(ctx, db, "room_members", map[string]string{
 		"allow_audio_upload":  `alter table room_members add column allow_audio_upload integer not null default 0`,
 		"allow_audio_control": `alter table room_members add column allow_audio_control integer not null default 0`,
+		"allow_audio_tagging": `alter table room_members add column allow_audio_tagging integer not null default 0`,
 	}); err != nil {
 		return err
 	}

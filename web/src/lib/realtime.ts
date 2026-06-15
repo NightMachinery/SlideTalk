@@ -8,6 +8,7 @@ export type SnapshotMember = {
   isOnline: boolean;
   allowAudioUpload: boolean;
   allowAudioControl: boolean;
+  allowAudioTagging: boolean;
   audioLocalMode: boolean;
 };
 
@@ -24,6 +25,7 @@ export type RoomSnapshot = {
     allowAudienceAudioUpload: boolean;
     allowAudienceAudioControl: boolean;
     showAudioStarCounts: boolean;
+    allowAudienceAudioTagging: boolean;
     expiresAt: string;
     neverExpires: boolean;
   };
@@ -74,6 +76,7 @@ export type RoomSnapshot = {
       missing: boolean;
       starredByCaller: boolean;
       starCount?: number;
+      tags: { slug: string; label: string; claims: { userId: string; source: 'moderator' | 'uploader' | 'participant' }[] }[];
     }[];
     currentTrackId: string;
     nextTrackId: string;
@@ -82,11 +85,21 @@ export type RoomSnapshot = {
     startedAt: string | null;
     serverNow: string;
     playbackMode: 'stop' | 'next' | 'previous' | 'repeat-one' | 'repeat-forward' | 'repeat-backward' | 'shuffle';
+    filterScope: AudioFilterScope;
   };
   markdown: string;
   markdownUpdatedByUserId: string;
   markdownUpdatedByName: string;
   markdownUpdatedAt: string;
+};
+
+export type AudioFilterScope = {
+  search: string;
+  includeGroups: { tags: string[] }[];
+  excludeTags: string[];
+  starredOnly: boolean;
+  updatedByUserId: string;
+  updatedAt: string;
 };
 
 export type RealtimeEvent = {
@@ -100,12 +113,12 @@ export type RealtimeEvent = {
 };
 
 type RoomSnapshotWireAudio = Partial<Omit<RoomSnapshot['audio'], 'tracks'>> & {
-  tracks?: (Omit<RoomSnapshot['audio']['tracks'][number], 'title' | 'metadataTitle' | 'durationSeconds' | 'hasCover' | 'uploadedByName' | 'uploaderDisplayName' | 'starredByCaller' | 'starCount'> &
-    Partial<Pick<RoomSnapshot['audio']['tracks'][number], 'title' | 'metadataTitle' | 'durationSeconds' | 'hasCover' | 'uploadedByName' | 'uploaderDisplayName' | 'starredByCaller' | 'starCount'>>)[];
+  tracks?: (Omit<RoomSnapshot['audio']['tracks'][number], 'title' | 'metadataTitle' | 'durationSeconds' | 'hasCover' | 'uploadedByName' | 'uploaderDisplayName' | 'starredByCaller' | 'starCount' | 'tags'> &
+    Partial<Pick<RoomSnapshot['audio']['tracks'][number], 'title' | 'metadataTitle' | 'durationSeconds' | 'hasCover' | 'uploadedByName' | 'uploaderDisplayName' | 'starredByCaller' | 'starCount' | 'tags'>>)[];
 };
 
-type SnapshotMemberWire = Omit<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl' | 'audioLocalMode'> &
-  Partial<Pick<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl' | 'audioLocalMode'>>;
+type SnapshotMemberWire = Omit<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl' | 'allowAudioTagging' | 'audioLocalMode'> &
+  Partial<Pick<SnapshotMember, 'allowAudioUpload' | 'allowAudioControl' | 'allowAudioTagging' | 'audioLocalMode'>>;
 
 type RoomSnapshotWire = Omit<RoomSnapshot, 'participants' | 'observers' | 'hands' | 'audio'> & {
   participants?: SnapshotMemberWire[] | null;
@@ -122,6 +135,7 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
       roomMode: snapshot.room.roomMode ?? 'slides',
       allowAudienceAudioUpload: snapshot.room.allowAudienceAudioUpload ?? false,
       allowAudienceAudioControl: snapshot.room.allowAudienceAudioControl ?? false,
+      allowAudienceAudioTagging: snapshot.room.allowAudienceAudioTagging ?? true,
       showAudioStarCounts: snapshot.room.showAudioStarCounts ?? false,
       expiresAt: snapshot.room.expiresAt ?? '',
       neverExpires: snapshot.room.neverExpires ?? false
@@ -139,6 +153,7 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
         uploadedByName: track.uploadedByName ?? '',
         uploaderDisplayName: track.uploaderDisplayName ?? '',
         starredByCaller: track.starredByCaller ?? false,
+        tags: track.tags ?? [],
         starCount: track.starCount ?? 0
       })),
       currentTrackId: snapshot.audio?.currentTrackId ?? '',
@@ -147,8 +162,20 @@ export function normalizeRoomSnapshot(snapshot: RoomSnapshotWire): RoomSnapshot 
       positionSeconds: snapshot.audio?.positionSeconds ?? 0,
       startedAt: snapshot.audio?.startedAt ?? null,
       serverNow: snapshot.audio?.serverNow ?? new Date().toISOString(),
-      playbackMode: snapshot.audio?.playbackMode ?? 'stop'
+      playbackMode: snapshot.audio?.playbackMode ?? 'stop',
+      filterScope: normalizeAudioFilterScope(snapshot.audio?.filterScope)
     }
+  };
+}
+
+function normalizeAudioFilterScope(scope?: Partial<AudioFilterScope> | null): AudioFilterScope {
+  return {
+    search: scope?.search ?? '',
+    includeGroups: (scope?.includeGroups ?? []).map((group) => ({ tags: group.tags ?? [] })).filter((group) => group.tags.length > 0),
+    excludeTags: scope?.excludeTags ?? [],
+    starredOnly: scope?.starredOnly ?? false,
+    updatedByUserId: scope?.updatedByUserId ?? '',
+    updatedAt: scope?.updatedAt ?? ''
   };
 }
 
@@ -157,6 +184,7 @@ function normalizeSnapshotMember(member: SnapshotMemberWire): SnapshotMember {
     ...member,
     allowAudioUpload: member.allowAudioUpload ?? false,
     allowAudioControl: member.allowAudioControl ?? false,
+    allowAudioTagging: member.allowAudioTagging ?? false,
     audioLocalMode: member.audioLocalMode ?? false
   };
 }
@@ -173,6 +201,10 @@ export type RealtimeCommand =
   | {
       type: 'people.audioPermission';
       payload: { userId: string; allowAudioUpload?: boolean; allowAudioControl?: boolean };
+    }
+  | {
+      type: 'people.tagPermission';
+      payload: { userId: string; allowAudioTagging: boolean };
     }
   | {
       type: 'people.kick';
@@ -206,6 +238,7 @@ export type RealtimeCommand =
         allowAudienceAudioUpload?: boolean;
         allowAudienceAudioControl?: boolean;
         showAudioStarCounts?: boolean;
+        allowAudienceAudioTagging?: boolean;
       };
     }
   | {
@@ -218,7 +251,7 @@ export type RealtimeCommand =
     }
   | {
       type: 'audio.play';
-      payload: { trackId?: string; positionSeconds: number };
+      payload: { trackId?: string; positionSeconds: number; filterScope?: AudioFilterScope };
     }
   | {
       type: 'audio.pause' | 'audio.ended';
@@ -233,7 +266,7 @@ export type RealtimeCommand =
     }
   | {
       type: 'audio.reorder';
-      payload: { trackIds: string[] };
+      payload: { trackIds: string[]; visibleTrackIds?: string[] };
     }
   | {
       type: 'audio.mode';
@@ -242,6 +275,14 @@ export type RealtimeCommand =
   | {
       type: 'audio.star';
       payload: { trackId: string; starred: boolean };
+    }
+  | {
+      type: 'audio.tag';
+      payload: { trackId: string; tag: string; tagged: boolean };
+    }
+  | {
+      type: 'audio.filterScope';
+      payload: AudioFilterScope;
     }
   | {
       type: 'presence.audioLocalMode';

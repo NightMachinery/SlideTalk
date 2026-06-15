@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -872,4 +873,85 @@ func mustJSON(t *testing.T, value any) json.RawMessage {
 		t.Fatalf("marshal payload: %v", err)
 	}
 	return bytes
+}
+
+func TestAudioTagsUseLayeredClaimsAndPermissions(t *testing.T) {
+	hub, _, _, roomID, modID, participantID := setupRealtimeTest(t)
+	ctx := context.Background()
+	trackID := insertAudioTrack(t, ctx, hub, roomID, modID, "tagged")
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandAudioTag, Payload: mustJSON(t, map[string]any{"trackId": trackID, "tag": "Persian", "tagged": true})}); err != nil {
+		t.Fatalf("mod tag: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandAudioTag, Payload: mustJSON(t, map[string]any{"trackId": trackID, "tag": "Persian", "tagged": true})}); err != nil {
+		t.Fatalf("participant tag: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandAudioTag, Payload: mustJSON(t, map[string]any{"trackId": trackID, "tag": "Persian", "tagged": false})}); err != nil {
+		t.Fatalf("participant untag own claim: %v", err)
+	}
+
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if !snapshot.Room.AllowAudienceAudioTagging {
+		t.Fatal("audience audio tagging should default on")
+	}
+	if got := snapshot.Audio.Tracks[0].Tags[0].Claims; len(got) != 1 || got[0].Source != "moderator" {
+		t.Fatalf("tag claims = %+v, want only protected moderator claim", got)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandSettingsUpdate, Payload: mustJSON(t, map[string]any{"allowAudienceAudioTagging": false})}); err != nil {
+		t.Fatalf("disable tagging: %v", err)
+	}
+	otherTrackID := insertAudioTrack(t, ctx, hub, roomID, modID, "other")
+	err = hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandAudioTag, Payload: mustJSON(t, map[string]any{"trackId": otherTrackID, "tag": "Calm", "tagged": true})})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("participant tag without grant error = %v, want forbidden", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandPeopleTagPermission, Payload: mustJSON(t, map[string]any{"userId": participantID, "allowAudioTagging": true})}); err != nil {
+		t.Fatalf("grant tag permission: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, participantID, Command{Type: CommandAudioTag, Payload: mustJSON(t, map[string]any{"trackId": otherTrackID, "tag": "Calm", "tagged": true})}); err != nil {
+		t.Fatalf("participant tag with grant: %v", err)
+	}
+}
+
+func TestAudioFilterScopeControlsNextTrackAndVisibleReorder(t *testing.T) {
+	hub, _, _, roomID, modID, _ := setupRealtimeTest(t)
+	ctx := context.Background()
+	firstID := insertAudioTrack(t, ctx, hub, roomID, modID, "first")
+	secondID := insertAudioTrack(t, ctx, hub, roomID, modID, "second")
+	thirdID := insertAudioTrack(t, ctx, hub, roomID, modID, "third")
+	for _, trackID := range []string{firstID, thirdID} {
+		if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandAudioTag, Payload: mustJSON(t, map[string]any{"trackId": trackID, "tag": "Calm", "tagged": true})}); err != nil {
+			t.Fatalf("tag calm: %v", err)
+		}
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandAudioMode, Payload: mustJSON(t, map[string]any{"mode": AudioModeNext})}); err != nil {
+		t.Fatalf("set audio mode: %v", err)
+	}
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandAudioPlay, Payload: mustJSON(t, map[string]any{"trackId": firstID, "positionSeconds": 0, "filterScope": map[string]any{"includeGroups": []map[string]any{{"tags": []string{"calm"}}}}})}); err != nil {
+		t.Fatalf("play scoped: %v", err)
+	}
+	snapshot, err := hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.Audio.NextTrackID != thirdID {
+		t.Fatalf("scoped next = %q, want %q", snapshot.Audio.NextTrackID, thirdID)
+	}
+
+	if err := hub.HandleCommand(ctx, roomID, modID, Command{Type: CommandAudioReorder, Payload: mustJSON(t, map[string]any{"trackIds": []string{thirdID, firstID}, "visibleTrackIds": []string{firstID, thirdID}})}); err != nil {
+		t.Fatalf("visible reorder: %v", err)
+	}
+	snapshot, err = hub.Snapshot(ctx, roomID, modID)
+	if err != nil {
+		t.Fatalf("snapshot after reorder: %v", err)
+	}
+	got := []string{snapshot.Audio.Tracks[0].ID, snapshot.Audio.Tracks[1].ID, snapshot.Audio.Tracks[2].ID}
+	want := []string{thirdID, secondID, firstID}
+	if !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
 }

@@ -14,6 +14,7 @@ const (
 	CommandPeopleReorder          = "people.reorder"
 	CommandPeopleSetRole          = "people.setRole"
 	CommandPeopleAudioPermission  = "people.audioPermission"
+	CommandPeopleTagPermission    = "people.tagPermission"
 	CommandPeopleKick             = "people.kick"
 	CommandTurnNext               = "turn.next"
 	CommandTurnPrevious           = "turn.previous"
@@ -34,6 +35,8 @@ const (
 	CommandAudioMode              = "audio.mode"
 	CommandAudioEnded             = "audio.ended"
 	CommandAudioStar              = "audio.star"
+	CommandAudioTag               = "audio.tag"
+	CommandAudioFilterScope       = "audio.filterScope"
 	CommandPresenceAudioLocalMode = "presence.audioLocalMode"
 )
 
@@ -109,6 +112,7 @@ type SnapshotRoom struct {
 	AllowAudienceAudioUpload  bool   `json:"allowAudienceAudioUpload"`
 	AllowAudienceAudioControl bool   `json:"allowAudienceAudioControl"`
 	ShowAudioStarCounts       bool   `json:"showAudioStarCounts"`
+	AllowAudienceAudioTagging bool   `json:"allowAudienceAudioTagging"`
 	ExpiresAt                 string `json:"expiresAt"`
 	NeverExpires              bool   `json:"neverExpires"`
 }
@@ -129,6 +133,7 @@ type SnapshotMember struct {
 	IsOnline          bool   `json:"isOnline"`
 	AllowAudioUpload  bool   `json:"allowAudioUpload"`
 	AllowAudioControl bool   `json:"allowAudioControl"`
+	AllowAudioTagging bool   `json:"allowAudioTagging"`
 	AudioLocalMode    bool   `json:"audioLocalMode"`
 }
 
@@ -164,34 +169,63 @@ type SnapshotSlide struct {
 
 // SnapshotAudio contains shared room audio playlist and playback state.
 type SnapshotAudio struct {
-	Tracks          []SnapshotAudioTrack `json:"tracks"`
-	CurrentTrackID  string               `json:"currentTrackId"`
-	NextTrackID     string               `json:"nextTrackId"`
-	State           string               `json:"state"`
-	PositionSeconds int                  `json:"positionSeconds"`
-	StartedAt       *string              `json:"startedAt"`
-	ServerNow       string               `json:"serverNow"`
-	PlaybackMode    string               `json:"playbackMode"`
+	Tracks          []SnapshotAudioTrack     `json:"tracks"`
+	CurrentTrackID  string                   `json:"currentTrackId"`
+	NextTrackID     string                   `json:"nextTrackId"`
+	State           string                   `json:"state"`
+	PositionSeconds int                      `json:"positionSeconds"`
+	StartedAt       *string                  `json:"startedAt"`
+	ServerNow       string                   `json:"serverNow"`
+	PlaybackMode    string                   `json:"playbackMode"`
+	FilterScope     SnapshotAudioFilterScope `json:"filterScope"`
+}
+
+type SnapshotAudioFilterGroup struct {
+	Tags []string `json:"tags"`
+}
+
+// SnapshotAudioFilterScope is the published synced audio browsing and playback scope.
+type SnapshotAudioFilterScope struct {
+	Search          string                     `json:"search"`
+	IncludeGroups   []SnapshotAudioFilterGroup `json:"includeGroups"`
+	ExcludeTags     []string                   `json:"excludeTags"`
+	StarredOnly     bool                       `json:"starredOnly"`
+	UpdatedByUserID string                     `json:"updatedByUserId"`
+	UpdatedAt       string                     `json:"updatedAt"`
+}
+
+// SnapshotAudioTagClaim describes one user/source claim on an audio tag.
+type SnapshotAudioTagClaim struct {
+	UserID string `json:"userId"`
+	Source string `json:"source"`
+}
+
+// SnapshotAudioTag describes one displayed tag and its layered claims.
+type SnapshotAudioTag struct {
+	Slug   string                  `json:"slug"`
+	Label  string                  `json:"label"`
+	Claims []SnapshotAudioTagClaim `json:"claims"`
 }
 
 // SnapshotAudioTrack describes one shared audio track.
 type SnapshotAudioTrack struct {
-	ID                  string `json:"id"`
-	SHA256              string `json:"sha256"`
-	OriginalName        string `json:"originalName"`
-	Title               string `json:"title"`
-	MetadataTitle       string `json:"metadataTitle"`
-	MIMEType            string `json:"mimeType"`
-	SizeBytes           int64  `json:"sizeBytes"`
-	DurationSeconds     int    `json:"durationSeconds"`
-	HasCover            bool   `json:"hasCover"`
-	UploadedByUserID    string `json:"uploadedByUserId"`
-	UploadedByName      string `json:"uploadedByName"`
-	UploaderDisplayName string `json:"uploaderDisplayName"`
-	DisplayOrder        int    `json:"displayOrder"`
-	Missing             bool   `json:"missing"`
-	StarredByCaller     bool   `json:"starredByCaller"`
-	StarCount           int    `json:"starCount,omitempty"`
+	ID                  string             `json:"id"`
+	SHA256              string             `json:"sha256"`
+	OriginalName        string             `json:"originalName"`
+	Title               string             `json:"title"`
+	MetadataTitle       string             `json:"metadataTitle"`
+	MIMEType            string             `json:"mimeType"`
+	SizeBytes           int64              `json:"sizeBytes"`
+	DurationSeconds     int                `json:"durationSeconds"`
+	HasCover            bool               `json:"hasCover"`
+	UploadedByUserID    string             `json:"uploadedByUserId"`
+	UploadedByName      string             `json:"uploadedByName"`
+	UploaderDisplayName string             `json:"uploaderDisplayName"`
+	DisplayOrder        int                `json:"displayOrder"`
+	Missing             bool               `json:"missing"`
+	StarredByCaller     bool               `json:"starredByCaller"`
+	StarCount           int                `json:"starCount,omitempty"`
+	Tags                []SnapshotAudioTag `json:"tags"`
 }
 
 // WSTicket is a short-lived room-scoped connection token.

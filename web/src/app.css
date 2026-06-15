@@ -1805,6 +1805,87 @@ code {
   line-height: 1;
 }
 
+
+.audio-tag-filter-row,
+.audio-track-tags,
+.audio-tag-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.audio-tag-filter-row {
+  grid-column: 1 / -1;
+}
+
+.audio-tag-chip,
+.audio-filter-reset,
+.audio-tag-stick {
+  border: 1px solid oklch(78% 0.018 245 / 0.65);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: oklch(98% 0.006 235 / 0.72);
+  color: oklch(34% 0.03 245);
+  font-size: 0.76rem;
+  font-weight: 760;
+}
+
+.audio-tag-chip.filter-include,
+.audio-tag-chip.on-track {
+  border-color: oklch(62% 0.12 185 / 0.7);
+  background: oklch(92% 0.05 185);
+  color: oklch(26% 0.07 190);
+}
+
+.audio-tag-chip.filter-exclude {
+  border-color: oklch(62% 0.12 32 / 0.62);
+  background: oklch(93% 0.055 35);
+  color: oklch(32% 0.08 35);
+}
+
+.audio-track-tags {
+  gap: 4px;
+}
+
+.audio-track-tag {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.68rem;
+  font-weight: 820;
+}
+
+.audio-track-tag.tag-by-mod {
+  background: oklch(90% 0.075 282);
+  color: oklch(31% 0.09 282);
+}
+
+.audio-track-tag.tag-by-uploader {
+  background: oklch(91% 0.07 145);
+  color: oklch(28% 0.075 145);
+}
+
+.audio-track-tag.tag-by-other {
+  background: oklch(92% 0.045 205);
+  color: oklch(30% 0.08 205);
+}
+
+.audio-tag-editor {
+  grid-column: 1 / -1;
+  border-top: 1px solid oklch(88% 0.014 245);
+  padding-top: 8px;
+}
+
+.audio-tag-editor form {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.audio-tag-editor input {
+  min-height: 32px;
+  max-width: 150px;
+}
+
 .audio-search-empty {
   margin: 0;
   border: 1px dashed oklch(78% 0.024 245);
